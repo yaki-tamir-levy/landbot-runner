@@ -1,0 +1,50 @@
+name: Run Landbot Script (Playwright)
+
+on:
+  workflow_dispatch:  # הרצה ידנית מהטאב Actions
+  schedule:           # זמנים קבועים (CRON ב-UTC!)
+    # דוגמה: 06:15, 10:15, 14:15 UTC (≈ 08:15, 12:15, 16:15 בישראל כש-UTC+2)
+    - cron: "15 6 * * *"
+    - cron: "15 10 * * *"
+    - cron: "15 14 * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    concurrency:
+      group: landbot-script
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright (Chromium) + Linux deps
+        run: npm run install:pw
+
+      - name: Run script (headless in CI)
+        env:
+          CI: "true"
+        run: npm start
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: landbot-run-artifacts
+          path: |
+            *.png
+            *.log
+            *.txt
+          retention-days: 5
