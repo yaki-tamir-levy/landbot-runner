@@ -1,0 +1,52 @@
+name: Run Landbot Script (Playwright)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 6 * * *"
+    - cron: "15 10 * * *"
+    - cron: "15 14 * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: landbot-script
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Quick diagnostics (node, npm, files)
+        run: |
+          node -v
+          npm -v
+          pwd
+          ls -la
+          echo "---- package.json ----"
+          cat package.json || true
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright (Chromium) + Linux deps
+        run: npx playwright install chromium && npx playwright install-deps
+
+      - name: Run script (headless in CI)
+        env:
+          CI: "true"
+        run: npm start
+
+      # אפשר להשאיר artifacts או להסיר; נשאיר לכעת לנוחות בדיקה
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: landbot-run-artifacts
+          path: |
+            *.png
+            *.log
+            *.txt
+          retention-days: 5
