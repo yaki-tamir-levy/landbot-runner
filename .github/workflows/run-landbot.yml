@@ -1,7 +1,7 @@
 name: Run Landbot Script (Playwright)
 
 on:
-  workflow_dispatch:  # הרצה ידנית מהטאב Actions
+  workflow_dispatch:  # הרצה ידנית מהטאב Actions 
   schedule:           # זמנים קבועים (CRON ב-UTC!)
     # דוגמה: 06:15, 10:15, 14:15 UTC (≈ 08:15, 12:15, 16:15 בישראל כש-UTC+2)
     - cron: "15 6 * * *"
