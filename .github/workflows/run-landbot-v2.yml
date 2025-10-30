@@ -1,5 +1,5 @@
 name: Run Landbot (every 10m 08:00–22:00 IL + Supabase guard)
-
+ 
 on:
   workflow_dispatch:
   # ירוץ כל 10 דקות בדקות 05/15/25/35/45/55
