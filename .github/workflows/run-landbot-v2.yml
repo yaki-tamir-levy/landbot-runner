@@ -1,32 +1,64 @@
-name: Run Landbot Script (Playwright) v2
+name: Run Landbot (every 10m 08:00–22:00 IL + Supabase guard)
 
 on:
   workflow_dispatch:
+  # ירוץ כל 10 דקות בשנייה 05 (…:05, :15, :25, :35, :45, :55)
   schedule:
-    - cron: "15 6 * * *"
-    - cron: "15 10 * * *"
-    - cron: "15 14 * * *"
+    - cron: "5/10 * * * *"
 
 jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    concurrency:
-      group: landbot-script
-      cancel-in-progress: false
+
+    # סודות זמינים לכל השלבים
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Quick diagnostics (node, npm, files)
+      # חלון שעות בישראל: 08:00–22:00 בלבד + דקת 05/15/25/35/45/55
+      - name: Guard window (08:00–22:00 Asia/Jerusalem)
+        shell: bash
         run: |
-          node -v
-          npm -v
-          pwd
-          ls -la
-          echo "---- package.json ----"
-          cat package.json || true
+          TZ="Asia/Jerusalem"
+          hour=$(TZ=$TZ date +%H)
+          minute=$(TZ=$TZ date +%M)
+          if [ "$hour" -lt 8 ] || [ "$hour" -ge 22 ]; then
+            echo "Outside 08:00–22:00 — exiting."
+            exit 0
+          fi
+          case "$minute" in
+            05|15|25|35|45|55) echo "Minute matches (:05 + every 10m)." ;;
+            *) echo "Not on :05/15/25/35/45/55 — exiting."; exit 0 ;;
+          esac
+
+      # שומר סף מול Supabase: ממשיכים רק אם יש לפחות רשומה אחת NEW/IN_PROGRESS
+      - name: Supabase pending-work guard
+        shell: bash
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "SUPABASE_URL/KEY not set — assuming work exists (continuing)."
+            exit 0
+          fi
+          URL="$SUPABASE_URL/rest/v1/users_total?select=processed&processed=in.(NEW,IN_PROGRESS)&limit=1"
+          RESP=$(curl -sS \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            "$URL" || true)
+          if [[ "$RESP" == "[]"* ]] || [[ -z "$RESP" ]]; then
+            echo "No NEW/IN_PROGRESS rows — exiting."
+            exit 0
+          fi
+          echo "Pending work detected — proceeding."
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
       - name: Install dependencies
         run: npm install
