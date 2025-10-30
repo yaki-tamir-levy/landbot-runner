@@ -1,0 +1,40 @@
+name: Run Landbot Script (Playwright) v2
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 6 * * *"
+    - cron: "15 10 * * *"
+    - cron: "15 14 * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    concurrency:
+      group: landbot-script
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Quick diagnostics (node, npm, files)
+        run: |
+          node -v
+          npm -v
+          pwd
+          ls -la
+          echo "---- package.json ----"
+          cat package.json || true
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright (Chromium) + Linux deps
+        run: npx playwright install chromium && npx playwright install-deps
+
+      - name: Run script (headless in CI)
+        env:
+          CI: "true"
+        run: npm start
