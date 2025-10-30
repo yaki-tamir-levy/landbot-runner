@@ -1,8 +1,8 @@
-name: Run Landbot (every 10m 08:00–22:00 IL + Supabase guard)
- 
+name: Run Landbot (every 10m 08:00–22:00 IL)
+
 on:
   workflow_dispatch:
-  # ירוץ כל 10 דקות בדקות 05/15/25/35/45/55
+  # ירוץ ב-UTC כל 10 דק' מהדקה 05 (כלומר :05/:15/:25/:35/:45/:55 בשעון ישראל עם היסט UTC)
   schedule:
     - cron: "5/10 * * * *"
 
@@ -10,70 +10,51 @@ jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-
-    env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    concurrency:
+      group: landbot-script
+      cancel-in-progress: false
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # חלון שעות ישראל 08:00–22:00
-      - name: Guard window (08:00–22:00 Asia/Jerusalem)
+      - name: Echo trigger & local time
+        shell: bash
+        run: |
+          echo "event=${{ github.event_name }}"
+          TZ="Asia/Jerusalem" date '+Local IL time: %Y-%m-%d %H:%M (Asia/Jerusalem)'
+
+      # החלטה אם לרוץ: חלון שעות 08:00–22:00 בלבד (אין בדיקת דקות)
+      - name: Decide run (08:00–22:00 IL)
+        id: decide
         shell: bash
         run: |
           TZ="Asia/Jerusalem"
           hour=$(TZ=$TZ date +%H)
-          minute=$(TZ=$TZ date +%M)
           if [ "$hour" -lt 8 ] || [ "$hour" -ge 22 ]; then
-            echo "Outside 08:00–22:00 — exiting."
-            exit 0
+            echo "should_run=0" >> "$GITHUB_OUTPUT"
+            echo "Outside 08:00–22:00 — skipping heavy steps."
+          else
+            echo "should_run=1" >> "$GITHUB_OUTPUT"
+            echo "Inside window — proceeding."
           fi
-          case "$minute" in
-            05|15|25|35|45|55) echo "Minute ok." ;;
-            *) echo "Not at :05/15/25/35/45/55 — exiting."; exit 0 ;;
-          esac
-
-      # שומר סף מול Supabase — ירוץ רק אם קיימת לפחות רשומה NEW/IN_PROGRESS
-      - name: Supabase pending-work guard
-        shell: bash
-        run: |
-          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
-            echo "SUPABASE_URL/KEY missing — exiting (no run)."
-            exit 0
-          fi
-          URL="$SUPABASE_URL/rest/v1/users_total?select=processed&processed=in.(NEW,IN_PROGRESS)&limit=1"
-          read -r BODY STATUS < <(
-            curl -sS -w "\n%{http_code}" \
-              -H "apikey: $SUPABASE_KEY" \
-              -H "Authorization: Bearer $SUPABASE_KEY" \
-              "$URL"
-          )
-          echo "HTTP status from Supabase: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "Supabase responded $STATUS — exiting without running bot."
-            exit 0
-          fi
-          TRIMMED="$(echo "$BODY" | tr -d ' \n\r\t')"
-          if [ "$TRIMMED" = "[]" ]; then
-            echo "No NEW/IN_PROGRESS rows — exiting."
-            exit 0
-          fi
-          echo "Pending work detected — proceeding."
 
       - name: Setup Node.js
+        if: steps.decide.outputs.should_run == '1'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Install dependencies
+        if: steps.decide.outputs.should_run == '1'
         run: npm install
 
       - name: Install Playwright (Chromium) + Linux deps
+        if: steps.decide.outputs.should_run == '1'
         run: npx playwright install chromium && npx playwright install-deps
 
       - name: Run script (headless in CI)
+        if: steps.decide.outputs.should_run == '1'
         env:
           CI: "true"
         run: npm start
