@@ -1,10 +1,7 @@
-name: Run Landbot (every 10m 08:00–22:00 IL)
+name: Run Landbot (manual/triggered only)
 
 on:
-  workflow_dispatch:
-  # ירוץ ב-UTC כל 10 דק' מהדקה 05 (כלומר :05/:15/:25/:35/:45/:55 בשעון ישראל עם היסט UTC)
-  schedule:
-    - cron: "5/10 * * * *"
+  workflow_dispatch: {}
 
 jobs:
   run:
@@ -24,37 +21,18 @@ jobs:
           echo "event=${{ github.event_name }}"
           TZ="Asia/Jerusalem" date '+Local IL time: %Y-%m-%d %H:%M (Asia/Jerusalem)'
 
-      # החלטה אם לרוץ: חלון שעות 08:00–22:00 בלבד (אין בדיקת דקות)
-      - name: Decide run (08:00–22:00 IL)
-        id: decide
-        shell: bash
-        run: |
-          TZ="Asia/Jerusalem"
-          hour=$(TZ=$TZ date +%H)
-          if [ "$hour" -lt 8 ] || [ "$hour" -ge 22 ]; then
-            echo "should_run=0" >> "$GITHUB_OUTPUT"
-            echo "Outside 08:00–22:00 — skipping heavy steps."
-          else
-            echo "should_run=1" >> "$GITHUB_OUTPUT"
-            echo "Inside window — proceeding."
-          fi
-
       - name: Setup Node.js
-        if: steps.decide.outputs.should_run == '1'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Install dependencies
-        if: steps.decide.outputs.should_run == '1'
         run: npm install
 
       - name: Install Playwright (Chromium) + Linux deps
-        if: steps.decide.outputs.should_run == '1'
         run: npx playwright install chromium && npx playwright install-deps
 
       - name: Run script (headless in CI)
-        if: steps.decide.outputs.should_run == '1'
         env:
           CI: "true"
         run: npm start
