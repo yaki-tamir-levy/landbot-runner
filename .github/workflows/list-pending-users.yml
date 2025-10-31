@@ -9,8 +9,7 @@ on:
 permissions:
   contents: read
   actions: write
-  workflows: write
-
+  
 concurrency:
   group: list-pending-users
   cancel-in-progress: false
