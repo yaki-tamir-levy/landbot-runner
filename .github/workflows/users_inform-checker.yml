@@ -1,42 +1,35 @@
-name: Users Inform — CSV checker (every 10m on the hour)
+name: Users Inform — Sheet Checker (every 10m)
 
 on:
-  workflow_dispatch: {}
   schedule:
-    # ירוץ כל 10 דקות בדיוק על הדקה העגולה: :00, :10, :20, :30, :40, :50 (UTC)
-    - cron: "0/10 * * * *"
-
-permissions:
-  contents: write   # נדרש כדי לשלוח repository_dispatch עם GITHUB_TOKEN
+    - cron: "*/10 * * * *"  # every 10 minutes
+  workflow_dispatch: {}     # להרצה ידנית אם תרצה לבדוק
 
 jobs:
-  check-csv:
+  check-sheet:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
-    env:
-      # קישור ה-CSV שסיפקת
-      CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vS62g9OlDEDwyzAxPX6kv7BI5Y8B_U5Y37YgkcyWq2GJTdceBipvGuHJxbVHnZDa2gWZU7nUcH07TK6/pub?gid=0&single=true&output=csv"
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Show trigger time (IL & UTC)
+      - name: Fetch CSV from Google Sheet
+        id: fetch
         run: |
-          echo "event=${{ github.event_name }}"
-          TZ="Asia/Jerusalem" date '+IL time: %Y-%m-%d %H:%M'
-          date -u '+UTC time: %Y-%m-%d %H:%M'
+          curl -sSL "https://docs.google.com/spreadsheets/d/e/2PACX-1vS62g9OlDEDwyzAxPX6kv7BI5Y8B_U5Y37YgkcyWq2GJTdceBipvGuHJxbVHnZDa2gWZU7nUcH07TK6/pub?gid=0&single=true&output=csv" -o sheet.csv
+          echo "CSV downloaded"
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+      - name: Parse CSV and detect V/v in 'update' column
+        id: parse
+        run: |
+          matches=$(awk -F',' 'tolower($0) ~ /,v($|,)/' sheet.csv | wc -l)
+          echo "matches=$matches" >> $GITHUB_OUTPUT
+          echo "Found $matches rows with V/v in update field"
 
-      - name: Run CSV checker (dispatch if V/v found)
+      - name: Trigger bot workflow (if matches > 0)
+        if: steps.parse.outputs.matches != '0'
+        run: |
+          echo "Dispatching run-users-inform-bot.yml..."
+          gh api repos/${{ github.repository }}/dispatches \
+            --field event_type=users_inform_trigger \
+            --field client_payload:='{}'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          CSV_URL: ${{ env.CSV_URL }}
-        run: |
-          node scripts/users_inform_checker.mjs
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
