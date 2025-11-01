@@ -1,13 +1,12 @@
 {
   "name": "landbot-runner",
   "version": "1.0.0",
-  "type": "module",
   "private": true,
+  "type": "module",
   "scripts": {
-    "start": "node script_link.mjs",
-    "install:pw": "npx playwright install chromium && npx playwright install-deps"
+    "users_inform:landbot": "node ./scripts/users_inform_landbot_trigger.mjs"
   },
-  "dependencies": {
-    "playwright": "^1.47.0"
+  "devDependencies": {
+    "playwright": "^1.48.2"
   }
 }
