@@ -1,9 +1,9 @@
-name: Users Inform — Sheet Checker (every 10m from :00)
+name: users_inform-checker.yml
 
 on:
+  workflow_dispatch: {}
   schedule:
-    - cron: "0/10 * * * *"      # כל 10 דקות: :00, :10, :20, :30, :40, :50
-  workflow_dispatch: {}          # גם הרצה ידנית לבדיקות
+    - cron: "0/10 * * * *"   # כל 10 דקות על הדקות העגולות: 00,10,20,...
 
 jobs:
   check-sheet:
@@ -11,60 +11,70 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Fetch CSV from Google Sheet
-        id: fetch
-        run: |
-          set -euo pipefail
-          curl -sSL "https://docs.google.com/spreadsheets/d/e/2PACX-1vS62g9OlDEDwyzAxPX6kv7BI5Y8B_U5Y37YgkcyWq2GJTdceBipvGuHJxbVHnZDa2gWZU7nUcH07TK6/pub?gid=0&single=true&output=csv" -o sheet.csv
-          echo "CSV downloaded: $(wc -c < sheet.csv) bytes"
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Parse CSV, list matching names (update == V/v)
-        id: parse
-        run: |
-          python - << 'PY'
-          import csv, os
-
-          with open("sheet.csv", "r", encoding="utf-8-sig", newline="") as f:
-            rows = list(csv.DictReader(f))
-
-          names = []
-          total = 0
-          for r in rows:
-            val = (r.get("update") or "").strip().lower()
-            if val == "v":
-              total += 1
-              nm = (r.get("name") or "").strip()
-              if nm:
-                names.append(nm)
-
-          print(f"Matched rows: {total}")
-          if names:
-            print("Names:")
-            for n in names:
-              print(f"- {n}")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-            out.write(f"matches={total}\n")
-            out.write("names<<__EOF__\n")
-            out.write("\n".join(names))
-            out.write("\n__EOF__\n")
-
-          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summ:
-            summ.write(f"### Users with `update = V/v`\n\n")
-            summ.write(f"**Total matches:** {total}\n\n")
-            if names:
-              for n in names:
-                summ.write(f"- {n}\n")
-          PY
-
-      - name: Trigger bot workflow (repository_dispatch) if matches > 0
-        if: steps.parse.outputs.matches != '0'
-        run: |
-          echo "Dispatching event 'users_inform_trigger' to this repo..."
-          gh api repos/${{ github.repository }}/dispatches \
-            --method POST \
-            --field event_type=users_inform_trigger \
-            --field client_payload:='{}'
-          echo "Dispatched."
+      - name: Scan Google Sheet (update == V/v)
+        id: scan
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSV_URL: ${{ vars.CSV_URL }}
+        run: |
+          set -e
+          echo "Fetching CSV: $CSV_URL"
+
+          python3 - <<'PY'
+import csv, io, sys, urllib.request, textwrap, os
+
+csv_url = os.environ["CSV_URL"]
+with urllib.request.urlopen(csv_url) as r:
+    data = r.read().decode("utf-8", errors="replace")
+
+reader = csv.DictReader(io.StringIO(data))
+names = []
+for row in reader:
+    val = (row.get("update") or "").strip()
+    if val.lower() == "v":
+        names.append((row.get("name") or "").strip())
+
+# כתיבה ל-SUMMARY
+summary = ["## Users with **update = V/v**", f"**Total matches:** {len(names)}"]
+for n in names:
+    if n:
+        summary.append(f"- {n}")
+print("\n".join(summary))
+
+# ל-GITHUB_OUTPUT
+gh_out = os.environ.get("GITHUB_OUTPUT")
+with open(gh_out, "a", encoding="utf-8") as f:
+    f.write(f"total_matches={len(names)}\n")
+    f.write(f"should_trigger={'1' if len(names)>0 else '0'}\n")
+
+# ול-GITHUB_STEP_SUMMARY
+gh_sum = os.environ.get("GITHUB_STEP_SUMMARY")
+with open(gh_sum, "a", encoding="utf-8") as f:
+    f.write("\n".join(summary) + "\n")
+PY
+
+      # אם יש לפחות התאמה אחת → נפעיל את הבוט
+      - name: Setup Node.js
+        if: steps.scan.outputs.should_trigger == '1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        if: steps.scan.outputs.should_trigger == '1'
+        run: npm install
+
+      - name: Install Playwright (Chromium) + Linux deps
+        if: steps.scan.outputs.should_trigger == '1'
+        run: npx playwright install chromium && npx playwright install-deps
+
+      - name: Run users_inform bot script
+        if: steps.scan.outputs.should_trigger == '1'
+        env:
+          LAND_BOT_URL: "https://landbot.pro/v3/H-3211152-NZNA5NPAWJPGHQMV/index.html"
+          CLICK_SELECTOR: ${{ vars.CLICK_SELECTOR }}
+          CLICK_X: ${{ vars.CLICK_X }}
+          CLICK_Y: ${{ vars.CLICK_Y }}
+        run: node scripts/users_inform_landbot_trigger.mjs
