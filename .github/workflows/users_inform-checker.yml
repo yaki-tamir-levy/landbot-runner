@@ -1,0 +1,42 @@
+name: Users Inform — CSV checker (every 10m on the hour)
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # ירוץ כל 10 דקות בדיוק על הדקה העגולה: :00, :10, :20, :30, :40, :50 (UTC)
+    - cron: "0/10 * * * *"
+
+permissions:
+  contents: write   # נדרש כדי לשלוח repository_dispatch עם GITHUB_TOKEN
+
+jobs:
+  check-csv:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      # קישור ה-CSV שסיפקת
+      CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vS62g9OlDEDwyzAxPX6kv7BI5Y8B_U5Y37YgkcyWq2GJTdceBipvGuHJxbVHnZDa2gWZU7nUcH07TK6/pub?gid=0&single=true&output=csv"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show trigger time (IL & UTC)
+        run: |
+          echo "event=${{ github.event_name }}"
+          TZ="Asia/Jerusalem" date '+IL time: %Y-%m-%d %H:%M'
+          date -u '+UTC time: %Y-%m-%d %H:%M'
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run CSV checker (dispatch if V/v found)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CSV_URL: ${{ env.CSV_URL }}
+        run: |
+          node scripts/users_inform_checker.mjs
