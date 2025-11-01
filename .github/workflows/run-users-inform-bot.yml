@@ -1,7 +1,9 @@
-name: Run users_inform Bot (manual/triggered only)
+name: Run users_inform Bot (manual/dispatch only)
 
 on:
   workflow_dispatch: {}
+  repository_dispatch:
+    types: [users_inform_trigger]
 
 jobs:
   run:
@@ -14,6 +16,13 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Echo trigger & local time
+        shell: bash
+        run: |
+          echo "event=${{ github.event_name }}"
+          TZ="Asia/Jerusalem" date '+IL time: %Y-%m-%d %H:%M'
+          date -u '+UTC time: %Y-%m-%d %H:%M'
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -29,7 +38,7 @@ jobs:
       - name: Run users_inform bot script
         env:
           LAND_BOT_URL: "https://landbot.pro/v3/H-3211152-NZNA5NPAWJPGHQMV/index.html"
-          CLICK_SELECTOR: ${{ vars.CLICK_SELECTOR }}
-          CLICK_X: ${{ vars.CLICK_X }}
+          CLICK_SELECTOR: ${{ vars.CLICK_SELECTOR }}   # אם הוגדר (מומלץ)
+          CLICK_X: ${{ vars.CLICK_X }}                 # אם עובדים לפי קואורדינטות
           CLICK_Y: ${{ vars.CLICK_Y }}
         run: node scripts/users_inform_landbot_trigger.mjs
