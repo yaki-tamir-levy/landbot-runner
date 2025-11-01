@@ -1,9 +1,9 @@
-name: Users Inform — Sheet Checker (every 10m)
+name: Users Inform — Sheet Checker (every 10m from :00)
 
 on:
   schedule:
-    - cron: "*/10 * * * *"  # every 10 minutes
-  workflow_dispatch: {}     # להרצה ידנית אם תרצה לבדוק
+    - cron: "0/10 * * * *"      # כל 10 דקות: :00, :10, :20, :30, :40, :50
+  workflow_dispatch: {}          # גם הרצה ידנית לבדיקות
 
 jobs:
   check-sheet:
@@ -14,22 +14,57 @@ jobs:
       - name: Fetch CSV from Google Sheet
         id: fetch
         run: |
+          set -euo pipefail
           curl -sSL "https://docs.google.com/spreadsheets/d/e/2PACX-1vS62g9OlDEDwyzAxPX6kv7BI5Y8B_U5Y37YgkcyWq2GJTdceBipvGuHJxbVHnZDa2gWZU7nUcH07TK6/pub?gid=0&single=true&output=csv" -o sheet.csv
-          echo "CSV downloaded"
+          echo "CSV downloaded: $(wc -c < sheet.csv) bytes"
 
-      - name: Parse CSV and detect V/v in 'update' column
+      - name: Parse CSV, list matching names (update == V/v)
         id: parse
         run: |
-          matches=$(awk -F',' 'tolower($0) ~ /,v($|,)/' sheet.csv | wc -l)
-          echo "matches=$matches" >> $GITHUB_OUTPUT
-          echo "Found $matches rows with V/v in update field"
+          python - << 'PY'
+          import csv, os
 
-      - name: Trigger bot workflow (if matches > 0)
+          with open("sheet.csv", "r", encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.DictReader(f))
+
+          names = []
+          total = 0
+          for r in rows:
+            val = (r.get("update") or "").strip().lower()
+            if val == "v":
+              total += 1
+              nm = (r.get("name") or "").strip()
+              if nm:
+                names.append(nm)
+
+          print(f"Matched rows: {total}")
+          if names:
+            print("Names:")
+            for n in names:
+              print(f"- {n}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+            out.write(f"matches={total}\n")
+            out.write("names<<__EOF__\n")
+            out.write("\n".join(names))
+            out.write("\n__EOF__\n")
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summ:
+            summ.write(f"### Users with `update = V/v`\n\n")
+            summ.write(f"**Total matches:** {total}\n\n")
+            if names:
+              for n in names:
+                summ.write(f"- {n}\n")
+          PY
+
+      - name: Trigger bot workflow (repository_dispatch) if matches > 0
         if: steps.parse.outputs.matches != '0'
         run: |
-          echo "Dispatching run-users-inform-bot.yml..."
+          echo "Dispatching event 'users_inform_trigger' to this repo..."
           gh api repos/${{ github.repository }}/dispatches \
+            --method POST \
             --field event_type=users_inform_trigger \
             --field client_payload:='{}'
+          echo "Dispatched."
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
