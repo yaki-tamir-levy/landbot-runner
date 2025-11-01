@@ -32,7 +32,7 @@ jobs:
       - name: Install Playwright (Chromium) + Linux deps
         run: npx playwright install chromium && npx playwright install-deps
 
-      - name: Run script (headless in CI)
+      - name: Run Landbot v2 script (headless in CI)
         env:
           CI: "true"
-        run: npm start
+        run: npm run landbot-v2
