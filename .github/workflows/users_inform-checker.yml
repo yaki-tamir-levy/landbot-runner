@@ -1,77 +1,113 @@
-name: users_inform-checker.yml
+name: users_inform-checker
 
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0/10 * * * *"   # כל 10 דקות על הדקות העגולות: 00,10,20,...
+    - cron: "0/10 * * * *"   # כל 10 דק׳ החל מדקה 00
+
+permissions:
+  contents: read
+
+env:
+  CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vS62g9OlDEDwyzAxPX6kv7BI5Y8B_U5Y37YgkcyWq2GJTdceBipvGuHJxbVHnZDa2gWZU7nUcH07TK6/pub?gid=0&single=true&output=csv"
 
 jobs:
   check-sheet:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    outputs:
+      should_trigger: ${{ steps.scan.outputs.should_trigger }}
+    steps:
+      - name: Show trigger time
+        run: |
+          TZ="Asia/Jerusalem" date '+IL time: %Y-%m-%d %H:%M'
 
+      - name: Scan Google Sheet for update=V/v
+        id: scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Downloading CSV..."
+          curl -fsSL "$CSV_URL" -o sheet.csv
+
+          # נריץ Node חד-פעמי כדי לקרוא CSV בבטחה
+          node - <<'NODE' > scan.json
+          const fs = require('fs');
+          const raw = fs.readFileSync('sheet.csv','utf8').replace(/\r/g,'');
+          const lines = raw.split('\n').filter(Boolean);
+          if (!lines.length) { console.error('Empty CSV'); process.exit(0); }
+          const parse = (line)=> {
+            // parser פשוט מאוד: מפריד פסיקים, מכבד מרכאות
+            const out=[]; let cur='', q=false;
+            for (let i=0;i<line.length;i++){
+              const c=line[i], n=line[i+1];
+              if (c==='"' && q && n==='"'){ cur+='"'; i++; continue; }
+              if (c==='"'){ q=!q; continue; }
+              if (c===',' && !q){ out.push(cur); cur=''; continue; }
+              cur+=c;
+            }
+            out.push(cur);
+            return out.map(s=>s.trim());
+          };
+
+          const header = parse(lines[0]);
+          const idxUpdate = header.findIndex(h => h.toLowerCase() === 'update');
+          const idxName   = header.findIndex(h => h.toLowerCase() === 'name');
+          const res = { names: [], total: 0 };
+
+          if (idxUpdate === -1) {
+            res.error = "Column 'update' not found";
+          } else {
+            for (let i=1;i<lines.length;i++){
+              const row = parse(lines[i]);
+              const val = (row[idxUpdate]||'').trim().toLowerCase();
+              if (val === 'v') {
+                const name = idxName >= 0 ? (row[idxName]||'').trim() : '';
+                res.names.push(name || '(no-name)');
+              }
+            }
+            res.total = res.names.length;
+          }
+
+          fs.writeFileSync('scan.out.json', JSON.stringify(res, null, 2));
+          console.log(JSON.stringify(res));
+          NODE
+
+          echo "=== Summary ===" >> $GITHUB_STEP_SUMMARY
+          jq -r '
+            if .error then
+              "* Error: " + .error
+            else
+              "Users with `update = V/v`:" + "\n\n" +
+              "Total matches: " + (.total|tostring) + "\n" +
+              (if .names|length>0 then (.names | map("* " + .) | join("\n")) else "" end)
+            end
+          ' scan.json >> $GITHUB_STEP_SUMMARY
+
+          SHOULD=0
+          if jq -e '.total>0' scan.json >/dev/null 2>&1; then SHOULD=1; fi
+          echo "should_trigger=$SHOULD" >> "$GITHUB_OUTPUT"
+
+  run-bot:
+    needs: check-sheet
+    if: needs.check-sheet.outputs.should_trigger == '1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Scan Google Sheet (update == V/v)
-        id: scan
-        env:
-          CSV_URL: ${{ vars.CSV_URL }}
-        run: |
-          set -e
-          echo "Fetching CSV: $CSV_URL"
-
-          python3 - <<'PY'
-import csv, io, sys, urllib.request, textwrap, os
-
-csv_url = os.environ["CSV_URL"]
-with urllib.request.urlopen(csv_url) as r:
-    data = r.read().decode("utf-8", errors="replace")
-
-reader = csv.DictReader(io.StringIO(data))
-names = []
-for row in reader:
-    val = (row.get("update") or "").strip()
-    if val.lower() == "v":
-        names.append((row.get("name") or "").strip())
-
-# כתיבה ל-SUMMARY
-summary = ["## Users with **update = V/v**", f"**Total matches:** {len(names)}"]
-for n in names:
-    if n:
-        summary.append(f"- {n}")
-print("\n".join(summary))
-
-# ל-GITHUB_OUTPUT
-gh_out = os.environ.get("GITHUB_OUTPUT")
-with open(gh_out, "a", encoding="utf-8") as f:
-    f.write(f"total_matches={len(names)}\n")
-    f.write(f"should_trigger={'1' if len(names)>0 else '0'}\n")
-
-# ול-GITHUB_STEP_SUMMARY
-gh_sum = os.environ.get("GITHUB_STEP_SUMMARY")
-with open(gh_sum, "a", encoding="utf-8") as f:
-    f.write("\n".join(summary) + "\n")
-PY
-
-      # אם יש לפחות התאמה אחת → נפעיל את הבוט
       - name: Setup Node.js
-        if: steps.scan.outputs.should_trigger == '1'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install dependencies
-        if: steps.scan.outputs.should_trigger == '1'
+      - name: Install deps
         run: npm install
 
       - name: Install Playwright (Chromium) + Linux deps
-        if: steps.scan.outputs.should_trigger == '1'
         run: npx playwright install chromium && npx playwright install-deps
 
-      - name: Run users_inform bot script
-        if: steps.scan.outputs.should_trigger == '1'
+      - name: Trigger Landbot (users_inform)
         env:
           LAND_BOT_URL: "https://landbot.pro/v3/H-3211152-NZNA5NPAWJPGHQMV/index.html"
           CLICK_SELECTOR: ${{ vars.CLICK_SELECTOR }}
