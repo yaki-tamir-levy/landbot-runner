@@ -1,0 +1,35 @@
+name: Run users_inform Bot (manual/triggered only)
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: run-users-inform-bot
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright (Chromium) + Linux deps
+        run: npx playwright install chromium && npx playwright install-deps
+
+      - name: Run users_inform bot script
+        env:
+          LAND_BOT_URL: "https://landbot.pro/v3/H-3211152-NZNA5NPAWJPGHQMV/index.html"
+          CLICK_SELECTOR: ${{ vars.CLICK_SELECTOR }}
+          CLICK_X: ${{ vars.CLICK_X }}
+          CLICK_Y: ${{ vars.CLICK_Y }}
+        run: node scripts/users_inform_landbot_trigger.mjs
