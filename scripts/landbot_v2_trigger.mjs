@@ -1,51 +1,67 @@
 // scripts/landbot_v2_trigger.mjs
-import { chromium } from "playwright";
+import { chromium } from 'playwright';
 
-const URL = process.env.LAND_BOT_URL || "https://landbot.pro/v3/H-3211152-NZNA5NPAWJPGHQMV/index.html";
-const SELECTOR = process.env.CLICK_SELECTOR || ""; // למשל: button:has-text("עדכון מטופלים שנבחרו (V)")
-const CLICK_X = Number(process.env.CLICK_X || 0);
-const CLICK_Y = Number(process.env.CLICK_Y || 0);
+const URL = process.env.LANDBOT_URL
+  || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html';
 
-const HEADLESS = process.env.CI === "true" ? true : true; // ב-CI תמיד headless
-
-function log(msg) { console.log(`[landbot-v2] ${msg}`); }
+const IFRAME_SELECTOR = 'iframe[src*="landbot"]';
+const INPUT_SELECTOR_CANDIDATES = [
+  'textarea',
+  'input[type="text"]',
+  '[contenteditable="true"]',
+  '[data-testid="chat-input"]',
+];
 
 (async () => {
-  const browser = await chromium.launch({ headless: HEADLESS });
-  const ctx = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari",
-  });
-  const page = await ctx.newPage();
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext();
 
-  try {
-    log(`goto: ${URL}`);
-    await page.goto(URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  // (אופציונלי) Trace לדיבוג:
+  // await context.tracing.start({ screenshots: true, snapshots: true });
 
-    // המתן לבוט להיטען
-    await page.waitForLoadState("networkidle", { timeout: 60_000 });
-    await page.waitForTimeout(1500);
+  const page = await context.newPage();
+  page.setDefaultTimeout(120_000);
+  page.setDefaultNavigationTimeout(120_000);
 
-    if (SELECTOR && SELECTOR.trim()) {
-      log(`click by selector: ${SELECTOR}`);
-      const btn = page.locator(SELECTOR);
-      await btn.first().click({ timeout: 30_000 });
-    } else if (CLICK_X && CLICK_Y) {
-      log(`click by coordinates: ${CLICK_X}, ${CLICK_Y}`);
-      await page.mouse.click(CLICK_X, CLICK_Y, { timeout: 10_000 });
-    } else {
-      throw new Error("No CLICK_SELECTOR and no CLICK_X/CLICK_Y were provided.");
-    }
+  page.on('requestfailed', r => console.log('✗', r.url(), r.failure()?.errorText));
+  page.on('console', msg => console.log('[console]', msg.type(), msg.text()));
 
-    // המתנה קצרה לאימות
-    await page.waitForTimeout(1500);
-    log("done.");
-    await browser.close();
-    process.exit(0);
-  } catch (err) {
-    console.error("[landbot-v2] ERROR:", err?.message || err);
-    try { await page.screenshot({ path: "landbot_v2_error.png", fullPage: true }); } catch {}
-    await browser.close();
-    process.exit(1);
+  console.log('[landbot-v2] goto:', URL);
+  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+
+  const iframeEl = await page.waitForSelector(IFRAME_SELECTOR, { timeout: 60_000 });
+  const landbotFrame = await iframeEl.contentFrame();
+  if (!landbotFrame) throw new Error('Iframe content not available');
+
+  let foundSelector = null;
+  for (const sel of INPUT_SELECTOR_CANDIDATES) {
+    try {
+      await landbotFrame.waitForSelector(sel, { timeout: 20_000 });
+      foundSelector = sel;
+      break;
+    } catch {}
   }
-})();
+  if (!foundSelector) {
+    await page.screenshot({ path: 'landbot_fail.png', fullPage: true });
+    throw new Error('Chat input not found inside Landbot iframe');
+  }
+
+  // דוגמה לאינטרקציה קצרה:
+  try {
+    await landbotFrame.fill(foundSelector, 'Ping from GitHub Actions');
+  } catch {
+    await landbotFrame.click(foundSelector);
+    await landbotFrame.keyboard.type('Ping from GitHub Actions');
+  }
+  await landbotFrame.keyboard.press('Enter');
+
+  console.log('[landbot-v2] Success');
+
+  // (אופציונלי) לעצור trace ולשמור:
+  // await context.tracing.stop({ path: 'traces/trace.zip' });
+
+  await browser.close();
+})().catch(async (err) => {
+  console.error('[landbot-v2] ERROR:', err?.message || err);
+  process.exit(1);
+});
