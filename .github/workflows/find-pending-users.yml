@@ -25,6 +25,8 @@ jobs:
       expect_urls: "messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth"
       require_network_confirm: "false"
       headed: true
-      # ←←← 5 דקות במפורש
-      post_action_idle_ms: "300000"
-      supabase_wait_ms:    "300000"
+      # המתנות פנימיות (גם בתוך הסקריפט)
+      post_action_idle_ms: "300000"   # 5 דקות
+      supabase_wait_ms:    "300000"   # 5 דקות
+      # רשת ביטחון חיצונית: הבטחת משך מינימלי לג'וב
+      force_min_run_seconds: "300"    # 5 דקות
