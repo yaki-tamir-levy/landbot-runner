@@ -1,7 +1,7 @@
 name: Run Landbot (v2)
 
 on:
-  workflow_dispatch: {}        # הפעלה ידנית בלבד (כפתור ב-Actions)
+  workflow_dispatch: {}        # הפעלה ידנית בלבד כרגע
 
 permissions:
   contents: read
@@ -15,20 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # מומלץ לשמור את ה-URL ב-Secret בשם LANDBOT_URL (Settings → Secrets → Actions)
+      # מומלץ לשמור את ה-URL ב-Secret: Settings → Secrets → Actions → LANDBOT_URL
       LANDBOT_URL: ${{ secrets.LANDBOT_URL || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (no cache)
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: '20'   # בלי cache כדי שלא ידרוש lockfile
 
-      - name: Install deps (prefer ci, fallback to install)
+      - name: Install deps (works with or without lockfile)
         run: |
           if [ -f package-lock.json ]; then
             npm ci
@@ -36,7 +35,7 @@ jobs:
             npm install
           fi
 
-      - name: Install Playwright (with browsers & deps)
+      - name: Install Playwright (with browsers & system deps)
         run: npx playwright install --with-deps
 
       - name: Run Landbot trigger (retry x2)
