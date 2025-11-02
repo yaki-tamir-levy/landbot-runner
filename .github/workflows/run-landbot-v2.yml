@@ -16,7 +16,6 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Echo trigger & local time
-        shell: bash
         run: |
           echo "event=${{ github.event_name }}"
           TZ="Asia/Jerusalem" date '+Local IL time: %Y-%m-%d %H:%M (Asia/Jerusalem)'
@@ -24,15 +23,21 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: '20'
 
-      - name: Install dependencies
+      - name: Install deps
         run: npm install
 
-      - name: Install Playwright (Chromium) + Linux deps
+      - name: Install Playwright (Chromium) + deps
         run: npx playwright install chromium && npx playwright install-deps
 
-      - name: Run Landbot v2 script (headless in CI)
+      - name: Run landbot_v2 (headless)
         env:
-          CI: "true"
+          CI: 'true'
+          # >>> הבוט הנכון <<<
+          LAND_BOT_URL: https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html
+          # אם אתה עובד עם קליקים מוחלטים/סלקטור, השאר כפי שהגדרת:
+          CLICK_SELECTOR: ${{ vars.CLICK_SELECTOR }}
+          CLICK_X: ${{ vars.CLICK_X }}
+          CLICK_Y: ${{ vars.CLICK_Y }}
         run: npm run landbot-v2
