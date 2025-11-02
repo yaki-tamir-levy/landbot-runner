@@ -1,7 +1,7 @@
 name: Run Landbot (v2)
 
 on:
-  # ריאוזבל בלבד — לא ניתן להרצה ידנית מה-UI
+  # הופך את הקובץ ל-reusable workflow שניתן לקרוא אליו מ-Job אחר
   workflow_call:
     inputs:
       expect_urls:
@@ -21,8 +21,9 @@ permissions:
 
 jobs:
   run:
+    name: Landbot v2 runner
     runs-on: ubuntu-latest
-    # אין timeout-minutes -> ה-UI יציג "Running for …" (ספירה קדימה)
+    # אין timeout-minutes → ה-UI יציג "Running for …"
     env:
       LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
       EXPECT_URLS: ${{ inputs.expect_urls || '' }}
@@ -53,8 +54,8 @@ jobs:
 
       - name: Run Landbot trigger (no shell timeout; watchdog inside script)
         run: |
-            set -e
-            npm run landbot-v2
+          set -e
+          npm run landbot-v2
 
       - name: Upload artifacts (always)
         if: always()
