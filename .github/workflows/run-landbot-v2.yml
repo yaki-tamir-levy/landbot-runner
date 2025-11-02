@@ -31,7 +31,6 @@ on:
         type: string
         required: false
         default: "300000"
-      # חדש: אכיפת משך מינימלי לריצה (שניות)
       force_min_run_seconds:
         type: string
         required: false
@@ -44,7 +43,7 @@ jobs:
 
     env:
       NODE_ENV: production
-      LANDBOT_URL: ${{ secrets.LANDBOT_URL }}   # ← חובה להגדיר ב-Secrets
+      LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
       SUPABASE_URL: ${{ secrets.supabase_url }}
       SUPABASE_KEY: ${{ secrets.supabase_key }}
       LANDBOT_BUTTON_TEXT: ${{ inputs.lanbot_button_text }}
@@ -139,37 +138,45 @@ jobs:
           path: artifacts/**
           if-no-files-found: warn
 
-      - name: Job summary
+      # מטמיעים את צילום המסך האחרון ישירות ב-Summary (לא לייב, אבל נראה מיד)
+      - name: Embed last screenshot in summary
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          if [ -f artifacts/screenshot_after.png ]; then
+            B64=$(base64 -w 0 artifacts/screenshot_after.png)
+            {
+              echo "## Last screen (embedded)"
+              echo ""
+              echo "<img alt='after' src='data:image/png;base64,${B64}' width='100%' />"
+              echo ""
+              echo "_Full video & traces are attached as artifacts above._"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No screenshot_after.png to embed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Job summary (links)
         if: always()
         shell: bash
         run: |
           set +e
           {
-            echo "## Landbot v2 run"
+            echo "## Landbot v2 run (files)"
             if [ -f artifacts/_duration.txt ]; then
               echo ""
               echo "### Duration"
               cat artifacts/_duration.txt
               echo ""
             fi
-            if [ -f artifacts/screenshot_before.png ]; then
-              echo "### Before"
-              echo "![before](./artifacts/screenshot_before.png)"
+            if [ -f artifacts/video.webm ]; then
+              echo "- video: **video.webm** (see Artifacts)"
             fi
-            if [ -f artifacts/screenshot_highlight.png ]; then
-              echo "### Highlight"
-              echo "![highlight](./artifacts/screenshot_highlight.png)"
+            if [ -f artifacts/trace.zip ]; then
+              echo "- trace: **trace.zip** (see Artifacts)"
             fi
-            if [ -f artifacts/screenshot_after.png ]; then
-              echo "### After"
-              echo "![after](./artifacts/screenshot_after.png)"
-            fi
-            echo ""
             if [ -f artifacts/msg_payload.json ]; then
-              echo "### msg_payload.json (first 1500 bytes)"
-              echo '```json'
-              head -c 1500 artifacts/msg_payload.json
-              echo
-              echo '```'
+              echo "- payload: **msg_payload.json** (see Artifacts)"
             fi
           } >> "$GITHUB_STEP_SUMMARY" || true
