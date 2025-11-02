@@ -1,33 +1,43 @@
 name: Run Landbot (v2)
 
 on:
-  workflow_dispatch: {}   # מאפשר להריץ ידנית מה-UI
-  # אפשר להוסיף schedule אם תרצה שירוץ בזמנים קבועים:
-  # schedule:
-  #   - cron: "*/15 * * * *"
+  workflow_dispatch: {}        # הפעלה ידנית מה-UI
+  workflow_call:               # מאפשר ל-Workflows אחרים לקרוא אליו (באותו ריפו)
+    inputs:
+      landbot_url:
+        required: false
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: run-landbot-v2-${{ github.ref }}
+  cancel-in-progress: false   # לא לבטל ריצות קודמות; אפשר לשנות ל-true אם תרצה
 
 jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # אפשר לשים את ה-URL פה או בסוד (מומלץ כסוד אם רגיש)
-      LANDBOT_URL: https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html
+      # קדימות ל-input מ-workflow_call, אח"כ ל-Secret, ולבסוף לערך ברירת מחדל:
+      LANDBOT_URL: ${{ inputs.landbot_url || secrets.LANDBOT_URL || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html' }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
 
-      - name: Install deps
-        run: npm ci
+      - name: Install deps (prefer ci, fallback to install)
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
       - name: Install Playwright (with browsers & deps)
         run: npx playwright install --with-deps
@@ -52,5 +62,4 @@ jobs:
           name: playwright-artifacts
           path: |
             landbot_fail.png
-            traces
           if-no-files-found: ignore
