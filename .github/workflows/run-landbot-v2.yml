@@ -1,6 +1,6 @@
 name: Run Landbot (v2) via reusable workflow
 
-# ❌ אין push. ❌ אין schedule כאן.
+# רץ רק כ-reusable
 on:
   workflow_call:
     inputs:
@@ -24,6 +24,15 @@ on:
         required: false
         type: boolean
         default: true
+      # ⬇️ חדשים
+      post_action_idle_ms:
+        required: false
+        type: string
+        default: "45000"   # 45s
+      supabase_wait_ms:
+        required: false
+        type: string
+        default: "60000"   # 60s
 
 jobs:
   run:
@@ -32,14 +41,19 @@ jobs:
 
     env:
       NODE_ENV: production
+      # סודות
       LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
       SUPABASE_URL: ${{ secrets.supabase_url }}
       SUPABASE_KEY: ${{ secrets.supabase_key }}
+      # פרמטרים
       LANDBOT_BUTTON_TEXT: ${{ inputs.lanbot_button_text }}
       TRIGGER_TEXT: ${{ inputs.trigger_text }}
       EXPECT_URLS: ${{ inputs.expect_urls }}
       REQUIRE_NETWORK_CONFIRM: ${{ inputs.require_network_confirm }}
       HEADED: ${{ inputs.headed }}
+      # ⬇️ חדשים (נצרכים בסקריפט)
+      POST_ACTION_IDLE_MS: ${{ inputs.post_action_idle_ms }}
+      SUPABASE_WAIT_MS:    ${{ inputs.supabase_wait_ms }}
 
     steps:
       - name: Checkout
@@ -91,6 +105,9 @@ jobs:
         run: |
           {
             echo "## Landbot v2 run"
-            [ -f artifacts/screenshot_before.png ] && echo "![before](./artifacts/screenshot_before.png)"
-            [ -f artifacts/screenshot_after.png ]  && echo "![after](./artifacts/screenshot_after.png)"
+            [ -f artifacts/screenshot_before.png ] && echo "### Before" && echo "![before](./artifacts/screenshot_before.png)"
+            [ -f artifacts/screenshot_highlight.png ] && echo "### Highlight" && echo "![highlight](./artifacts/screenshot_highlight.png)"
+            [ -f artifacts/screenshot_after.png ]  && echo "### After"  && echo "![after](./artifacts/screenshot_after.png)"
+            echo ""
+            [ -f artifacts/msg_payload.json ] && echo "### msg_payload.json (first 1500 bytes)" && echo '```json' && head -c 1500 artifacts/msg_payload.json && echo && echo '```'
           } >> $GITHUB_STEP_SUMMARY
