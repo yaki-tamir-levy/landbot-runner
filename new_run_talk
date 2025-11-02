@@ -1,0 +1,47 @@
+name: new_run_talk (manual/dispatch only)
+
+on:
+  workflow_dispatch: {}
+  repository_dispatch:
+    types: [new_run_talk_trigger]
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    concurrency:
+      group: new-run-talk
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Echo trigger & local time
+        shell: bash
+        run: |
+          echo "event=${{ github.event_name }}"
+          TZ="Asia/Jerusalem" date '+IL time: %Y-%m-%d %H:%M'
+          date -u '+UTC time: %Y-%m-%d %H:%M'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright (Chromium) + Linux deps
+        run: |
+          npx playwright install chromium
+          npx playwright install-deps
+
+      - name: Run Landbot (new_run_talk)
+        env:
+          LAND_BOT_URL: "https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html"
+          CLICK_SELECTOR: ${{ vars.CLICK_SELECTOR }}   # אם הוגדר (מומלץ)
+          CLICK_X: ${{ vars.CLICK_X }}                 # חלופה לפי קואורדינטות
+          CLICK_Y: ${{ vars.CLICK_Y }}
+        run: node scripts/users_inform_landbot_trigger.mjs
