@@ -31,23 +31,37 @@ jobs:
           fi
           jq --version
 
-      - name: Query Supabase (NEW/IN_PROGRESS/IN PROGRESS)
+      - name: Query Supabase (tolerant)
         id: query
+        shell: bash
         run: |
           set -euo pipefail
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/users_total"
+          echo "GET $ENDPOINT"
 
-          curl -sS --fail \
+          # אם הבקשה נכשלת — נרשום [] כדי לא להפיל את ה-Job
+          if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
             -G "$ENDPOINT" \
-            --data-urlencode 'select=name,processed' \
+            --data-urlencode 'select=name,processed,created_at' \
             --data-urlencode 'or=(processed.eq.NEW,processed.eq.IN_PROGRESS,processed.eq."IN PROGRESS",processed.ilike.*new*,processed.ilike.*in*progress*)' \
             --data-urlencode 'order=created_at.desc' \
-            | tee response.json
+            > response.json
+          then
+            echo "WARN: Supabase request failed; falling back to empty []"
+            echo "[]" > response.json
+          fi
 
-          COUNT=$(jq 'length' response.json)
+          # אם הפלט אינו JSON תקין — נכפה []
+          if ! jq -e . response.json >/dev/null 2>&1; then
+            echo "WARN: invalid JSON; forcing []"
+            echo "[]" > response.json
+          fi
+
+          COUNT="$(jq 'if type=="array" then length else 0 end' response.json)"
+          echo "Found $COUNT pending rows"
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Summary
@@ -55,10 +69,10 @@ jobs:
           echo "### Names with processed in {NEW, IN_PROGRESS, IN PROGRESS}" >> $GITHUB_STEP_SUMMARY
           jq -r '.[].name' response.json | nl -w2 -s'. ' >> $GITHUB_STEP_SUMMARY || true
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Total:** $(jq 'length' response.json)" >> $GITHUB_STEP_SUMMARY
+          echo "**Total:** $(jq 'if type=="array" then length else 0 end' response.json)" >> $GITHUB_STEP_SUMMARY
 
       - name: Trigger Run Landbot if count >= 1
-        if: ${{ steps.query.outputs.count && fromJson(steps.query.outputs.count) >= 1 }}
+        if: ${{ fromJSON(steps.query.outputs.count || '0') >= 1 }}
         run: |
           echo "Found ${{ steps.query.outputs.count }} rows -> dispatching run-landbot-v2.yml"
           curl -sS -X POST \
