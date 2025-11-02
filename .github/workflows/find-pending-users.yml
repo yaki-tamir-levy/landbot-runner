@@ -2,7 +2,7 @@ name: RUN USERS_TOTAL
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "0 6-20 * * *"   # כל שעה עגולה 06:00–20:00 UTC = 08:00–22:00 IL
   workflow_dispatch: {}
 
 permissions:
@@ -20,22 +20,14 @@ jobs:
     uses: ./.github/workflows/run-landbot-v2.yml
     secrets: inherit
     with:
-      # המתנה לפני הלחיצה (1 דקה)
-      pre_run_wait_ms: "60000"          # דורש שתמיכה קיימת ב-reusable (ראה למטה)
-
       # פרמטרי Landbot:
       lanbot_button_text: "סיכום שיחות המטופלים"
       trigger_text: "התחל סיכום שיחות"
       expect_urls: "messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth"
-      require_network_confirm: "false"  # שלא ייצא מוקדם בגלל "סימן רשת"
-
+      require_network_confirm: "false"
       headed: true
 
-      # המתנה אחרי הלחיצה (3 דקות)
-      post_action_idle_ms: "180000"
-
-      # בלי המתנה נוספת:
-      supabase_wait_ms: "0"
-
-      # מינימום ריצה כולל: 5 דקות
-      force_min_run_seconds: "300"
+      # זמני המתנה (כפי שהגדרת קודם):
+      post_action_idle_ms: "180000"   # 3 דקות אחרי הלחיצה
+      supabase_wait_ms: "0"           # אין המתנה נוספת
+      force_min_run_seconds: "300"    # מינימום 5 דק' לריצה
