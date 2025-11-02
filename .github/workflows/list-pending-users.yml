@@ -8,8 +8,7 @@ on:
 
 permissions:
   contents: read
-  actions: write
-  
+
 concurrency:
   group: list-pending-users
   cancel-in-progress: false
@@ -17,10 +16,12 @@ concurrency:
 jobs:
   list-and-trigger:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # אין timeout-minutes -> ה-UI יציג "Running for …"
     env:
       SUPABASE_URL: ${{ secrets.supabase_url }}
       SUPABASE_KEY: ${{ secrets.supabase_key }}
+      # כתובת הבוט (משמשת רק ב-workflow הקורא; מועבר כסוד בהמשך)
+      LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
 
     steps:
       - name: Ensure jq is available
@@ -31,7 +32,7 @@ jobs:
           fi
           jq --version
 
-      - name: Query Supabase (tolerant)
+      - name: Query Supabase (tolerant, never fail)
         id: query
         shell: bash
         run: |
@@ -39,7 +40,6 @@ jobs:
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/users_total"
           echo "GET $ENDPOINT"
 
-          # אם הבקשה נכשלת — נרשום [] כדי לא להפיל את ה-Job
           if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
@@ -50,13 +50,12 @@ jobs:
             --data-urlencode 'order=created_at.desc' \
             > response.json
           then
-            echo "WARN: Supabase request failed; falling back to empty []"
+            echo "WARN: Supabase request failed; using []"
             echo "[]" > response.json
           fi
 
-          # אם הפלט אינו JSON תקין — נכפה []
           if ! jq -e . response.json >/dev/null 2>&1; then
-            echo "WARN: invalid JSON; forcing []"
+            echo "WARN: invalid JSON; using []"
             echo "[]" > response.json
           fi
 
@@ -71,12 +70,12 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Total:** $(jq 'if type=="array" then length else 0 end' response.json)" >> $GITHUB_STEP_SUMMARY
 
-      - name: Trigger Run Landbot if count >= 1
+      - name: Trigger Landbot (only if count >= 1)
         if: ${{ fromJSON(steps.query.outputs.count || '0') >= 1 }}
-        run: |
-          echo "Found ${{ steps.query.outputs.count }} rows -> dispatching run-landbot-v2.yml"
-          curl -sS -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run-landbot-v2.yml/dispatches" \
-            -d "{\"ref\":\"${{ github.ref_name }}\"}"
+        uses: ./.github/workflows/run-landbot-v2.yml
+        with:
+          # מאמתים רכות על קריאות הליבה של Landbot; לא מפילים אם לא נראתה התאמה
+          expect_urls: messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth
+          require_network_confirm: false
+        secrets:
+          LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
