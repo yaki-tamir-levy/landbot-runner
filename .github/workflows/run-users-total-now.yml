@@ -1,7 +1,7 @@
 name: Run users_total Bot (NOW)
 
 on:
-  workflow_dispatch: {}   # הפעלה ידנית בלבד מה-UI
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -12,18 +12,11 @@ jobs:
     uses: ./.github/workflows/run-landbot-v2.yml
     secrets: inherit
     with:
-      # טקסט הכפתור בבוט (אם יש כפתור)
       lanbot_button_text: ${{ vars.LANDBOT_BUTTON_TEXT || 'סיכום שיחות המטופלים' }}
-      # אם אין כפתור – זה הטקסט שישלח לשדה ההקלדה
       trigger_text:       ${{ vars.TRIGGER_TEXT       || 'התחל סיכום שיחות' }}
-
-      # אימות רשת רך: נוודא שליחת הודעה ל-Landbot; לא מחייבים 2xx מ-Supabase
       expect_urls:        ${{ vars.EXPECT_URLS        || 'messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth' }}
       require_network_confirm: ${{ vars.REQUIRE_NETWORK_CONFIRM || 'false' }}
-
-      # להריץ עם תצוגה (Xvfb) ולתעד ארטיפקטים
       headed: true
-
-      # לתת לבוט זמן להגיב/לירות את ה-Webhook
-      post_action_idle_ms: ${{ vars.POST_ACTION_IDLE_MS || '45000' }}   # 45 שניות
-      supabase_wait_ms:    ${{ vars.SUPABASE_WAIT_MS    || '60000' }}   # חלון ״חכם״ עד דקה
+      # המתנות 5 דקות:
+      post_action_idle_ms: '300000'
+      supabase_wait_ms:    '300000'
