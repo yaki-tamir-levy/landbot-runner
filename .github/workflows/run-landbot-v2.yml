@@ -1,32 +1,29 @@
 name: Run Landbot (v2)
 
 on:
-  workflow_dispatch: {}        # הפעלה ידנית מה-UI
-  workflow_call:               # מאפשר ל-Workflows אחרים לקרוא אליו (באותו ריפו)
-    inputs:
-      landbot_url:
-        required: false
-        type: string
+  workflow_dispatch: {}        # הפעלה ידנית בלבד (כפתור ב-Actions)
 
 permissions:
   contents: read
 
 concurrency:
   group: run-landbot-v2-${{ github.ref }}
-  cancel-in-progress: false   # לא לבטל ריצות קודמות; אפשר לשנות ל-true אם תרצה
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # קדימות ל-input מ-workflow_call, אח"כ ל-Secret, ולבסוף לערך ברירת מחדל:
-      LANDBOT_URL: ${{ inputs.landbot_url || secrets.LANDBOT_URL || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html' }}
+      # מומלץ לשמור את ה-URL ב-Secret בשם LANDBOT_URL (Settings → Secrets → Actions)
+      LANDBOT_URL: ${{ secrets.LANDBOT_URL || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
@@ -55,11 +52,10 @@ jobs:
           done
           echo "All attempts failed"; exit 1
 
-      - name: Upload debug artifacts (if fail)
+      - name: Upload debug screenshot (if fail)
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-artifacts
-          path: |
-            landbot_fail.png
+          path: landbot_fail.png
           if-no-files-found: ignore
