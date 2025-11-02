@@ -12,11 +12,10 @@ jobs:
     uses: ./.github/workflows/run-landbot-v2.yml
     secrets: inherit
     with:
-      lanbot_button_text: ${{ vars.LANDBOT_BUTTON_TEXT || 'סיכום שיחות המטופלים' }}
-      trigger_text:       ${{ vars.TRIGGER_TEXT       || 'התחל סיכום שיחות' }}
-      expect_urls:        ${{ vars.EXPECT_URLS        || 'messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth' }}
-      require_network_confirm: ${{ vars.REQUIRE_NETWORK_CONFIRM || 'false' }}
+      lanbot_button_text: "סיכום שיחות המטופלים"
+      trigger_text: "התחל סיכום שיחות"
+      expect_urls: "messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth"
+      require_network_confirm: "false"
       headed: true
-      # המתנות 5 דקות:
-      post_action_idle_ms: '300000'
-      supabase_wait_ms:    '300000'
+      post_action_idle_ms: "300000"   # 5 דקות
+      supabase_wait_ms: "300000"      # 5 דקות
