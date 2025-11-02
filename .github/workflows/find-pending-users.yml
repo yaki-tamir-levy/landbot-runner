@@ -1,8 +1,8 @@
-name: List users_total pending names
+name: RUN USERS_TOTAL
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # כל 10 דקות (UTC)
+    - cron: "*/10 * * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -10,21 +10,32 @@ permissions:
   actions: write
 
 concurrency:
-  group: list-pending-users-${{ github.ref }}
+  group: run-users-total-${{ github.ref }}
   cancel-in-progress: false
 
-run-name: "Scan users_total → Landbot (auto schedule)"
+run-name: "RUN USERS_TOTAL → Landbot (auto schedule)"
 
 jobs:
   trigger-landbot-v2:
     uses: ./.github/workflows/run-landbot-v2.yml
     secrets: inherit
     with:
+      # המתנה לפני הלחיצה (1 דקה)
+      pre_run_wait_ms: "60000"          # דורש שתמיכה קיימת ב-reusable (ראה למטה)
+
+      # פרמטרי Landbot:
       lanbot_button_text: "סיכום שיחות המטופלים"
       trigger_text: "התחל סיכום שיחות"
       expect_urls: "messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth"
-      require_network_confirm: "false"
+      require_network_confirm: "false"  # שלא ייצא מוקדם בגלל "סימן רשת"
+
       headed: true
-      post_action_idle_ms: "300000"   # 5 דק׳
-      supabase_wait_ms:    "300000"   # 5 דק׳
-      force_min_run_seconds: "300"    # 5 דק׳
+
+      # המתנה אחרי הלחיצה (3 דקות)
+      post_action_idle_ms: "180000"
+
+      # בלי המתנה נוספת:
+      supabase_wait_ms: "0"
+
+      # מינימום ריצה כולל: 5 דקות
+      force_min_run_seconds: "300"
