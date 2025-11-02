@@ -1,5 +1,6 @@
 name: Run Landbot (v2) via reusable workflow
 
+# ❌ אין push. ❌ אין schedule כאן.
 on:
   workflow_call:
     inputs:
@@ -31,11 +32,9 @@ jobs:
 
     env:
       NODE_ENV: production
-      # סודית מה-Repo (עוברת מ-find-pending-users.yml דרך secrets: inherit)
       LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
       SUPABASE_URL: ${{ secrets.supabase_url }}
       SUPABASE_KEY: ${{ secrets.supabase_key }}
-      # פרמטרים תפעוליים
       LANDBOT_BUTTON_TEXT: ${{ inputs.lanbot_button_text }}
       TRIGGER_TEXT: ${{ inputs.trigger_text }}
       EXPECT_URLS: ${{ inputs.expect_urls }}
@@ -68,47 +67,30 @@ jobs:
 
       - name: Run Landbot trigger (headed via Xvfb)
         env:
-          # אם HEADED=true נפעיל כרום במצב לא־headless תחת Xvfb
           PW_HEADLESS: ${{ inputs.headed && '0' || '1' }}
         run: |
           mkdir -p artifacts
           if [ "${HEADED}" = "true" ]; then
             xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-              node scripts/landbot_vibre_true_guard.js 2>/dev/null || true
+              node scripts/landbot_v2_trigger.mjs || true
           else
             node scripts/landbot_v2_trigger.mjs || true
           fi
         shell: bash
 
-      - name: Upload artifacts (screens, video, trace, html, payload)
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: landbot-v2-artifacts-${{ github.run_id }}
-          path: |
-            artifacts/**
+          path: artifacts/**
           if-no-files-found: warn
 
-      - name: Job summary with inline screenshots (if present)
+      - name: Job summary
         if: always()
         run: |
           {
             echo "## Landbot v2 run"
-            echo ""
-            if [ -f artifacts/screenshot_before.png ]; then
-              echo "### Before click"
-              echo "![before](./artifacts/screenshot_before.png)"
-            fi
-            if [ -f artifacts/screenshot_after.png ]; then
-              echo "### After click"
-              echo "![after](./artifacts/screenshot_after.png)"
-            fi
-            if [ -f artifacts/msg_payload.json ]; then
-              echo ""
-              echo "### Sent payload (excerpt)"
-              echo '```json'
-              head -c 1500 artifacts/msg_payload.json || true
-              echo
-              echo '```'
-            fi
+            [ -f artifacts/screenshot_before.png ] && echo "![before](./artifacts/screenshot_before.png)"
+            [ -f artifacts/screenshot_after.png ]  && echo "![after](./artifacts/screenshot_after.png)"
           } >> $GITHUB_STEP_SUMMARY
