@@ -1,6 +1,5 @@
 name: Run Landbot (v2) via reusable workflow
 
-# רץ רק כ-reusable
 on:
   workflow_call:
     inputs:
@@ -24,15 +23,14 @@ on:
         required: false
         type: boolean
         default: true
-      # ⬇️ חדשים
       post_action_idle_ms:
         required: false
         type: string
-        default: "45000"   # 45s
+        default: "45000"
       supabase_wait_ms:
         required: false
         type: string
-        default: "60000"   # 60s
+        default: "60000"
 
 jobs:
   run:
@@ -41,19 +39,16 @@ jobs:
 
     env:
       NODE_ENV: production
-      # סודות
       LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
       SUPABASE_URL: ${{ secrets.supabase_url }}
       SUPABASE_KEY: ${{ secrets.supabase_key }}
-      # פרמטרים
       LANDBOT_BUTTON_TEXT: ${{ inputs.lanbot_button_text }}
       TRIGGER_TEXT: ${{ inputs.trigger_text }}
       EXPECT_URLS: ${{ inputs.expect_urls }}
       REQUIRE_NETWORK_CONFIRM: ${{ inputs.require_network_confirm }}
       HEADED: ${{ inputs.headed }}
-      # ⬇️ חדשים (נצרכים בסקריפט)
       POST_ACTION_IDLE_MS: ${{ inputs.post_action_idle_ms }}
-      SUPABASE_WAIT_MS:    ${{ inputs.supabase_wait_ms }}
+      SUPABASE_WAIT_MS: ${{ inputs.supabase_wait_ms }}
 
     steps:
       - name: Checkout
@@ -62,7 +57,7 @@ jobs:
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install dependencies
         run: |
@@ -79,18 +74,31 @@ jobs:
       - name: Install Playwright Browsers + deps
         run: npx playwright install --with-deps
 
+      # ולידציה: אם חסר ה-URL—נעצור מיד עם הודעה ברורה
+      - name: Validate required env
+        shell: bash
+        run: |
+          if [ -z "${LANDBOT_URL:-}" ]; then
+            echo "::error::LANDBOT_URL secret is missing. Set it in Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
       - name: Run Landbot trigger (headed via Xvfb)
         env:
           PW_HEADLESS: ${{ inputs.headed && '0' || '1' }}
+        shell: bash
         run: |
+          set -u
           mkdir -p artifacts
-          if [ "${HEADED}" = "true" ]; then
-            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-              node scripts/landbot_v2_trigger.mjs || true
+          echo "HEADED=${HEADED}  PW_HEADLESS=${PW_HEADLESS}"
+
+          if [ "${HEADED}" = "true" ] && command -v xvfb-run >/dev/null 2>&1; then
+            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bash -lc 'node scripts/landbot_v2_trigger.mjs || true'
           else
             node scripts/landbot_v2_trigger.mjs || true
           fi
-        shell: bash
+
+          echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') run finished" > artifacts/_runner_heartbeat.txt
 
       - name: Upload artifacts
         if: always()
@@ -102,12 +110,29 @@ jobs:
 
       - name: Job summary
         if: always()
+        shell: bash
         run: |
+          set +e   # ← למנוע נפילה על בדיקות קבצים חסרים
           {
             echo "## Landbot v2 run"
-            [ -f artifacts/screenshot_before.png ] && echo "### Before" && echo "![before](./artifacts/screenshot_before.png)"
-            [ -f artifacts/screenshot_highlight.png ] && echo "### Highlight" && echo "![highlight](./artifacts/screenshot_highlight.png)"
-            [ -f artifacts/screenshot_after.png ]  && echo "### After"  && echo "![after](./artifacts/screenshot_after.png)"
+            if [ -f artifacts/screenshot_before.png ]; then
+              echo "### Before"
+              echo "![before](./artifacts/screenshot_before.png)"
+            fi
+            if [ -f artifacts/screenshot_highlight.png ]; then
+              echo "### Highlight"
+              echo "![highlight](./artifacts/screenshot_highlight.png)"
+            fi
+            if [ -f artifacts/screenshot_after.png ]; then
+              echo "### After"
+              echo "![after](./artifacts/screenshot_after.png)"
+            fi
             echo ""
-            [ -f artifacts/msg_payload.json ] && echo "### msg_payload.json (first 1500 bytes)" && echo '```json' && head -c 1500 artifacts/msg_payload.json && echo && echo '```'
-          } >> $GITHUB_STEP_SUMMARY
+            if [ -f artifacts/msg_payload.json ]; then
+              echo "### msg_payload.json (first 1500 bytes)"
+              echo '```json'
+              head -c 1500 artifacts/msg_payload.json
+              echo
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY" || true
