@@ -1,12 +1,9 @@
 name: List users_total pending names
 
-# ❌ אין push. רק מתוזמן / ידני / API
 on:
   schedule:
     - cron: "*/10 * * * *"   # כל 10 דקות (UTC)
-  workflow_dispatch:
-  repository_dispatch:
-    types: [scan-users]
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -16,20 +13,18 @@ concurrency:
   group: list-pending-users-${{ github.ref }}
   cancel-in-progress: false
 
-run-name: "Scan users_total → Landbot (cause=${{ github.event_name }})"
+run-name: "Scan users_total → Landbot (auto schedule)"
 
 jobs:
   trigger-landbot-v2:
-    # שכבת בטיחות: תרוץ רק מטריגרים אלה
-    if: contains('schedule,workflow_dispatch,repository_dispatch', github.event_name)
     uses: ./.github/workflows/run-landbot-v2.yml
     secrets: inherit
     with:
-      lanbot_button_text: ${{ vars.LANDBOT_BUTTON_TEXT || 'סיכום שיחות המטופלים' }}
-      trigger_text:       ${{ vars.TRIGGER_TEXT       || 'התחל סיכום שיחות' }}
-      expect_urls:        ${{ vars.EXPECT_URLS        || 'messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth' }}
-      require_network_confirm: ${{ vars.REQUIRE_NETWORK_CONFIRM || 'false' }}
+      lanbot_button_text: "סיכום שיחות המטופלים"
+      trigger_text: "התחל סיכום שיחות"
+      expect_urls: "messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth"
+      require_network_confirm: "false"
       headed: true
-      # ⬇️ חדשים – הארכת זמן תגובת הבוט והמתנה “חכמה” ל-Supabase
-      post_action_idle_ms: ${{ vars.POST_ACTION_IDLE_MS || '45000' }}   # 45 שניות
-      supabase_wait_ms:    ${{ vars.SUPABASE_WAIT_MS    || '60000' }}   # עד דקה
+      # ←←← 5 דקות במפורש
+      post_action_idle_ms: "300000"
+      supabase_wait_ms:    "300000"
