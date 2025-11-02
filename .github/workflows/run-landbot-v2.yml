@@ -1,7 +1,7 @@
 name: Run Landbot (v2)
 
 on:
-  # הופך את הקובץ ל-reusable workflow שניתן לקרוא אליו מ-Job אחר
+  # הופך את הקובץ לריאוזבל-וורקפלוא; לא ניתן להריץ ידנית מה-UI
   workflow_call:
     inputs:
       expect_urls:
@@ -23,7 +23,7 @@ jobs:
   run:
     name: Landbot v2 runner
     runs-on: ubuntu-latest
-    # אין timeout-minutes → ה-UI יציג "Running for …"
+    # אין timeout-minutes → ה-UI מציג "Running for …"
     env:
       LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
       EXPECT_URLS: ${{ inputs.expect_urls || '' }}
