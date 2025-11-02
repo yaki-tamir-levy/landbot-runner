@@ -1,43 +1,56 @@
-name: Run Landbot (manual/triggered only)
+name: Run Landbot (v2)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch: {}   # מאפשר להריץ ידנית מה-UI
+  # אפשר להוסיף schedule אם תרצה שירוץ בזמנים קבועים:
+  # schedule:
+  #   - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    concurrency:
-      group: landbot-script
-      cancel-in-progress: false
+    timeout-minutes: 15
+    env:
+      # אפשר לשים את ה-URL פה או בסוד (מומלץ כסוד אם רגיש)
+      LANDBOT_URL: https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Echo trigger & local time
-        run: |
-          echo "event=${{ github.event_name }}"
-          TZ="Asia/Jerusalem" date '+Local IL time: %Y-%m-%d %H:%M (Asia/Jerusalem)'
-
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Install deps
-        run: npm install
+        run: npm ci
 
-      - name: Install Playwright (Chromium) + deps
-        run: npx playwright install chromium && npx playwright install-deps
+      - name: Install Playwright (with browsers & deps)
+        run: npx playwright install --with-deps
 
-      - name: Run landbot_v2 (headless)
-        env:
-          CI: 'true'
-          # >>> הבוט הנכון <<<
-          LAND_BOT_URL: https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html
-          # אם אתה עובד עם קליקים מוחלטים/סלקטור, השאר כפי שהגדרת:
-          CLICK_SELECTOR: ${{ vars.CLICK_SELECTOR }}
-          CLICK_X: ${{ vars.CLICK_X }}
-          CLICK_Y: ${{ vars.CLICK_Y }}
-        run: npm run landbot-v2
+      - name: Run Landbot trigger (retry x2)
+        run: |
+          set -e
+          for i in 1 2; do
+            echo "Attempt #$i"
+            if npm run landbot-v2; then
+              exit 0
+            fi
+            echo "Attempt #$i failed; sleeping and retrying..."
+            sleep 10
+          done
+          echo "All attempts failed"; exit 1
+
+      - name: Upload debug artifacts (if fail)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            landbot_fail.png
+            traces
+          if-no-files-found: ignore
