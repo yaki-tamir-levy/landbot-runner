@@ -1,7 +1,7 @@
 name: Run Landbot (v2)
 
 on:
-  workflow_dispatch: {}     # טריגר ידני בלבד
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -13,24 +13,20 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 6
     env:
-      # מומלץ לשים את ה-URL ב-Secret: Settings → Secrets → Actions → LANDBOT_URL
       LANDBOT_URL: ${{ secrets.LANDBOT_URL || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html' }}
+      # אפשר לשנות את טקסט הכפתור כאן במקום בקוד:
+      # LANDBOT_BUTTON_TEXT: 'סיכום שיחות המטופלים'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node (no cache; works without lockfile)
+      - name: Setup Node (no cache)
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Print workspace & list files
-        run: |
-          echo "Workspace: ${{ github.workspace }}"
-          ls -la
 
       - name: Install deps (ci if lock exists, else install)
         run: |
@@ -40,20 +36,17 @@ jobs:
             npm install
           fi
 
-      - name: Install Playwright (with browsers & system deps)
+      - name: Install Playwright (with browsers & deps)
         run: npx playwright install --with-deps
 
       - name: Create debug placeholder
-        run: |
-          date -Is > landbot_debug_started.txt
+        run: date -Is > landbot_debug_started.txt
 
-      # ניסיון יחיד, ללא לולאת RERUN. אפשר להשאיר timeout חיצוני שיחתוך ריצה תלויה.
-      - name: Run Landbot trigger (single attempt, 180s timeout)
+      - name: Run Landbot trigger (single attempt, 120s timeout)
         run: |
           set -e
-          timeout 180s npm run landbot-v2
+          timeout 120s npm run landbot-v2
 
-      # נעלה תמיד ארטיפקטים (גם בהצלחה) לטובת דיבוג
       - name: Upload debug artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
@@ -61,6 +54,7 @@ jobs:
           name: playwright-artifacts
           path: |
             landbot_fail.png
+            landbot_after_click.png
             landbot_page.html
             landbot_page_early.html
             landbot_error.txt
