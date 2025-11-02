@@ -1,7 +1,7 @@
 name: Run Landbot (v2)
 
 on:
-  workflow_dispatch: {}        # הפעלה ידנית בלבד כרגע
+  workflow_dispatch: {}     # טריגר ידני בלבד
 
 permissions:
   contents: read
@@ -13,21 +13,26 @@ concurrency:
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     env:
-      # מומלץ לשמור את ה-URL ב-Secret: Settings → Secrets → Actions → LANDBOT_URL
+      # מומלץ לשים את ה-URL ב-Secret: Settings → Secrets → Actions → LANDBOT_URL
       LANDBOT_URL: ${{ secrets.LANDBOT_URL || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node (no cache)
+      - name: Setup Node (no cache; works without lockfile)
         uses: actions/setup-node@v4
         with:
-          node-version: '20'   # בלי cache כדי שלא ידרוש lockfile
+          node-version: '20'
 
-      - name: Install deps (works with or without lockfile)
+      - name: Print workspace & list files
+        run: |
+          echo "Workspace: ${{ github.workspace }}"
+          ls -la
+
+      - name: Install deps (ci if lock exists, else install)
         run: |
           if [ -f package-lock.json ]; then
             npm ci
@@ -38,24 +43,26 @@ jobs:
       - name: Install Playwright (with browsers & system deps)
         run: npx playwright install --with-deps
 
-      - name: Run Landbot trigger (retry x2)
+      - name: Create debug placeholder
+        run: |
+          date -Is > landbot_debug_started.txt
+
+      # ניסיון יחיד, ללא לולאת RERUN. אפשר להשאיר timeout חיצוני שיחתוך ריצה תלויה.
+      - name: Run Landbot trigger (single attempt, 180s timeout)
         run: |
           set -e
-          for i in 1 2; do
-            echo "Attempt #$i"
-            if npm run landbot-v2; then
-              exit 0
-            fi
-            echo "Attempt #$i failed; sleeping and retrying..."
-            sleep 10
-          done
-          echo "All attempts failed"; exit 1
+          timeout 180s npm run landbot-v2
 
-      - name: Upload debug screenshot (if fail)
-        if: failure()
+      # נעלה תמיד ארטיפקטים (גם בהצלחה) לטובת דיבוג
+      - name: Upload debug artifacts (always)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-artifacts
-          path: landbot_fail.png
-                landbot_page.html
-          if-no-files-found: ignore
+          path: |
+            landbot_fail.png
+            landbot_page.html
+            landbot_page_early.html
+            landbot_error.txt
+            landbot_debug_started.txt
+          if-no-files-found: warn
