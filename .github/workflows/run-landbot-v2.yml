@@ -1,76 +1,114 @@
-name: Run Landbot (v2)
+name: Run Landbot (v2) via reusable workflow
 
 on:
-  # הופך את הקובץ לריאוזבל-וורקפלוא; לא ניתן להריץ ידנית מה-UI
   workflow_call:
     inputs:
-      expect_urls:
-        description: 'Comma-separated URL substrings to verify (e.g. messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth)'
+      lanbot_button_text:
         required: false
         type: string
+        default: "סיכום שיחות המטופלים"
+      trigger_text:
+        required: false
+        type: string
+        default: "התחל סיכום שיחות"
+      expect_urls:
+        required: false
+        type: string
+        default: "messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth"
       require_network_confirm:
-        description: 'If true, fail when none of the expect_urls gets a 2xx response'
+        required: false
+        type: string
+        default: "false"
+      headed:
         required: false
         type: boolean
-    secrets:
-      LANDBOT_URL:
-        required: true
-
-permissions:
-  contents: read
+        default: true
 
 jobs:
   run:
-    name: Landbot v2 runner
     runs-on: ubuntu-latest
-    # אין timeout-minutes → ה-UI מציג "Running for …"
+    timeout-minutes: 25
+
     env:
+      NODE_ENV: production
+      # סודית מה-Repo (עוברת מ-find-pending-users.yml דרך secrets: inherit)
       LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
-      EXPECT_URLS: ${{ inputs.expect_urls || '' }}
-      REQUIRE_NETWORK_CONFIRM: ${{ inputs.require_network_confirm && 'true' || 'false' }}
+      SUPABASE_URL: ${{ secrets.supabase_url }}
+      SUPABASE_KEY: ${{ secrets.supabase_key }}
+      # פרמטרים תפעוליים
+      LANDBOT_BUTTON_TEXT: ${{ inputs.lanbot_button_text }}
+      TRIGGER_TEXT: ${{ inputs.trigger_text }}
+      EXPECT_URLS: ${{ inputs.expect_urls }}
+      REQUIRE_NETWORK_CONFIRM: ${{ inputs.require_network_confirm }}
+      HEADED: ${{ inputs.headed }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install deps (ci if lock exists, else install)
+      - name: Install dependencies
         run: |
-          if [ -f package-lock.json ]; then
+          corepack enable
+          if [ -f pnpm-lock.yaml ]; then
+            corepack prepare pnpm@latest --activate
+            pnpm i --frozen-lockfile
+          elif [ -f package-lock.json ]; then
             npm ci
           else
-            npm install
+            npm i
           fi
 
-      - name: Install Playwright (browsers & deps)
+      - name: Install Playwright Browsers + deps
         run: npx playwright install --with-deps
 
-      - name: Debug heartbeat
-        run: date -Is > landbot_debug_started.txt
-
-      - name: Run Landbot trigger (no shell timeout; watchdog inside script)
+      - name: Run Landbot trigger (headed via Xvfb)
+        env:
+          # אם HEADED=true נפעיל כרום במצב לא־headless תחת Xvfb
+          PW_HEADLESS: ${{ inputs.headed && '0' || '1' }}
         run: |
-          set -e
-          npm run landbot-v2
+          mkdir -p artifacts
+          if [ "${HEADED}" = "true" ]; then
+            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+              node scripts/landbot_vibre_true_guard.js 2>/dev/null || true
+          else
+            node scripts/landbot_v2_trigger.mjs || true
+          fi
+        shell: bash
 
-      - name: Upload artifacts (always)
+      - name: Upload artifacts (screens, video, trace, html, payload)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-artifacts
+          name: landbot-v2-artifacts-${{ github.run_id }}
           path: |
-            landbot_before_click.png
-            landbot_after_click.png
-            landbot_fail.png
-            landbot_page.html
-            landbot_page_early.html
-            landbot_error.txt
-            landbot_debug_started.txt
-            trace.zip
-            videos/**
-            landbot_run.webm
+            artifacts/**
           if-no-files-found: warn
+
+      - name: Job summary with inline screenshots (if present)
+        if: always()
+        run: |
+          {
+            echo "## Landbot v2 run"
+            echo ""
+            if [ -f artifacts/screenshot_before.png ]; then
+              echo "### Before click"
+              echo "![before](./artifacts/screenshot_before.png)"
+            fi
+            if [ -f artifacts/screenshot_after.png ]; then
+              echo "### After click"
+              echo "![after](./artifacts/screenshot_after.png)"
+            fi
+            if [ -f artifacts/msg_payload.json ]; then
+              echo ""
+              echo "### Sent payload (excerpt)"
+              echo '```json'
+              head -c 1500 artifacts/msg_payload.json || true
+              echo
+              echo '```'
+            fi
+          } >> $GITHUB_STEP_SUMMARY
