@@ -31,6 +31,11 @@ on:
         type: string
         required: false
         default: "300000"
+      # חדש: אכיפת משך מינימלי לריצה (שניות)
+      force_min_run_seconds:
+        type: string
+        required: false
+        default: "300"
 
 jobs:
   run:
@@ -39,7 +44,7 @@ jobs:
 
     env:
       NODE_ENV: production
-      LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
+      LANDBOT_URL: ${{ secrets.LANDBOT_URL }}   # ← חובה להגדיר ב-Secrets
       SUPABASE_URL: ${{ secrets.supabase_url }}
       SUPABASE_KEY: ${{ secrets.supabase_key }}
       LANDBOT_BUTTON_TEXT: ${{ inputs.lanbot_button_text }}
@@ -49,6 +54,7 @@ jobs:
       HEADED: ${{ inputs.headed }}
       POST_ACTION_IDLE_MS: ${{ inputs.post_action_idle_ms }}
       SUPABASE_WAIT_MS: ${{ inputs.supabase_wait_ms }}
+      FORCE_MIN_RUN_SECONDS: ${{ inputs.force_min_run_seconds }}
 
     steps:
       - name: Checkout
@@ -82,17 +88,45 @@ jobs:
             exit 1
           fi
 
-      - name: Run Landbot trigger (headed via Xvfb)
+      - name: Echo effective settings
+        shell: bash
+        run: |
+          {
+            echo "LANDBOT_BUTTON_TEXT=${LANDBOT_BUTTON_TEXT}"
+            echo "TRIGGER_TEXT=${TRIGGER_TEXT}"
+            echo "EXPECT_URLS=${EXPECT_URLS}"
+            echo "REQUIRE_NETWORK_CONFIRM=${REQUIRE_NETWORK_CONFIRM}"
+            echo "HEADED=${HEADED}"
+            echo "POST_ACTION_IDLE_MS=${POST_ACTION_IDLE_MS}"
+            echo "SUPABASE_WAIT_MS=${SUPABASE_WAIT_MS}"
+            echo "FORCE_MIN_RUN_SECONDS=${FORCE_MIN_RUN_SECONDS}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run Landbot trigger (headed via Xvfb) + enforce min runtime
         shell: bash
         run: |
           set -u
           mkdir -p artifacts
-          echo "HEADED=${HEADED}"
 
+          START_TS=$(date +%s)
+
+          echo "HEADED=${HEADED}"
           if [ "${HEADED}" = "true" ] && command -v xvfb-run >/dev/null 2>&1; then
             xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bash -lc 'node scripts/landbot_v2_trigger.mjs || true'
           else
             node scripts/landbot_v2_trigger.mjs || true
+          fi
+
+          END_TS=$(date +%s)
+          DELTA=$(( END_TS - START_TS ))
+          MIN_SECS=${FORCE_MIN_RUN_SECONDS:-300}
+
+          echo "Run duration (so far): ${DELTA}s" | tee -a artifacts/_duration.txt
+
+          if [ "$DELTA" -lt "$MIN_SECS" ]; then
+            PAD=$(( MIN_SECS - DELTA ))
+            echo "Padding runtime by ${PAD}s to reach at least ${MIN_SECS}s total..."
+            sleep "$PAD"
           fi
 
           echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') run finished" > artifacts/_runner_heartbeat.txt
@@ -112,6 +146,12 @@ jobs:
           set +e
           {
             echo "## Landbot v2 run"
+            if [ -f artifacts/_duration.txt ]; then
+              echo ""
+              echo "### Duration"
+              cat artifacts/_duration.txt
+              echo ""
+            fi
             if [ -f artifacts/screenshot_before.png ]; then
               echo "### Before"
               echo "![before](./artifacts/screenshot_before.png)"
