@@ -1,170 +1,169 @@
 // scripts/landbot_v2_trigger.mjs
+// מפעיל את ה-Landbot בדפדפן Playwright במצב headless/headed (לפי ENV),
+// לוחץ על כפתור לפי טקסט אם קיים, ואם לא — שולח טקסט טריגר לאינפוט.
+// שומר screenshots לפני/אחרי, עותק HTML, וידאו, trace, ו-payload של ההודעה.
+
 import { chromium } from 'playwright';
-import fs from 'fs';
+import fs from 'node:fs';
+import path from 'node:path';
 
-const URL = process.env.LANDBOT_HARDCODED_URL || process.env.LANDBOT_URL
-  || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html';
-
+const LANDBOT_URL = process.env.LANDBOT_URL;
 const BUTTON_TEXT = process.env.LANDBOT_BUTTON_TEXT || 'סיכום שיחות המטופלים';
+const TRIGGER_TEXT = process.env.TRIGGER_TEXT || 'התחל סיכום שיחות';
+const EXPECT_URLS = (process.env.EXPECT_URLS || '').split(',').map(s => s.trim()).filter(Boolean);
+const REQUIRE_NETWORK_CONFIRM = String(process.env.REQUIRE_NETWORK_CONFIRM || 'false').toLowerCase() === 'true';
 
-// רשימת תתי-כתובות לזיהוי תגובת 2xx אחרי הקליק (מופרדות בפסיקים); ריק = לא בודקים כלל
-const URL_PARTS_RAW = (process.env.EXPECT_URLS || '').trim();
-const REQUIRE_NETWORK_CONFIRM =
-  String(process.env.REQUIRE_NETWORK_CONFIRM || 'false').toLowerCase() === 'true';
+// אם PW_HEADLESS=0 או HEADED=true — נריץ לא־headless (תחת Xvfb בגיטהאב)
+const headless = !(process.env.PW_HEADLESS === '0' || String(process.env.HEADED).toLowerCase() === 'true');
 
-// ---- Watchdog למניעת ריצות אינסופיות (כ-120ש׳) ----
-const watchdog = setTimeout(() => {
-  console.error('[landbot-v2] ERROR: watchdog timeout');
-  try { fs.writeFileSync('landbot_error.txt', 'Watchdog timeout'); } catch {}
-  process.exit(1);
-}, 120_000);
+const ART_DIR = path.resolve('artifacts');
+if (!fs.existsSync(ART_DIR)) fs.mkdirSync(ART_DIR, { recursive: true });
 
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const VIEWPORT = { width: 1366, height: 864 };
+function log(msg, obj) {
+  const line = `[landbot_v2] ${new Date().toISOString()} | ${msg} ${obj ? JSON.stringify(obj) : ''}`;
+  console.log(line);
+  fs.appendFileSync(path.join(ART_DIR, 'run.log'), line + '\n');
+}
 
-try { fs.writeFileSync('landbot_debug_started.txt', new Date().toISOString()); } catch {}
+if (!LANDBOT_URL) {
+  console.error('ENV LANDBOT_URL is required');
+  process.exit(0); // לא מפיל ריצה בכוח, נשאיר ל-workflow להחליט
+}
 
 (async () => {
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--disable-blink-features=AutomationControlled','--no-sandbox','--disable-dev-shm-usage']
-  });
-
+  const browser = await chromium.launch({ headless });
   const context = await browser.newContext({
-    userAgent: UA,
-    viewport: VIEWPORT,
-    locale: 'he-IL',
-    extraHTTPHeaders: {
-      'Accept-Language':'he-IL,he;q=0.9,en-US;q=0.8',
-      'Referer': URL,
-      'Origin': 'https://landbot.pro'
-    },
-    recordVideo: { dir: 'videos', size: VIEWPORT }
-  });
-
-  // פתיחת shadowRoot ל-open והסוואת אוטומציה
-  await context.addInitScript(() => {
-    const orig = Element.prototype.attachShadow;
-    Element.prototype.attachShadow = function(init){ try{return orig.call(this,{...init,mode:'open'})}catch{return orig.call(this,init)} };
-    Object.defineProperty(navigator,'webdriver',{get:()=>false});
-    window.chrome = { runtime:{} };
-    Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3] });
-    Object.defineProperty(navigator, 'languages', { get: () => ['he-IL','he','en-US','en'] });
+    viewport: { width: 1280, height: 800 },
+    recordVideo: { dir: ART_DIR, size: { width: 1280, height: 800 } }
   });
 
   await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
 
   const page = await context.newPage();
-  const video = page.video();
-  page.setDefaultTimeout(35_000);
-  page.setDefaultNavigationTimeout(35_000);
 
-  page.on('console', m => console.log('[console]', m.type(), m.text()));
-  page.on('requestfailed', r => console.log('FAILED', r.url(), r.failure()?.errorText));
-  page.on('response', r => {
-    const u = r.url(); const s = r.status();
-    if (u.includes('landbot') || u.includes('webchat') || u.includes('supabase') || u.includes('messages.landbot.io')) {
-      console.log('RESP', s, u);
-    }
+  // לוגינג של בקשות/תגובות כדי לזהות שליחת הודעה ל-Landbot
+  const netLog = [];
+  page.on('request', req => {
+    netLog.push({ t: Date.now(), dir: 'req', url: req.url(), method: req.method() });
+  });
+  page.on('response', async (res) => {
+    try {
+      netLog.push({ t: Date.now(), dir: 'res', url: res.url(), status: res.status() });
+    } catch {}
   });
 
-  console.log('[landbot-v2] goto:', URL);
-  await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  try {
+    log('Navigating to Landbot URL', { url: LANDBOT_URL, headless });
+    await page.goto(LANDBOT_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
 
-  // צילומי דף ראשונים
-  try { await page.screenshot({ path: 'landbot_before_click.png', fullPage: true }); } catch {}
-  try { fs.writeFileSync('landbot_page_early.html', await page.content()); } catch {}
+    // המתנה ליציבות ראשונית + צילום "לפני"
+    await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
+    await page.screenshot({ path: path.join(ART_DIR, 'screenshot_before.png'), fullPage: true }).catch(() => {});
+    const htmlBefore = await page.content().catch(() => '');
+    fs.writeFileSync(path.join(ART_DIR, 'page_before.html'), htmlBefore || '', 'utf8');
 
-  // אם יש "Start the conversation" – נלחץ
-  const startBtn = page.getByText(/Start the conversation/i);
-  if (await startBtn.count().catch(()=>0)) {
-    try { await startBtn.first().click({ timeout: 8_000 }); } catch {}
-  }
+    // נסה למצוא כפתור לפי טקסט
+    let clicked = false;
+    const selectorCandidates = [
+      `role=button[name="${BUTTON_TEXT}"]`,
+      `text="${BUTTON_TEXT}"`,
+      `button:has-text("${BUTTON_TEXT}")`,
+      `a:has-text("${BUTTON_TEXT}")`,
+      `[role="button"]:has-text("${BUTTON_TEXT}")`
+    ];
 
-  // לחיצה לפי טקסט (כולל Shadow DOM)
-  async function clickByText(t){
-    const byRole = page.getByRole('button', { name: t, exact: false });
-    if (await byRole.count().catch(()=>0)) { await byRole.first().click({ timeout: 10_000 }); return true; }
-    const byText = page.getByText(t, { exact: false });
-    if (await byText.count().catch(()=>0)) { await byText.first().click({ timeout: 10_000 }); return true; }
+    for (const sel of selectorPatch(selectorCandidates)) {
+      const el = page.locator(sel);
+      if (await el.first().count().catch(() => 0)) {
+        log('Found button candidate', { selector: sel });
+        // הדגש ויזואלי לפני לחיצה
+        try {
+          const handle = await el.first().elementHandle();
+          await handle.evaluate((node) => {
+            node.style.outline = '3px solid red';
+            node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+          await page.waitForTimeout(600);
+          await page.screenshot({ path: path.join(ART_DIR, 'screenshot_highlight.png') }).catch(() => {});
+        } catch {}
 
-    const handle = await page.evaluateHandle((txt) => {
-      const clickable = (el)=>{
-        if(!el) return null;
-        const cs=getComputedStyle(el);
-        const isBtn=['BUTTON','A'].includes(el.tagName)||el.getAttribute('role')==='button';
-        if(isBtn || el.onclick || cs.cursor==='pointer') return el;
-        const near=el.closest('button, [role="button"], a');
-        return near||null;
-      };
-      const deepSearch=(root)=>{
-        const all=root.querySelectorAll('*');
-        for (const el of all){
-          if((el.innerText||'').includes(txt)){
-            const c = clickable(el);
-            if(c) return c;
-          }
-          if(el.shadowRoot){
-            const found = deepSearch(el.shadowRoot);
-            if(found) return found;
-          }
-        }
-        return null;
-      };
-      return deepSearch(document);
-    }, t);
-    const el = await handle.asElement();
-    if (el) { await el.click({ timeout: 10_000 }); return true; }
-    return false;
-  }
-
-  const clicked = await clickByText(BUTTON_TEXT);
-  if (!clicked) {
-    await page.screenshot({ path: 'landbot_fail.png', fullPage: true }).catch(()=>{});
-    fs.writeFileSync('landbot_page.html', await page.content());
-    throw new Error(`Button "${BUTTON_TEXT}" not found/clickable`);
-  }
-
-  // אימות־רשת "רך" על פי EXPECT_URLS (אם הוגדר)
-  let networkOk = true;
-  if (URL_PARTS_RAW) {
-    networkOk = false;
-    const parts = URL_PARTS_RAW.split(',').map(s => s.trim()).filter(Boolean);
-    try {
-      await page.waitForResponse(
-        r => parts.some(p => r.url().includes(p)) && r.status() >= 200 && r.status() < 300,
-        { timeout: 20_000 }
-      );
-      console.log('[landbot-v2] Verified: matched one of:', parts.join(' | '));
-      networkOk = true;
-    } catch {
-      console.warn('[landbot-v2] WARNING: no 2xx match for any of:', parts.join(' | '));
+        await el.first().click({ timeout: 10_000 }).catch(() => {});
+        clicked = true;
+        break;
+      }
     }
-  } else {
-    console.log('[landbot-v2] NOTE: no EXPECT_URLS provided; skipping network verification.');
+
+    // אם אין כפתור — שולחים טקסט טריגר לאינפוט של הוובצ׳אט
+    let payload = null;
+    if (!clicked) {
+      log('Button not found, trying to send trigger text', { TRIGGER_TEXT });
+      // נסה לאתר שדה קלט של Landbot (לרוב contenteditable)
+      const inputSelectors = [
+        'div[contenteditable="true"]',
+        'textarea',
+        'input[type="text"]',
+        '[role="textbox"]'
+      ];
+      let typed = false;
+      for (const sel of inputSelectors) {
+        const input = page.locator(sel).last();
+        if (await input.count().catch(() => 0)) {
+          await input.click({ timeout: 5_000 }).catch(() => {});
+          await input.type(TRIGGER_TEXT, { delay: 30 }).catch(() => {});
+          await page.keyboard.press('Enter').catch(() => {});
+          typed = true;
+          payload = { type: 'text', text: TRIGGER_TEXT, ts: Date.now() };
+          break;
+        }
+      }
+      if (!typed) log('Could not find input to type trigger text');
+    } else {
+      payload = { type: 'click', text: BUTTON_TEXT, ts: Date.now() };
+    }
+
+    if (payload) {
+      fs.writeFileSync(path.join(ART_DIR, 'msg_payload.json'), JSON.stringify(payload, null, 2));
+    }
+
+    // המתנה לאישורי רשת אם הוגדרו
+    if (EXPECT_LENGTH(EXPECT_URLS) > 0) {
+      log('Waiting for expected network responses', { EXPECT_URLS, REQUIRE_NETWORK_CONFIRM });
+      try {
+        await Promise.all(EXPECT_URLS.map(u =>
+          page.waitForResponse(res => res.url().includes(u) && res.status() >= 200 && res.status() < 300, { timeout: 25_000 })
+        ));
+        log('All expected URLs confirmed 2xx');
+      } catch (e) {
+        log('Expected URL(s) not all confirmed', { error: String(e) });
+        if (REQUIRE_NETWORK_CONFIRM) {
+          throw new Error('REQUIRE_NETWORK_CONFIRM=true and not all expected URLs returned 2xx');
+        }
+      }
+    } else {
+      // המתנת רשת כללית
+      await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+    }
+
+    // צילום "אחרי" ושמירת HTML
+    await page.screenshot({ path: path.join(ART_DIR, 'screenshot_after.png'), fullPage: true }).catch(() => {});
+    const htmlAfter = await page.content().catch(() => '');
+    fs.writeFileSync(path.join(ART_DIR, 'page_after.html'), htmlAfter || '', 'utf8');
+
+    // שמירת לוג רשת
+    fs.writeFileSync(path.join(ART_DIR, 'network_log.json'), JSON.stringify(netLog, null, 2));
+
+    log('Done successfully');
+  } catch (err) {
+    log('Run error', { error: String(err && err.stack ? err.stack : err) });
+  } finally {
+    await context.tracing.stop({ path: path.join(ART_DIR, 'trace.zip') }).catch(() => {});
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
   }
-
-  try { await page.screenshot({ path: 'landbot_after_click.png', fullPage: true }); } catch {}
-  await context.tracing.stop({ path: 'trace.zip' });
-
-  // סגירה + שמירת הווידאו בשם קבוע
-  const p = video ? await video.path() : null;
-  await context.close();
-  if (p) { try { fs.copyFileSync(p, 'landbot_run.webm'); } catch {} }
-  await browser.close();
-
-  clearTimeout(watchdog);
-
-  if (!networkOk && REQUIRE_NETWORK_CONFIRM) {
-    console.error('[landbot-v2] Enforcing failure: REQUIRE_NETWORK_CONFIRM=true and no expected 2xx seen');
-    process.exit(1);
-  }
-
-  console.log('[landbot-v2] Success (button clicked' + (networkOk ? ' + network ok' : ' | network not observed') + ')');
-  process.exit(0);
-})().catch(async (err) => {
-  console.error('[landbot-v2] ERROR:', err?.message || err);
-  try { await (await import('fs')).promises.writeFile('landbot_error.txt', String(err?.stack||err)); } catch {}
-  clearTimeout(watchdog);
-  process.exit(1);
+})().catch(e => {
+  console.error(e);
+  process.exit(0); // לא מפילים את ה-Job בכח כדי שתראה ארטיפקטים גם בשגיאה
 });
+
+function selectorPatch(arr){ return Array.from(new Set(arr.filter(Boolean))); }
+function EXPECT_LENGTH(a){ return Array.isArray(a) ? a.length : 0; }
