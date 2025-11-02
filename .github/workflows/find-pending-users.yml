@@ -2,10 +2,10 @@ name: List users_total pending names
 
 on:
   schedule:
-    - cron: "*/10 * * * *"     # רץ כל 10 דק׳ UTC, ונבצע סינון לפי Asia/Jerusalem בשלב
+    - cron: "*/10 * * * *"   # ריצה כל 10 דקות UTC; נסנן לפי Asia/Jerusalem בשלבי ה-job
   workflow_dispatch: {}
   repository_dispatch:
-    types: [scan-users]        # מאפשר הדלקה חיצונית דרך API אם תרצה
+    types: [scan-users]
 
 permissions:
   contents: read
@@ -17,8 +17,11 @@ concurrency:
 
 jobs:
   list-and-trigger:
+    name: Check users_total & compute count (IL window)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # אל תגדיר timeout-minutes כדי לקבל "Running for ..." (ספירה קדימה)
+    outputs:
+      count: ${{ steps.query.outputs.count }}
     env:
       SUPABASE_URL: ${{ secrets.supabase_url }}
       SUPABASE_KEY: ${{ secrets.supabase_key }}
@@ -26,13 +29,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # סינון לפי שעון ישראל (רץ כל 10 דק׳ אך ימשיך רק בין 08:00–22:00 Asia/Jerusalem)
+      # סינון לפי שעון ישראל: אם לא בין 08:00–22:00 (Asia/Jerusalem) — יציאה רכה
       - name: Guard by Israel time
+        shell: bash
         run: |
           TZ='Asia/Jerusalem' date
           HOUR=$(TZ='Asia/Jerusalem' date +%H)
           if [ "$HOUR" -lt 8 ] || [ "$HOUR" -ge 22 ]; then
             echo "Outside IL window (08:00–22:00), exiting gracefully."
+            echo "count=0" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -44,23 +49,35 @@ jobs:
           fi
           jq --version
 
-      - name: Query Supabase (NEW/IN_PROGRESS/IN PROGRESS)
+      - name: Query Supabase (tolerant, never fail)
         id: query
+        shell: bash
         run: |
           set -euo pipefail
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/users_total"
+          echo "GET $ENDPOINT"
 
-          curl -sS --fail \
+          # לא מפילים את ה-job: אם הבקשה נכשלת — נחזיר []
+          if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
             -G "$ENDPOINT" \
-            --data-urlencode 'select=name,processed' \
+            --data-urlencode 'select=name,processed,created_at' \
             --data-urlencode 'or=(processed.eq.NEW,processed.eq.IN_PROGRESS,processed.eq."IN PROGRESS",processed.ilike.*new*,processed.ilike.*in*progress*)' \
             --data-urlencode 'order=created_at.desc' \
-            | tee response.json
+            > response.json
+          then
+            echo "[]" > response.json
+          fi
 
-          COUNT=$(jq 'length' response.json)
+          # אם הפלט לא JSON תקין — נכפה []
+          if ! jq -e . response.json >/dev/null 2>&1; then
+            echo "[]" > response.json
+          fi
+
+          COUNT="$(jq 'if type=="array" then length else 0 end' response.json)"
+          echo "Found $COUNT pending rows"
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 
       - name: Summary
@@ -68,21 +85,18 @@ jobs:
           echo "### Names with processed in {NEW, IN_PROGRESS, IN PROGRESS}" >> $GITHUB_STEP_SUMMARY
           jq -r '.[].name' response.json | nl -w2 -s'. ' >> $GITHUB_STEP_SUMMARY || true
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Total:** $(jq 'length' response.json)" >> $GITHUB_STEP_SUMMARY
+          echo "**Total:** $(jq 'if type==\"array\" then length else 0 end' response.json)" >> $GITHUB_STEP_SUMMARY
 
-      # הדלקת ה-workflow המבצע כקריאה פנימית (workflow_call)
-      - name: Call run-landbot-v2 (reusable)
-        if: ${{ steps.query.outputs.count && fromJson(steps.query.outputs.count) >= 1 }}
-        uses: ./.github/workflows/run-landbot-v2.yml
-        with:
-          landbot_url: ${{ secrets.LANDBOT_URL }}
-
-      # לחלופין: אם אתה מעדיף להמשיך עם dispatch API ל-workflow המבצע
-      # - name: Dispatch run-landbot-v2.yml
-      #   if: ${{ steps.query.outputs.count && fromJson(steps.query.outputs.count) >= 1 }}
-      #   run: |
-      #     curl -sS -X POST \
-      #       -H "Accept: application/vnd.github+json" \
-      #       -H "Authorization: Bearer ${{ github.token }}" \
-      #       "https://api.github.com/repos/${{ github.repository }}/actions/workflows/run-landbot-v2.yml/dispatches" \
-      #       -d "{\"ref\":\"${{ github.ref_name }}\"}"
+  run-landbot-v2:
+    name: Run Landbot (v2) via reusable workflow
+    needs: [list-and-trigger]
+    if: ${{ fromJSON(needs.list-and-trigger.outputs.count || '0') >= 1 }}
+    # ⬇️ קריאה לריאוזבל-וורקפלוא כרון שלם (לא בתוך steps)
+    uses: ./.github/workflows/run-landbot-v2.yml
+    with:
+      # אימות רך על קריאות ה-Landbot; לא מפילים אם אין התאמה
+      expect_urls: messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth
+      require_network_confirm: false
+    secrets:
+      # העבר את כתובת הבוט כסוד ל־reusable workflow
+      LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
