@@ -4,179 +4,150 @@ import fs from 'fs';
 
 const URL = process.env.LANDBOT_URL
   || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html';
-
 const BUTTON_TEXT = process.env.LANDBOT_BUTTON_TEXT || 'סיכום שיחות המטופלים';
+const EXPECT_RESPONSE_URL_PART = process.env.EXPECT_RESPONSE_URL_PART || 'supabase.co/rest/v1';
 
-// --- Watchdog: חותך ריצה תקועה אחרי 110 שניות ---
 const watchdog = setTimeout(() => {
   console.error('[landbot-v2] ERROR: watchdog timeout');
   try { fs.writeFileSync('landbot_error.txt', 'Watchdog timeout'); } catch {}
   process.exit(1);
-}, 110_000);
+}, 120_000);
 
-// UA/viewport "רגילים"
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const VIEWPORT = { width: 1366, height: 864 };
 
-// שורת דיבוג כדי שתמיד יהיה משהו להעלות
 try { fs.writeFileSync('landbot_debug_started.txt', new Date().toISOString()); } catch {}
 
 (async () => {
   const browser = await chromium.launch({
     headless: true,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--no-sandbox',
-      '--disable-dev-shm-usage',
-    ]
+    args: ['--disable-blink-features=AutomationControlled','--no-sandbox','--disable-dev-shm-usage']
   });
 
+  // 🎥 הקלטת וידאו
   const context = await browser.newContext({
     userAgent: UA,
     viewport: VIEWPORT,
     locale: 'he-IL',
     extraHTTPHeaders: {
-      'Accept-Language': 'he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Accept-Language':'he-IL,he;q=0.9,en-US;q=0.8',
       'Referer': URL,
       'Origin': 'https://landbot.pro'
-    }
+    },
+    recordVideo: { dir: 'videos', size: VIEWPORT }   // <-- כאן
   });
 
-  // לפתוח Shadow DOM ל"open" כדי לאפשר גישה פנימה
+  // לפתוח shadow roots ל-open ולהפחית זיהוי בוט
   await context.addInitScript(() => {
     const orig = Element.prototype.attachShadow;
-    Element.prototype.attachShadow = function(init) {
-      try { return orig.call(this, Object.assign({}, init, { mode: 'open' })); }
-      catch { return orig.call(this, init); }
-    };
-    // הסוואה עדינה
-    Object.defineProperty(navigator, 'webdriver', { get: () => false });
-    window.chrome = { runtime: {} };
-    Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3] });
-    Object.defineProperty(navigator, 'languages', { get: () => ['he-IL','he','en-US','en'] });
+    Element.prototype.attachShadow = function(init){ try{return orig.call(this,{...init,mode:'open'})}catch{return orig.call(this,init)} };
+    Object.defineProperty(navigator,'webdriver',{get:()=>false});
+    window.chrome = { runtime:{} };
   });
 
+  await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+
   const page = await context.newPage();
+  const video = page.video(); // נשמור רפרנס כדי להעתיק בסוף
   page.setDefaultTimeout(35_000);
   page.setDefaultNavigationTimeout(35_000);
 
-  // לוגים שימושיים
-  page.on('response', async (resp) => {
-    const url = resp.url();
-    if (url.includes('landbot') || url.includes('webchat') || url.includes('config')) {
-      const s = resp.status();
-      console.log('RESP', s, url);
-      if (s >= 400) {
-        try { console.log('BODY', (await resp.text()).slice(0, 200)); } catch {}
-      }
+  page.on('console', m => console.log('[console]', m.type(), m.text()));
+  page.on('requestfailed', r => console.log('FAILED', r.url(), r.failure()?.errorText));
+  page.on('response', r => {
+    const u = r.url(); const s = r.status();
+    if (u.includes('landbot') || u.includes('webchat') || u.includes('supabase')) {
+      console.log('RESP', s, u);
     }
   });
-  page.on('requestfailed', r => {
-    const u = r.url();
-    if (u.includes('landbot') || u.includes('webchat') || u.includes('config')) {
-      console.log('FAILED', u, r.failure()?.errorText);
-    }
-  });
-  page.on('console', msg => console.log('[console]', msg.type(), msg.text()));
 
   console.log('[landbot-v2] goto:', URL);
   await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 
-  // snapshot מוקדם
+  // צילום "לפני"
+  try { await page.screenshot({ path: 'landbot_before_click.png', fullPage: true }); } catch {}
   try { fs.writeFileSync('landbot_page_early.html', await page.content()); } catch {}
 
-  // גלילה קלה לדרבן טעינה עצלה
-  await page.evaluate(() => window.scrollTo(0, Math.floor(window.innerHeight * 0.5)));
-  await page.waitForTimeout(800);
+  // אם יש "Start the conversation" – נלחץ
+  const startBtn = page.getByText(/Start the conversation/i);
+  if (await startBtn.count().catch(()=>0)) {
+    try { await startBtn.first().click({ timeout: 8_000 }); } catch {}
+  }
 
-  // המתן לסימנים שהווידג’ט נטען
-  await page.waitForFunction(() => {
-    const scripts = [...document.scripts].some(s => (s.src||'').includes('landbot'));
-    const hasBtnText = document.documentElement.innerText.includes('סיכום שיחות המטופלים');
-    const anyShadow = [...document.querySelectorAll('*')].some(el => el.shadowRoot);
-    return scripts || hasBtnText || anyShadow;
-  }, { timeout: 10_000 }).catch(() => {});
-
-  // --- פונקציה: מציאת ולחיצה על כפתור לפי טקסט (כולל Shadow DOM) ---
-  async function clickButtonByText(text) {
-    // 1) נסיון ישיר: getByRole('button', { name: text })
-    const byRole = page.getByRole('button', { name: text, exact: false });
-    if (await byRole.count().catch(() => 0)) {
-      await byRole.first().click({ timeout: 10_000 });
-      return true;
-    }
-
-    // 2) נסיון טקסט כללי (יכול לתפוס div/a עם טקסט הכפתור)
-    const byText = page.getByText(text, { exact: false });
-    if (await byText.count().catch(() => 0)) {
-      await byText.first().click({ timeout: 10_000 });
-      return true;
-    }
-
-    // 3) חיפוש ידני עמוק בתוך כל ה-Shadow DOM והחזרת אלמנט קליקבילי
-    const handle = await page.evaluateHandle((t) => {
-      const clickable = (el) => {
-        if (!el) return null;
-        const styles = window.getComputedStyle(el);
-        const clickableTag = ['BUTTON','A'].includes(el.tagName);
-        const looksClickable = clickableTag || el.onclick || styles.cursor === 'pointer' || el.getAttribute('role') === 'button';
-        return looksClickable ? el : null;
+  async function clickByText(t){
+    const byRole = page.getByRole('button', { name: t, exact: false });
+    if (await byRole.count().catch(()=>0)) { await byRole.first().click({ timeout: 10_000 }); return true; }
+    const byText = page.getByText(t, { exact: false });
+    if (await byText.count().catch(()=>0)) { await byText.first().click({ timeout: 10_000 }); return true; }
+    const handle = await page.evaluateHandle((txt) => {
+      const clickable = (el)=>{
+        if(!el) return null;
+        const cs=getComputedStyle(el);
+        const isBtn=['BUTTON','A'].includes(el.tagName)||el.getAttribute('role')==='button';
+        if(isBtn || el.onclick || cs.cursor==='pointer') return el;
+        const near=el.closest('button, [role="button"], a');
+        return near||null;
       };
-
-      const findInRoot = (root) => {
-        const all = root.querySelectorAll('*');
-        for (const el of all) {
-          if ((el.innerText || '').includes(t)) {
-            const c = clickable(el) || clickable(el.closest('button, a, [role="button"]'));
-            if (c) return c;
+      const deepSearch=(root)=>{
+        const all=root.querySelectorAll('*');
+        for (const el of all){
+          if((el.innerText||'').includes(txt)){
+            const c = clickable(el);
+            if(c) return c;
           }
-          if (el.shadowRoot) {
-            const found = findInRoot(el.shadowRoot);
-            if (found) return found;
+          if(el.shadowRoot){
+            const found = deepSearch(el.shadowRoot);
+            if(found) return found;
           }
         }
         return null;
       };
-
-      // 3a) נסה בכל shadowRoot
-      const fromShadow = findInRoot(document);
-      if (fromShadow) return fromShadow;
-
-      // 3b) נסה ב-DOM הראשי
-      const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], div, span'));
-      for (const el of candidates) {
-        if ((el.innerText || '').includes(t)) return el;
-      }
-      return null;
-    }, text);
-
+      return deepSearch(document);
+    }, t);
     const el = await handle.asElement();
-    if (el) {
-      await el.click({ timeout: 10_000 });
-      return true;
-    }
+    if (el) { await el.click({ timeout: 10_000 }); return true; }
     return false;
   }
 
-  // --- לחיצה על הכפתור ---
-  const clicked = await clickButtonByText(BUTTON_TEXT);
+  // קליק על הכפתור הראשי
+  const clicked = await clickByText(BUTTON_TEXT);
   if (!clicked) {
     await page.screenshot({ path: 'landbot_fail.png', fullPage: true }).catch(()=>{});
     fs.writeFileSync('landbot_page.html', await page.content());
-    throw new Error(`Button with text "${BUTTON_TEXT}" not found/clickable`);
+    throw new Error(`Button "${BUTTON_TEXT}" not found/clickable`);
   }
 
-  // צילום אחרי לחיצה (לראות שקרה משהו)
+  // אימות רשת: חייבת לצאת תגובת 2xx ליעד המצופה
+  try {
+    await page.waitForResponse(
+      r => r.url().includes(EXPECT_RESPONSE_URL_PART) && r.status() >= 200 && r.status() < 300,
+      { timeout: 20_000 }
+    );
+    console.log('[landbot-v2] Verified: expected network call observed');
+  } catch {
+    await page.screenshot({ path: 'landbot_after_click.png', fullPage: true }).catch(()=>{});
+    fs.writeFileSync('landbot_page.html', await page.content());
+    throw new Error(`No 2xx response to URL containing "${EXPECT_RESPONSE_URL_PART}" after click`);
+  }
+
+  // צילום "אחרי"
   try { await page.screenshot({ path: 'landbot_after_click.png', fullPage: true }); } catch {}
 
-  console.log('[landbot-v2] Success (button clicked)');
-  clearTimeout(watchdog);
+  console.log('[landbot-v2] Success (button clicked + network verified)');
+
+  await context.tracing.stop({ path: 'trace.zip' });
+
+  // סגירה והצלת הווידאו לקובץ קבוע
+  const p = video ? await video.path() : null; // זמין אחרי close
+  await context.close();
+  if (p) { try { fs.copyFileSync(p, 'landbot_run.webm'); } catch {} }
   await browser.close();
+
+  clearTimeout(watchdog);
   process.exit(0);
 })().catch(async (err) => {
   console.error('[landbot-v2] ERROR:', err?.message || err);
-  try { await (await import('fs')).promises.writeFile('landbot_error.txt', String(err?.stack || err)); } catch {}
-  try { await (await import('fs')).promises.writeFile('landbot_page.html', await (await (await chromium.launch()).newContext()).newPage().content()); } catch {}
+  try { await (await import('fs')).promises.writeFile('landbot_error.txt', String(err?.stack||err)); } catch {}
   clearTimeout(watchdog);
   process.exit(1);
 });
