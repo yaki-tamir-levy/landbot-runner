@@ -1,9 +1,13 @@
 name: List users_total pending names
 
+# ❌ אין push. ❌ אין pull_request.
 on:
+  # כל 10 דקות (UTC). אם תרצה חלון ישראל בלבד—נגיד בהמשך.
   schedule:
-    - cron: "*/10 * * * *"   # כל 10 דק' UTC
+    - cron: "*/10 * * * *"
+  # הפעלה ידנית מה-UI
   workflow_dispatch:
+  # הפעלה חיצונית דרך API אם תצטרך
   repository_dispatch:
     types: [scan-users]
 
@@ -15,14 +19,18 @@ concurrency:
   group: list-pending-users-${{ github.ref }}
   cancel-in-progress: false
 
+# רק למעקב נוח ברשימת ה-Actions
+run-name: "Scan users_total → Landbot (cause=${{ github.event_name }})"
+
 jobs:
   trigger-landbot-v2:
+    # שכבת בטיחות נוספת: אם בכל זאת הופעל ממשהו אחר—אל תרוץ
+    if: contains('schedule,workflow_dispatch,repository_dispatch', github.event_name)
     uses: ./.github/workflows/run-landbot-v2.yml
     secrets: inherit
     with:
-      # אם יש לך טקסט כפתור ספציפי — עדכן כאן או דרך ENV/Secrets
       lanbot_button_text: ${{ vars.LANDBOT_BUTTON_TEXT }}
       trigger_text: ${{ vars.TRIGGER_TEXT }}
-      expect_urls: ${{ vars.EXPECT_URLS }}            # למשל: messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth
+      expect_urls: ${{ vars.EXPECT_URLS }}
       require_network_confirm: ${{ vars.REQUIRE_NETWORK_CONFIRM || 'false' }}
-      headed: true                                     # להבטיח דפדפן גלוי (דרך Xvfb)
+      headed: true
