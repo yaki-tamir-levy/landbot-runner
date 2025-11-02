@@ -1,138 +1,174 @@
-name: Run Landbot (v2) via reusable workflow
+import { chromium } from 'playwright';
+import fs from 'node:fs';
+import path from 'node:path';
 
-on:
-  workflow_call:
-    inputs:
-      lanbot_button_text:
-        required: false
-        type: string
-        default: "סיכום שיחות המטופלים"
-      trigger_text:
-        required: false
-        type: string
-        default: "התחל סיכום שיחות"
-      expect_urls:
-        required: false
-        type: string
-        default: "messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth"
-      require_network_confirm:
-        required: false
-        type: string
-        default: "false"
-      headed:
-        required: false
-        type: boolean
-        default: true
-      post_action_idle_ms:
-        required: false
-        type: string
-        default: "45000"
-      supabase_wait_ms:
-        required: false
-        type: string
-        default: "60000"
+const LANDBOT_URL = process.env.LANDBOT_URL;
+const BUTTON_TEXT  = process.env.LANDBOT_BUTTON_TEXT || 'סיכום שיחות המטופלים';
+const TRIGGER_TEXT = process.env.TRIGGER_TEXT       || 'התחל סיכום שיחות';
 
-jobs:
-  run:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+const EXPECT_URLS = (process.env.EXPECT_URLS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
-    env:
-      NODE_ENV: production
-      LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
-      SUPABASE_URL: ${{ secrets.supabase_url }}
-      SUPABASE_KEY: ${{ secrets.supabase_key }}
-      LANDBOT_BUTTON_TEXT: ${{ inputs.lanbot_button_text }}
-      TRIGGER_TEXT: ${{ inputs.trigger_text }}
-      EXPECT_URLS: ${{ inputs.expect_urls }}
-      REQUIRE_NETWORK_CONFIRM: ${{ inputs.require_network_confirm }}
-      HEADED: ${{ inputs.headed }}
-      POST_ACTION_IDLE_MS: ${{ inputs.post_action_idle_ms }}
-      SUPABASE_WAIT_MS: ${{ inputs.supabase_wait_ms }}
+const REQUIRE_NETWORK_CONFIRM =
+  String(process.env.REQUIRE_NETWORK_CONFIRM || 'false').toLowerCase() === 'true';
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+const headless =
+  !(process.env.PW_HEADLESS === '0' || String(process.env.HEADED).toLowerCase() === 'true');
 
-      - name: Use Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+const POST_ACTION_IDLE_MS = Number(process.env.POST_ACTION_IDLE_MS || 0);
+const SUPABASE_WAIT_MS    = Number(process.env.SUPABASE_WAIT_MS || 60000);
 
-      - name: Install dependencies
-        run: |
-          corepack enable
-          if [ -f pnpm-lock.yaml ]; then
-            corepack prepare pnpm@latest --activate
-            pnpm i --frozen-lockfile
-          elif [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm i
-          fi
+const ART_DIR = path.resolve('artifacts');
+if (!fs.existsSync(ART_DIR)) fs.mkdirSync(ART_DIR, { recursive: true });
 
-      - name: Install Playwright Browsers + deps
-        run: npx playwright install --with-deps
+function log(msg, obj) {
+  const line = `[landbot_v2] ${new Date().toISOString()} | ${msg} ${obj ? JSON.stringify(obj) : ''}`;
+  console.log(line);
+  fs.appendFileSync(path.join(ART_DIR, 'run.log'), line + '\n');
+}
 
-      # ולידציה: אם חסר ה-URL—נעצור מיד עם הודעה ברורה
-      - name: Validate required env
-        shell: bash
-        run: |
-          if [ -z "${LANDBOT_URL:-}" ]; then
-            echo "::error::LANDBOT_URL secret is missing. Set it in Settings → Secrets and variables → Actions."
-            exit 1
-          fi
+if (!LANDBOT_URL) {
+  console.error('ENV LANDBOT_URL is required');
+  process.exit(0);
+}
 
-      - name: Run Landbot trigger (headed via Xvfb)
-        env:
-          PW_HEADLESS: ${{ inputs.headed && '0' || '1' }}
-        shell: bash
-        run: |
-          set -u
-          mkdir -p artifacts
-          echo "HEADED=${HEADED}  PW_HEADLESS=${PW_HEADLESS}"
+function uniq(arr){ return Array.from(new Set(arr.filter(Boolean))); }
 
-          if [ "${HEADED}" = "true" ] && command -v xvfb-run >/dev/null 2>&1; then
-            xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" bash -lc 'node scripts/landbot_v2_trigger.mjs || true'
-          else
-            node scripts/landbot_v2_trigger.mjs || true
-          fi
+(async () => {
+  const browser = await chromium.launch({ headless });
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+    recordVideo: { dir: ART_DIR, size: { width: 1280, height: 800 } }
+  });
 
-          echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') run finished" > artifacts/_runner_heartbeat.txt
+  await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+  const page = await context.newPage();
 
-      - name: Upload artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: landbot-v2-artifacts-${{ github.run_id }}
-          path: artifacts/**
-          if-no-files-found: warn
+  const netLog = [];
+  const supaLog = fs.createWriteStream(path.join(ART_DIR, 'supabase_outbound.jsonl'));
+  const landbotSendLog = fs.createWriteStream(path.join(ART_DIR, 'landbot_send.jsonl'));
 
-      - name: Job summary
-        if: always()
-        shell: bash
-        run: |
-          set +e   # ← למנוע נפילה על בדיקות קבצים חסרים
-          {
-            echo "## Landbot v2 run"
-            if [ -f artifacts/screenshot_before.png ]; then
-              echo "### Before"
-              echo "![before](./artifacts/screenshot_before.png)"
-            fi
-            if [ -f artifacts/screenshot_highlight.png ]; then
-              echo "### Highlight"
-              echo "![highlight](./artifacts/screenshot_highlight.png)"
-            fi
-            if [ -f artifacts/screenshot_after.png ]; then
-              echo "### After"
-              echo "![after](./artifacts/screenshot_after.png)"
-            fi
-            echo ""
-            if [ -f artifacts/msg_payload.json ]; then
-              echo "### msg_payload.json (first 1500 bytes)"
-              echo '```json'
-              head -c 1500 artifacts/msg_payload.json
-              echo
-              echo '```'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY" || true
+  page.on('request', req => {
+    const rec = { t: Date.now(), dir: 'req', url: req.url(), method: req.method(), postData: req.postData() };
+    netLog.push(rec);
+    if (rec.url.includes('supabase.co/rest/v1')) supaLog.write(JSON.stringify(rec) + '\n');
+    if (rec.url.includes('messages.landbot.io/webchat/api/send')) landbotSendLog.write(JSON.stringify(rec) + '\n');
+  });
+
+  page.on('response', res => {
+    const rec = { t: Date.now(), dir: 'res', url: res.url(), status: res.status() };
+    netLog.push(rec);
+    if (rec.url.includes('supabase.co/rest/v1')) supaLog.write(JSON.stringify(rec) + '\n');
+    if (rec.url.includes('messages.landbot.io/webchat/api/send')) landbotSendLog.write(JSON.stringify(rec) + '\n');
+  });
+
+  try {
+    log('goto', { url: LANDBOT_URL, headless });
+    await page.goto(LANDBOT_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+
+    await page.screenshot({ path: path.join(ART_DIR, 'screenshot_before.png'), fullPage: true }).catch(() => {});
+    fs.writeFileSync(path.join(ART_DIR, 'page_before.html'), await page.content());
+
+    // click button or send text
+    let clicked = false;
+    const candidates = uniq([
+      `role=button[name="${BUTTON_TEXT}"]`,
+      `text="${BUTTON_TEXT}"`,
+      `button:has-text("${BUTTON_TEXT}")`,
+      `a:has-text("${BUTTON_TEXT}")`,
+      `[role="button"]:has-text("${BUTTON_TEXT}")`
+    ]);
+
+    for (const sel of candidates) {
+      const el = page.locator(sel).first();
+      if (await el.count().catch(() => 0)) {
+        try {
+          const handle = await el.elementHandle();
+          await handle.evaluate(node => { node.style.outline = '3px solid red'; node.scrollIntoView({behavior:'smooth', block:'center'}); });
+          await page.waitForTimeout(600);
+          await page.screenshot({ path: path.join(ART_DIR, 'screenshot_highlight.png') }).catch(() => {});
+        } catch {}
+        await el.click({ timeout: 10000 }).catch(() => {});
+        clicked = true;
+        break;
+      }
+    }
+
+    let payload = null;
+    if (!clicked) {
+      const inputs = [
+        'div[contenteditable="true"]',
+        'textarea',
+        'input[type="text"]',
+        '[role="textbox"]'
+      ];
+      for (const sel of inputs) {
+        const input = page.locator(sel).last();
+        if (await input.count().catch(() => 0)) {
+          await input.click({ timeout: 5000 }).catch(() => {});
+          await input.type(TRIGGER_TEXT, { delay: 30 }).catch(() => {});
+          await page.keyboard.press('Enter').catch(() => {});
+          payload = { type: 'text', text: TRIGGER_TEXT, ts: Date.now() };
+          break;
+        }
+      }
+      if (!payload) log('no input to type trigger');
+    } else {
+      payload = { type: 'click', text: BUTTON_TEXT, ts: Date.now() };
+    }
+    if (payload) fs.writeFileSync(path.join(ART_DIR, 'msg_payload.json'), JSON.stringify(payload, null, 2));
+
+    // expected Landbot URLs (soft unless REQUIRE_NETWORK_CONFIRM=true)
+    if (EXPECT_URLS.length > 0) {
+      try {
+        await Promise.all(EXPECT_URLS.map(u =>
+          page.waitForResponse(res => res.url().includes(u) && res.status() >= 200 && res.status() < 300, { timeout: 25000 })
+        ));
+      } catch (e) {
+        log('expected URLs not all confirmed', { error: String(e) });
+        if (REQUIRE_NETWORK_CONFIRM) throw new Error('missing expected 2xx');
+      }
+    } else {
+      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    }
+
+    // extra idle time (נשלט ע"י POST_ACTION_IDLE_MS)
+    if (POST_ACTION_IDLE_MS > 0) {
+      log('post idle', { ms: POST_ACTION_IDLE_MS });
+      await page.waitForTimeout(POST_ACTION_IDLE_MS);
+    }
+
+    // smart wait for Supabase (עד SUPABASE_WAIT_MS)
+    const ok = await waitSupabase2xx(netLog, SUPABASE_WAIT_MS);
+    log('supabase wait', { ok, waitedMs: SUPABASE_WAIT_MS });
+
+    await page.screenshot({ path: path.join(ART_DIR, 'screenshot_after.png'), fullPage: true }).catch(() => {});
+    fs.writeFileSync(path.join(ART_DIR, 'page_after.html'), await page.content());
+    fs.writeFileSync(path.join(ART_DIR, 'network_log.json'), JSON.stringify(netLog, null, 2));
+  } catch (err) {
+    log('error', { error: String(err && err.stack ? err.stack : err) });
+  } finally {
+    await context.tracing.stop({ path: path.join(ART_DIR, 'trace.zip') }).catch(() => {});
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+})().catch(e => {
+  console.error(e);
+  process.exit(0);
+});
+
+async function waitSupabase2xx(netLog, maxMs) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    const hit = netLog.find(e =>
+      e.dir === 'res' &&
+      typeof e.url === 'string' &&
+      e.url.includes('supabase.co/rest/v1') &&
+      e.status >= 200 && e.status < 300
+    );
+    if (hit) return true;
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  return false;
+}
