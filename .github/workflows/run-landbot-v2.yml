@@ -1,29 +1,38 @@
 name: Run Landbot (v2)
 
 on:
-  workflow_dispatch: {}
+  # ריאוזבל בלבד — לא ניתן להרצה ידנית מה-UI
+  workflow_call:
+    inputs:
+      expect_urls:
+        description: 'Comma-separated URL substrings to verify (e.g. messages.landbot.io/webchat/api/send,welcome.landbot.io/webchat/auth)'
+        required: false
+        type: string
+      require_network_confirm:
+        description: 'If true, fail when none of the expect_urls gets a 2xx response'
+        required: false
+        type: boolean
+    secrets:
+      LANDBOT_URL:
+        required: true
 
 permissions:
   contents: read
 
-concurrency:
-  group: run-landbot-v2-${{ github.ref }}
-  cancel-in-progress: false
-
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    # אין timeout-minutes -> ה-UI יציג "Running for …" (ספירה קדימה)
     env:
-      LANDBOT_URL: ${{ secrets.LANDBOT_URL || 'https://landbot.pro/v3/H-3207470-XRPDXMFVFDSCDXA5/index.html' }}
-      # אפשר לשנות את טקסט הכפתור כאן במקום בקוד:
-      # LANDBOT_BUTTON_TEXT: 'סיכום שיחות המטופלים'
+      LANDBOT_URL: ${{ secrets.LANDBOT_URL }}
+      EXPECT_URLS: ${{ inputs.expect_urls || '' }}
+      REQUIRE_NETWORK_CONFIRM: ${{ inputs.require_network_confirm && 'true' || 'false' }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node (no cache)
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -36,27 +45,31 @@ jobs:
             npm install
           fi
 
-      - name: Install Playwright (with browsers & deps)
+      - name: Install Playwright (browsers & deps)
         run: npx playwright install --with-deps
 
-      - name: Create debug placeholder
+      - name: Debug heartbeat
         run: date -Is > landbot_debug_started.txt
 
-      - name: Run Landbot trigger (single attempt, 120s timeout)
+      - name: Run Landbot trigger (no shell timeout; watchdog inside script)
         run: |
-          set -e
-          timeout 120s npm run landbot-v2
+            set -e
+            npm run landbot-v2
 
-      - name: Upload debug artifacts (always)
+      - name: Upload artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-artifacts
           path: |
-            landbot_fail.png
+            landbot_before_click.png
             landbot_after_click.png
+            landbot_fail.png
             landbot_page.html
             landbot_page_early.html
             landbot_error.txt
             landbot_debug_started.txt
+            trace.zip
+            videos/**
+            landbot_run.webm
           if-no-files-found: warn
