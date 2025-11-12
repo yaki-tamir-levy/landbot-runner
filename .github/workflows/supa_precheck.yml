@@ -40,7 +40,8 @@ jobs:
           ORDER_BY="${{ github.event.inputs.order_by }}"
 
           BASE="${SUPABASE_URL%/}/rest/v1/users_total"
-          QS="select=processed&limit=${LIMIT}"
+          # ⬅️ שולפים גם name וגם processed
+          QS="select=name,processed&limit=${LIMIT}"
           QS="${QS}&processed=in.(NEW,IN_PROGRESS)"
           if [[ -n "${ORDER_BY}" ]]; then
             QS="${QS}&order=${ORDER_BY}"
@@ -48,8 +49,7 @@ jobs:
 
           echo "url=${BASE}?${QS}" >> "$GITHUB_OUTPUT"
 
-      - name: Query Supabase and print field values
-        id: query
+      - name: Query Supabase and print field values (name + processed)
         shell: bash
         env:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -68,7 +68,6 @@ jobs:
             -H "Accept: application/json" \
             "$URL")"
 
-          # הדפסה ללוג בלבד (לא outputs)
           echo "----- JSON גולמי -----"
           echo "$RESP"
           echo "-----------------------"
@@ -77,16 +76,36 @@ jobs:
           echo "📊 נמצאו ${COUNT} שורות עם processed ב- {NEW, IN_PROGRESS}"
 
           if [[ "$COUNT" -gt 0 ]]; then
-            # חלוקה לפי ערך + הדפסת כל הערכים שנמצאו
-            UNIQUE="$(printf '%s' "$RESP" | jq -r '.[].processed' | sort | uniq -c)"
             echo "🔔 חלוקה לפי ערך:"
-            echo "$UNIQUE"
+            printf '%s' "$RESP" | jq -r '.[].processed' | sort | uniq -c
 
-            echo "🔎 ערכים כפי שנשלפו:"
-            printf '%s' "$RESP" | jq -r '.[].processed'
+            echo ""
+            echo "🧾 פירוט (name → processed):"
+            printf '%s' "$RESP" | jq -r '.[] | "\(.name) → \(.processed)"'
+
+            # גם תקציר קריא ב-STEP SUMMARY למעלה
+            {
+              echo "### SUPA precheck – users_total (processed in NEW/IN_PROGRESS)"
+              echo ""
+              echo "**Count:** ${COUNT}"
+              echo ""
+              echo "| name | processed |"
+              echo "|---|---|"
+              printf '%s' "$RESP" | jq -r '.[] | ["\(.name)","\(.processed)"] | @tsv' \
+                | while IFS=$'\t' read -r NAME PROC; do
+                    # ממירים לתבנית טבלת Markdown
+                    echo "| ${NAME} | ${PROC} |"
+                  done
+            } >> "$GITHUB_STEP_SUMMARY"
 
             echo "::notice title=SUPA precheck::found ${COUNT} rows (processed in NEW/IN_PROGRESS)"
           else
             echo "ℹ️ לא נמצאו שורות מתאימות."
             echo "::notice title=SUPA precheck::no rows found"
+
+            {
+              echo "### SUPA precheck – users_total"
+              echo ""
+              echo "No rows found (processed in NEW/IN_PROGRESS)."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
