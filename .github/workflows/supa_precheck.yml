@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       limit:
-        description: "כמה שורות להציג מהתוצאות (ברירת מחדל 20)"
+        description: "כמה שורות להציג (ברירת מחדל 20)"
         required: false
         default: "20"
         type: string
@@ -17,6 +17,14 @@ jobs:
   check-and-print:
     runs-on: ubuntu-latest
     steps:
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
+          fi
+
       - name: Build REST URL (users_total, linked_talk in NEW/IN_PROGRESS)
         id: build
         shell: bash
@@ -31,47 +39,38 @@ jobs:
           LIMIT="${{ github.event.inputs.limit }}"
           ORDER_BY="${{ github.event.inputs.order_by }}"
 
-          # בסיס ה-URL
           BASE="${SUPABASE_URL%/}/rest/v1/users_total"
-
-          # select רק את השדה המבוקש (אפשר להרחיב בהמשך)
           QS="select=linked_talk&limit=${LIMIT}"
-
-          # סינון: linked_talk in (NEW, IN_PROGRESS)
-          # לפי pgrest: field=in.(VAL1,VAL2)
           QS="${QS}&linked_talk=in.(NEW,IN_PROGRESS)"
-
-          # סדר (אופציונלי)
           if [[ -n "${ORDER_BY}" ]]; then
             QS="${QS}&order=${ORDER_BY}"
           fi
 
-          URL="${BASE}?${QS}"
-          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          echo "url=${BASE}?${QS}" >> "$GITHUB_OUTPUT"
 
       - name: Query Supabase and print field values
         id: query
         shell: bash
         env:
-          SUPABASE_SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          # <<< שימוש בסוד הקיים אצלך >>>
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           set -euo pipefail
-          if [[ -z "${SUPABASE_SERVICE_ROLE:-}" ]]; then
-            echo "❌ Secret SUPABASE_SERVICE_ROLE חסר"; exit 1
+          if [[ -z "${SUPABASE_KEY:-}" ]]; then
+            echo "❌ Secret SUPABASE_KEY חסר"; exit 1
           fi
 
           URL="${{ steps.build.outputs.url }}"
           echo "🔎 GET $URL"
 
-          RESP="$(curl -sS -H "apikey: $SUPABASE_SERVICE_ROLE" \
-                         -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE" \
-                         -H "Accept: application/json" \
-                         "$URL")"
+          RESP="$(curl -sS \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY" \
+            -H "Accept: application/json" \
+            "$URL")"
 
-          # שמירה לפלט הצעד (אם תרצה להשתמש בהמשך)
           echo "RAW_JSON=${RESP}" >> "$GITHUB_OUTPUT"
 
-          # ספירת תוצאות
           COUNT="$(printf '%s' "$RESP" | jq 'length')"
           echo "COUNT=${COUNT}" >> "$GITHUB_OUTPUT"
 
@@ -82,11 +81,9 @@ jobs:
           echo "📊 נמצאו ${COUNT} שורות עם linked_talk ב- {NEW, IN_PROGRESS}"
 
           if [[ "$COUNT" -gt 0 ]]; then
-            # הדפסת ערכים (unique) ודוגמה לשורות הראשונות
             UNIQUE="$(printf '%s' "$RESP" | jq -r '.[].linked_talk' | sort | uniq -c)"
             echo "🔔 חלוקה לפי ערך:"
             echo "$UNIQUE"
-
             echo "::notice title=SUPA precheck::found ${COUNT} rows (linked_talk in NEW/IN_PROGRESS)"
           else
             echo "ℹ️ לא נמצאו שורות מתאימות."
