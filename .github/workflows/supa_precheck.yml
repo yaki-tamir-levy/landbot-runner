@@ -79,7 +79,7 @@ jobs:
           COUNT="$(printf '%s' "$RESP" | jq 'length')"
           echo "📊 נמצאו ${COUNT} שורות עם processed ב- {NEW, IN_PROGRESS}"
 
-          # נחשוף את הספירה לשימוש בשלבים הבאים
+          # חושפים count ל-steps הבאים
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
 
           if [[ "$COUNT" -gt 0 ]]; then
@@ -117,9 +117,9 @@ jobs:
 
       - name: Trigger RUN USERS_TOTAL now
         if: ${{ steps.query.outputs.count != '0' }}
-        uses: peter-evans/workflow-dispatch@v3
+        uses: peter-evans/workflow-dispatch@v2
         with:
-          # מפעיל לפי שם ה-workflow הראשי (name: RUN USERS_TOTAL)
+          # מפעיל לפי name של ה-workflow הראשי
           workflow: RUN USERS_TOTAL
           ref: main
           inputs: |
