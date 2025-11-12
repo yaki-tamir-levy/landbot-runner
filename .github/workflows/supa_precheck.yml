@@ -1,6 +1,10 @@
 name: SUPA precheck (users_total.processed)
 
 on:
+  # אוטומטי: כל 15 דקות עגולות (UTC)
+  schedule:
+    - cron: "*/15 * * * *"
+  # ידני:
   workflow_dispatch:
     inputs:
       limit:
@@ -13,7 +17,7 @@ on:
         required: false
         type: string
       max_runs:
-        description: "תקרת בטיחות: מספר הפעלות מקסימלי להצתה (ברירת מחדל 5)"
+        description: "תקרת בטיחות להפעלות RUN_USERS_TOTAL (ברירת מחדל 5)"
         required: false
         default: "5"
         type: string
@@ -21,6 +25,11 @@ on:
 permissions:
   contents: read
   actions: write
+
+# כדי שלא יצטברו כמה precheck במקביל
+concurrency:
+  group: supa-precheck-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check-and-trigger:
@@ -44,8 +53,8 @@ jobs:
           if [[ -z "${SUPABASE_URL:-}" ]]; then
             echo "❌ Secret SUPABASE_URL חסר"; exit 1
           fi
-          LIMIT="${{ github.event.inputs.limit }}"
-          ORDER_BY="${{ github.event.inputs.order_by }}"
+          LIMIT="${{ github.event.inputs.limit || '20' }}"
+          ORDER_BY="${{ github.event.inputs.order_by || '' }}"
           BASE="${SUPABASE_URL%/}/rest/v1/users_total"
           QS="select=name,processed&limit=${LIMIT}&processed=in.(NEW,IN_PROGRESS)"
           if [[ -n "${ORDER_BY}" ]]; then QS="${QS}&order=${ORDER_BY}"; fi
@@ -75,24 +84,20 @@ jobs:
             echo "⏭️ אין שורות מתאימות."
           fi
 
-      # מצית את ה־workflow הראשי מספר פעמים = מספר הרשומות (עם תקרת בטיחות)
       - name: Trigger RUN USERS_TOTAL N times (queued by concurrency)
         if: ${{ steps.query.outputs.count != '0' }}
         uses: actions/github-script@v7
         env:
           FOUND_COUNT: ${{ steps.query.outputs.count }}
-          MAX_RUNS: ${{ github.event.inputs.max_runs }}
+          MAX_RUNS: ${{ github.event.inputs.max_runs || '5' }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // === עדכן כאן אם שם הקובץ הראשי שונה ===
-            const WORKFLOW_FILE = ".github/workflows/find-pending-users.yml";
+            const WORKFLOW_FILE = ".github/workflows/find-pending-users.yml"; // עדכן אם צריך
             const found = parseInt(process.env.FOUND_COUNT || "0", 10);
             const cap   = parseInt(process.env.MAX_RUNS || "5", 10);
             const times = Math.min(found, cap);
-
             core.notice(`Dispatching RUN USERS_TOTAL ${times} time(s) (found=${found}, cap=${cap})`);
-
             for (let i = 1; i <= times; i++) {
               await github.rest.actions.createWorkflowDispatch({
                 owner: context.repo.owner,
@@ -104,16 +109,10 @@ jobs:
               core.info(`→ Dispatched #${i}/${times}`);
             }
 
-            core.notice("All dispatches sent. Target workflow will queue due to its concurrency settings.");
-
       - name: Step summary
         run: |
-          echo "### Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "### SUPA precheck – Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Found count: ${{ steps.query.outputs.count }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Max runs cap: ${{ github.event.inputs.max_runs }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Triggered file: \`.github/workflows/find-pending-users.yml\`" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Skip note (no pending rows)
-        if: ${{ steps.query.outputs.count == '0' }}
-        run: echo "⏭️ אין שורות מתאימות – ה-Workflow הראשי לא הופעל."
+          echo "- Max runs cap: ${{ github.event.inputs.max_runs || '5' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Triggered workflow file: \`.github/workflows/find-pending-users.yml\`" >> "$GITHUB_STEP_SUMMARY"
