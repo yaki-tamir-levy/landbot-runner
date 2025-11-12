@@ -68,21 +68,23 @@ jobs:
             -H "Accept: application/json" \
             "$URL")"
 
-          echo "RAW_JSON=${RESP}" >> "$GITHUB_OUTPUT"
-
-          COUNT="$(printf '%s' "$RESP" | jq 'length')"
-          echo "COUNT=${COUNT}" >> "$GITHUB_OUTPUT"
-
+          # הדפסה ללוג בלבד (לא outputs)
           echo "----- JSON גולמי -----"
           echo "$RESP"
           echo "-----------------------"
 
+          COUNT="$(printf '%s' "$RESP" | jq 'length')"
           echo "📊 נמצאו ${COUNT} שורות עם processed ב- {NEW, IN_PROGRESS}"
 
           if [[ "$COUNT" -gt 0 ]]; then
+            # חלוקה לפי ערך + הדפסת כל הערכים שנמצאו
             UNIQUE="$(printf '%s' "$RESP" | jq -r '.[].processed' | sort | uniq -c)"
             echo "🔔 חלוקה לפי ערך:"
             echo "$UNIQUE"
+
+            echo "🔎 ערכים כפי שנשלפו:"
+            printf '%s' "$RESP" | jq -r '.[].processed'
+
             echo "::notice title=SUPA precheck::found ${COUNT} rows (processed in NEW/IN_PROGRESS)"
           else
             echo "ℹ️ לא נמצאו שורות מתאימות."
