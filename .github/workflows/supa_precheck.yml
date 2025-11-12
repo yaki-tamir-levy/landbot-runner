@@ -1,4 +1,4 @@
-name: SUPA precheck (users_total.linked_talk)
+name: SUPA precheck (users_total.processed)
 
 on:
   workflow_dispatch:
@@ -25,7 +25,7 @@ jobs:
             sudo apt-get install -y jq
           fi
 
-      - name: Build REST URL (users_total, linked_talk in NEW/IN_PROGRESS)
+      - name: Build REST URL (users_total, processed in NEW/IN_PROGRESS)
         id: build
         shell: bash
         env:
@@ -40,8 +40,8 @@ jobs:
           ORDER_BY="${{ github.event.inputs.order_by }}"
 
           BASE="${SUPABASE_URL%/}/rest/v1/users_total"
-          QS="select=linked_talk&limit=${LIMIT}"
-          QS="${QS}&linked_talk=in.(NEW,IN_PROGRESS)"
+          QS="select=processed&limit=${LIMIT}"
+          QS="${QS}&processed=in.(NEW,IN_PROGRESS)"
           if [[ -n "${ORDER_BY}" ]]; then
             QS="${QS}&order=${ORDER_BY}"
           fi
@@ -52,7 +52,6 @@ jobs:
         id: query
         shell: bash
         env:
-          # <<< שימוש בסוד הקיים אצלך >>>
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           set -euo pipefail
@@ -78,13 +77,13 @@ jobs:
           echo "$RESP"
           echo "-----------------------"
 
-          echo "📊 נמצאו ${COUNT} שורות עם linked_talk ב- {NEW, IN_PROGRESS}"
+          echo "📊 נמצאו ${COUNT} שורות עם processed ב- {NEW, IN_PROGRESS}"
 
           if [[ "$COUNT" -gt 0 ]]; then
-            UNIQUE="$(printf '%s' "$RESP" | jq -r '.[].linked_talk' | sort | uniq -c)"
+            UNIQUE="$(printf '%s' "$RESP" | jq -r '.[].processed' | sort | uniq -c)"
             echo "🔔 חלוקה לפי ערך:"
             echo "$UNIQUE"
-            echo "::notice title=SUPA precheck::found ${COUNT} rows (linked_talk in NEW/IN_PROGRESS)"
+            echo "::notice title=SUPA precheck::found ${COUNT} rows (processed in NEW/IN_PROGRESS)"
           else
             echo "ℹ️ לא נמצאו שורות מתאימות."
             echo "::notice title=SUPA precheck::no rows found"
