@@ -13,7 +13,7 @@ on:
         required: false
         type: string
       max_runs:
-        description: "כמה הפעלות לחולל מקסימום (תקרת בטיחות)"
+        description: "תקרת בטיחות: מספר הפעלות מקסימלי להצתה (ברירת מחדל 5)"
         required: false
         default: "5"
         type: string
@@ -23,7 +23,7 @@ permissions:
   actions: write
 
 jobs:
-  check-and-print:
+  check-and-trigger:
     runs-on: ubuntu-latest
     steps:
       - name: Ensure jq is available
@@ -44,20 +44,14 @@ jobs:
           if [[ -z "${SUPABASE_URL:-}" ]]; then
             echo "❌ Secret SUPABASE_URL חסר"; exit 1
           fi
-
           LIMIT="${{ github.event.inputs.limit }}"
           ORDER_BY="${{ github.event.inputs.order_by }}"
-
           BASE="${SUPABASE_URL%/}/rest/v1/users_total"
-          QS="select=name,processed&limit=${LIMIT}"
-          QS="${QS}&processed=in.(NEW,IN_PROGRESS)"
-          if [[ -n "${ORDER_BY}" ]]; then
-            QS="${QS}&order=${ORDER_BY}"
-          fi
-
+          QS="select=name,processed&limit=${LIMIT}&processed=in.(NEW,IN_PROGRESS)"
+          if [[ -n "${ORDER_BY}" ]]; then QS="${QS}&order=${ORDER_BY}"; fi
           echo "url=${BASE}?${QS}" >> "$GITHUB_OUTPUT"
 
-      - name: Query Supabase and print field values (name + processed)
+      - name: Query Supabase (count & list)
         id: query
         shell: bash
         env:
@@ -67,52 +61,39 @@ jobs:
           if [[ -z "${SUPABASE_KEY:-}" ]]; then
             echo "❌ Secret SUPABASE_KEY חסר"; exit 1
           fi
-
           URL="${{ steps.build.outputs.url }}"
           echo "🔎 GET $URL"
-
-          RESP="$(curl -sS \
-            -H 'apikey: '"$SUPABASE_KEY" \
-            -H 'Authorization: Bearer '"$SUPABASE_KEY" \
-            -H 'Accept: application/json' \
-            "$URL")"
-
-          echo "----- JSON גולמי -----"
-          echo "$RESP"
-          echo "-----------------------"
-
+          RESP="$(curl -sS -H "apikey: $SUPABASE_KEY" -H "Authorization: Bearer $SUPABASE_KEY" -H "Accept: application/json" "$URL")"
+          echo "----- JSON גולמי -----"; echo "$RESP"; echo "-----------------------"
           COUNT="$(printf '%s' "$RESP" | jq 'length')"
-          echo "📊 נמצאו ${COUNT} שורות עם processed ב- {NEW, IN_PROGRESS}"
+          echo "📊 נמצאו ${COUNT} שורות עם processed ב-{NEW, IN_PROGRESS}"
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
-
           if [[ "$COUNT" -gt 0 ]]; then
-            echo "🔔 חלוקה לפי ערך:"
-            printf '%s' "$RESP" | jq -r '.[].processed' | sort | uniq -c
-            echo ""
             echo "🧾 פירוט (name → processed):"
             printf '%s' "$RESP" | jq -r '.[] | "\(.name) → \(.processed)"'
           else
             echo "⏭️ אין שורות מתאימות."
           fi
 
-      # מפעיל את ה-workflow הראשי מספר פעמים (יכנס לתור בגלל concurrency בקובץ הראשי)
+      # מצית את ה־workflow הראשי מספר פעמים = מספר הרשומות (עם תקרת בטיחות)
       - name: Trigger RUN USERS_TOTAL N times (queued by concurrency)
         if: ${{ steps.query.outputs.count != '0' }}
         uses: actions/github-script@v7
         env:
-          COUNT: ${{ steps.query.outputs.count }}
+          FOUND_COUNT: ${{ steps.query.outputs.count }}
           MAX_RUNS: ${{ github.event.inputs.max_runs }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const WORKFLOW_FILE = ".github/workflows/find-pending-users.yml"; // עדכן אם שונה
-            const count = parseInt(process.env.COUNT || "0", 10);
-            const maxRuns = parseInt(process.env.MAX_RUNS || "5", 10);
-            const runsToDispatch = Math.min(count, maxRuns);
+            // === עדכן כאן אם שם הקובץ הראשי שונה ===
+            const WORKFLOW_FILE = ".github/workflows/find-pending-users.yml";
+            const found = parseInt(process.env.FOUND_COUNT || "0", 10);
+            const cap   = parseInt(process.env.MAX_RUNS || "5", 10);
+            const times = Math.min(found, cap);
 
-            core.notice(`Dispatching RUN USERS_TOTAL ${runsToDispatch} time(s) (found=${count}, cap=${maxRuns})`);
+            core.notice(`Dispatching RUN USERS_TOTAL ${times} time(s) (found=${found}, cap=${cap})`);
 
-            for (let i = 1; i <= runsToDispatch; i++) {
+            for (let i = 1; i <= times; i++) {
               await github.rest.actions.createWorkflowDispatch({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -120,9 +101,18 @@ jobs:
                 ref: "main",
                 inputs: {}
               });
-              core.info(`→ Dispatched #${i}/${runsToDispatch}`);
+              core.info(`→ Dispatched #${i}/${times}`);
             }
-            core.notice("All dispatches sent. Target workflow will queue due to concurrency settings.");
+
+            core.notice("All dispatches sent. Target workflow will queue due to its concurrency settings.");
+
+      - name: Step summary
+        run: |
+          echo "### Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Found count: ${{ steps.query.outputs.count }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Max runs cap: ${{ github.event.inputs.max_runs }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Triggered file: \`.github/workflows/find-pending-users.yml\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Skip note (no pending rows)
         if: ${{ steps.query.outputs.count == '0' }}
