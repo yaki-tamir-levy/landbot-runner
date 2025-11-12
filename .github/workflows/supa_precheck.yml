@@ -78,52 +78,38 @@ jobs:
 
           COUNT="$(printf '%s' "$RESP" | jq 'length')"
           echo "📊 נמצאו ${COUNT} שורות עם processed ב- {NEW, IN_PROGRESS}"
-
-          # חושפים count ל-steps הבאים
           echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
 
           if [[ "$COUNT" -gt 0 ]]; then
             echo "🔔 חלוקה לפי ערך:"
             printf '%s' "$RESP" | jq -r '.[].processed' | sort | uniq -c
-
             echo ""
             echo "🧾 פירוט (name → processed):"
             printf '%s' "$RESP" | jq -r '.[] | "\(.name) → \(.processed)"'
-
-            {
-              echo "### SUPA precheck – users_total (processed in NEW/IN_PROGRESS)"
-              echo ""
-              echo "**Count:** ${COUNT}"
-              echo ""
-              echo "| name | processed |"
-              echo "|---|---|"
-              printf '%s' "$RESP" | jq -r '.[] | ["\(.name)","\(.processed)"] | @tsv' \
-                | while IFS=$'\t' read -r NAME PROC; do
-                    echo "| ${NAME} | ${PROC} |"
-                  done
-            } >> "$GITHUB_STEP_SUMMARY"
-
-            echo "::notice title=SUPA precheck::found ${COUNT} rows (processed in NEW/IN_PROGRESS)"
           else
-            echo "ℹ️ לא נמצאו שורות מתאימות."
-            echo "::notice title=SUPA precheck::no rows found"
-
-            {
-              echo "### SUPA precheck – users_total"
-              echo ""
-              echo "No rows found (processed in NEW/IN_PROGRESS)."
-            } >> "$GITHUB_STEP_SUMMARY"
+            echo "⏭️ אין שורות מתאימות."
           fi
 
-      - name: Trigger RUN USERS_TOTAL now
+      # ⬇️ הפעלה של ה-Workflow הראשי דרך GitHub API (ללא תלות ב־peter-evans)
+      - name: Trigger RUN USERS_TOTAL (by file path) when count > 0
         if: ${{ steps.query.outputs.count != '0' }}
-        uses: peter-evans/workflow-dispatch@v2
+        uses: actions/github-script@v7
         with:
-          # מפעיל לפי name של ה-workflow הראשי
-          workflow: RUN USERS_TOTAL
-          ref: main
-          inputs: |
-            {}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // ===== הגדר כאן את נתיב קובץ ה-Workflow הראשי =====
+            // שים את שם הקובץ המדויק שנמצא בתיקייה .github/workflows/
+            const WORKFLOW_FILE = ".github/workflows/find-pending-users.yml";
+            // אם שם הקובץ שלך שונה (למשל run-users-total.yml) – עדכן כאן ↑
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: WORKFLOW_FILE, // אפשר גם ID מספרי, אבל שם קובץ הכי יציב
+              ref: "main",
+              inputs: {} // אין קלטים ל-workflow הראשי
+            });
+            core.notice(`Triggered workflow: ${WORKFLOW_FILE}`);
 
       - name: Skip note (no pending rows)
         if: ${{ steps.query.outputs.count == '0' }}
