@@ -12,6 +12,11 @@ on:
         description: "(אופציונלי) סדר מיון למשל updated_at.desc"
         required: false
         type: string
+      max_runs:
+        description: "כמה הפעלות לחולל מקסימום (תקרת בטיחות)"
+        required: false
+        default: "5"
+        type: string
 
 permissions:
   contents: read
@@ -90,22 +95,34 @@ jobs:
             echo "⏭️ אין שורות מתאימות."
           fi
 
-      # מפעיל את ה־workflow הראשי לפי *נתיב הקובץ* (ללא תלות ב־peter-evans)
-      - name: Trigger RUN USERS_TOTAL (find-pending-users.yml) when count > 0
+      # מפעיל את ה-workflow הראשי מספר פעמים (יכנס לתור בגלל concurrency בקובץ הראשי)
+      - name: Trigger RUN USERS_TOTAL N times (queued by concurrency)
         if: ${{ steps.query.outputs.count != '0' }}
         uses: actions/github-script@v7
+        env:
+          COUNT: ${{ steps.query.outputs.count }}
+          MAX_RUNS: ${{ github.event.inputs.max_runs }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const WORKFLOW_FILE = ".github/workflows/find-pending-users.yml";
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: WORKFLOW_FILE,
-              ref: "main",
-              inputs: {}
-            });
-            core.notice(`Triggered workflow: ${WORKFLOW_FILE}`);
+            const WORKFLOW_FILE = ".github/workflows/find-pending-users.yml"; // עדכן אם שונה
+            const count = parseInt(process.env.COUNT || "0", 10);
+            const maxRuns = parseInt(process.env.MAX_RUNS || "5", 10);
+            const runsToDispatch = Math.min(count, maxRuns);
+
+            core.notice(`Dispatching RUN USERS_TOTAL ${runsToDispatch} time(s) (found=${count}, cap=${maxRuns})`);
+
+            for (let i = 1; i <= runsToDispatch; i++) {
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: WORKFLOW_FILE,
+                ref: "main",
+                inputs: {}
+              });
+              core.info(`→ Dispatched #${i}/${runsToDispatch}`);
+            }
+            core.notice("All dispatches sent. Target workflow will queue due to concurrency settings.");
 
       - name: Skip note (no pending rows)
         if: ${{ steps.query.outputs.count == '0' }}
