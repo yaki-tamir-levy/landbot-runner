@@ -90,24 +90,20 @@ jobs:
             echo "⏭️ אין שורות מתאימות."
           fi
 
-      # ⬇️ הפעלה של ה-Workflow הראשי דרך GitHub API (ללא תלות ב־peter-evans)
-      - name: Trigger RUN USERS_TOTAL (by file path) when count > 0
+      # מפעיל את ה־workflow הראשי לפי *נתיב הקובץ* (ללא תלות ב־peter-evans)
+      - name: Trigger RUN USERS_TOTAL (find-pending-users.yml) when count > 0
         if: ${{ steps.query.outputs.count != '0' }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            // ===== הגדר כאן את נתיב קובץ ה-Workflow הראשי =====
-            // שים את שם הקובץ המדויק שנמצא בתיקייה .github/workflows/
             const WORKFLOW_FILE = ".github/workflows/find-pending-users.yml";
-            // אם שם הקובץ שלך שונה (למשל run-users-total.yml) – עדכן כאן ↑
-
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: WORKFLOW_FILE, // אפשר גם ID מספרי, אבל שם קובץ הכי יציב
+              workflow_id: WORKFLOW_FILE,
               ref: "main",
-              inputs: {} // אין קלטים ל-workflow הראשי
+              inputs: {}
             });
             core.notice(`Triggered workflow: ${WORKFLOW_FILE}`);
 
