@@ -13,6 +13,10 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   check-and-print:
     runs-on: ubuntu-latest
@@ -40,7 +44,6 @@ jobs:
           ORDER_BY="${{ github.event.inputs.order_by }}"
 
           BASE="${SUPABASE_URL%/}/rest/v1/users_total"
-          # ⬅️ שולפים גם name וגם processed
           QS="select=name,processed&limit=${LIMIT}"
           QS="${QS}&processed=in.(NEW,IN_PROGRESS)"
           if [[ -n "${ORDER_BY}" ]]; then
@@ -50,6 +53,7 @@ jobs:
           echo "url=${BASE}?${QS}" >> "$GITHUB_OUTPUT"
 
       - name: Query Supabase and print field values (name + processed)
+        id: query
         shell: bash
         env:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -63,9 +67,9 @@ jobs:
           echo "🔎 GET $URL"
 
           RESP="$(curl -sS \
-            -H "apikey: $SUPABASE_KEY" \
-            -H "Authorization: Bearer $SUPABASE_KEY" \
-            -H "Accept: application/json" \
+            -H 'apikey: '"$SUPABASE_KEY" \
+            -H 'Authorization: Bearer '"$SUPABASE_KEY" \
+            -H 'Accept: application/json' \
             "$URL")"
 
           echo "----- JSON גולמי -----"
@@ -75,6 +79,9 @@ jobs:
           COUNT="$(printf '%s' "$RESP" | jq 'length')"
           echo "📊 נמצאו ${COUNT} שורות עם processed ב- {NEW, IN_PROGRESS}"
 
+          # נחשוף את הספירה לשימוש בשלבים הבאים
+          echo "count=${COUNT}" >> "$GITHUB_OUTPUT"
+
           if [[ "$COUNT" -gt 0 ]]; then
             echo "🔔 חלוקה לפי ערך:"
             printf '%s' "$RESP" | jq -r '.[].processed' | sort | uniq -c
@@ -83,7 +90,6 @@ jobs:
             echo "🧾 פירוט (name → processed):"
             printf '%s' "$RESP" | jq -r '.[] | "\(.name) → \(.processed)"'
 
-            # גם תקציר קריא ב-STEP SUMMARY למעלה
             {
               echo "### SUPA precheck – users_total (processed in NEW/IN_PROGRESS)"
               echo ""
@@ -93,7 +99,6 @@ jobs:
               echo "|---|---|"
               printf '%s' "$RESP" | jq -r '.[] | ["\(.name)","\(.processed)"] | @tsv' \
                 | while IFS=$'\t' read -r NAME PROC; do
-                    # ממירים לתבנית טבלת Markdown
                     echo "| ${NAME} | ${PROC} |"
                   done
             } >> "$GITHUB_STEP_SUMMARY"
@@ -109,3 +114,17 @@ jobs:
               echo "No rows found (processed in NEW/IN_PROGRESS)."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Trigger RUN USERS_TOTAL now
+        if: ${{ steps.query.outputs.count != '0' }}
+        uses: peter-evans/workflow-dispatch@v3
+        with:
+          # מפעיל לפי שם ה-workflow הראשי (name: RUN USERS_TOTAL)
+          workflow: RUN USERS_TOTAL
+          ref: main
+          inputs: |
+            {}
+
+      - name: Skip note (no pending rows)
+        if: ${{ steps.query.outputs.count == '0' }}
+        run: echo "⏭️ אין שורות מתאימות – ה-Workflow הראשי לא הופעל."
