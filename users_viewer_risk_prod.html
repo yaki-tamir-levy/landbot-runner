@@ -151,6 +151,7 @@
 <script>
 (function () {
   "use strict";
+
   // ---- Simple password gate (client-side only, asks every load) ----
   // הסיסמה כרגע מוגדרת ל: 1234
   var PASSWORD_HASH_HEX = "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4"; // SHA-256("1234")
@@ -232,8 +233,18 @@
     });
   }
 
-  window.addEventListener("DOMContentLoaded", initLock);
+  // נעלילה בכל טעינה רגילה
+  window.addEventListener("DOMContentLoaded", function () {
+    initLock();
+  });
 
+  // טיפול במצב שחוזרים לעמוד דרך BACK/FORWARD מהיסטוריה (bfcache):
+  // נכפה טעינה מחדש, וכך initLock ירוץ שוב ותידרש סיסמה מחדש
+  window.addEventListener("pageshow", function (ev) {
+    if (ev.persisted) {
+      window.location.reload();
+    }
+  });
 
   window.addEventListener('error', function(e){
     var m = 'שגיאת סקריפט: ' + (e && e.message ? e.message : e);
@@ -780,7 +791,7 @@
             '</div>'
           );
 
-          var headHtml = headParts.join('');
+          headHtml = headParts.join('');
 
           parts.push('<div class="talk" data-time="' + escapeHtml(r.time) + '" data-phone="' + escapeHtml(r.phone||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
           parts.push(headHtml);
