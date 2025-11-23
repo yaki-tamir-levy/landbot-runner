@@ -28,7 +28,7 @@
 </script>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>השיחות של המטפל הוירטואלי</title>
+  <title>כל הסוגים</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.1/dist/umd/supabase.js"></script>
   <style>
     :root { --bg:#f6f7fb; --card:#ffffff; --ink:#111827; --muted:#6b7280; --divider:#e5e7eb; --danger:#7f1d1d; --ok:#065f46; --hi:#fde68a; }
@@ -129,7 +129,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h2>השיחות של המטפל הוירטואלי</h2>
+  <h2 id="pageTitle">כל הסוגים</h2>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -191,6 +191,25 @@
 
 
   var LS_STATUS_KEY = 'uvr_status_filter';
+
+  // מיפוי סטטוס לכותרת מלאה
+  var STATUS_TITLE_MAP = {
+    "":  "כל הסוגים",
+    "1": "השיחות של המטפל הוירטואלי",
+    "2": "השיחות של מדריך הקורס",
+    "3": "השיחות של המטפל הוירטואלי + מדריך הקורס",
+    "4": "השיחות של טסט"
+  };
+
+  function updateTitlesFromStatus() {
+    var kind = (el.fKind && el.fKind.value) ? el.fKind.value : "";
+    var fullTitle = STATUS_TITLE_MAP.hasOwnProperty(kind) ? STATUS_TITLE_MAP[kind] : "השיחות של המטפל הוירטואלי";
+    document.title = fullTitle;
+    var h2 = document.getElementById("pageTitle");
+    if (h2) {
+      h2.textContent = fullTitle;
+    }
+  }
 
   // שחזור בחירת סטטוס מהפעם הקודמת, אם קיים
   try {
@@ -890,13 +909,14 @@
   });
 
 
-  // שינוי סטטוס – שומר ב-localStorage ומרענן את הרשימה
+  // שינוי סטטוס – שומר ב-localStorage, מעדכן כותרת ומרענן את הרשימה
   el.fKind.addEventListener('change', function(){
     try {
       if (window.localStorage) {
         localStorage.setItem(LS_STATUS_KEY, el.fKind.value || '');
       }
     } catch(e) {}
+    updateTitlesFromStatus();
     queryPage();
   });
   el.btnRun.onclick   = function(){ queryPage(); };
@@ -908,6 +928,7 @@
     queryPage();
   };
 
+  updateTitlesFromStatus();
   queryPage();
 })();
 </script>
