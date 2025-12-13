@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-pushover_send.py
-Send a single Pushover push notification and exit.
+tools/pushover_send.py
+Send a single Pushover notification and exit.
 
-Requirements:
+Required env vars (set by GitHub Secrets via workflow env):
+  PUSHOVER_TOKEN  - Pushover Application/API Token
+  PUSHOVER_USER   - Pushover User Key (or Group Key)
+
+Optional env vars (also via Secrets):
+  PUSHOVER_URL        - default URL to attach
+  PUSHOVER_URL_TITLE  - default URL title (default: "פתח פרטים")
+
+Requires:
   pip install requests
 
-Environment variables:
-  PUSHOVER_TOKEN  - your Pushover Application/API Token
-  PUSHOVER_USER   - your Pushover User Key (or Group Key)
-
-Usage examples:
-  python pushover_send.py --title "🔴 התראה חשובה" --message "בדיקה: הודעה מהמערכת" --priority 1 --sound siren
-  python pushover_send.py -t "Hello" -m "World"
+Usage:
+  python tools/pushover_send.py --message "טקסט ההודעה"
+  python tools/pushover_send.py --title "🔴 התראה חשובה" --message "..." --priority 1 --sound siren
 """
 
 import os
@@ -23,25 +27,31 @@ import requests
 PUSHOVER_ENDPOINT = "https://api.pushover.net/1/messages.json"
 
 
-def send_pushover(*, title: str, message: str, priority: int = 0, sound: str | None = None,
-                  url: str | None = None, url_title: str | None = None) -> None:
+def send_pushover(*, title: str, message: str, priority: int, sound: str | None) -> None:
     token = os.environ.get("PUSHOVER_TOKEN")
     user = os.environ.get("PUSHOVER_USER")
+
+    # URL comes from Secrets (env) by default
+    url = os.environ.get("PUSHOVER_URL", "").strip()
+    url_title = os.environ.get("PUSHOVER_URL_TITLE", "פתח פרטים").strip() or "פתח פרטים"
+
     if not token or not user:
         raise RuntimeError("Missing env vars: PUSHOVER_TOKEN and/or PUSHOVER_USER")
 
-    data = {
+    data: dict[str, str] = {
         "token": token,
         "user": user,
         "title": title,
         "message": message,
         "priority": str(priority),
     }
+
     if sound:
         data["sound"] = sound
+
+    # Attach URL only if provided
     if url:
         data["url"] = url
-    if url_title:
         data["url_title"] = url_title
 
     resp = requests.post(PUSHOVER_ENDPOINT, data=data, timeout=20)
@@ -54,19 +64,20 @@ def main() -> int:
     p.add_argument("-m", "--message", required=True, help="Notification message/body")
     p.add_argument("--priority", type=int, default=1, choices=[-2, -1, 0, 1, 2],
                    help="Pushover priority (-2,-1,0,1,2). Default: 1")
-    p.add_argument("--sound", default="siren", help="Pushover sound (e.g. siren, pushover, etc.). Default: siren")
-    p.add_argument("--url", default=None, help="Optional URL to attach to the notification")
-    p.add_argument("--url-title", default=None, help="Optional URL title")
+    p.add_argument("--sound", default="siren",
+                   help="Pushover sound (e.g. siren, pushover, etc.). Default: siren (set empty to omit)")
 
     args = p.parse_args()
+
+    sound = args.sound.strip() if args.sound is not None else None
+    if sound == "":
+        sound = None
 
     send_pushover(
         title=args.title,
         message=args.message,
         priority=args.priority,
-        sound=args.sound,
-        url=args.url,
-        url_title=args.url_title,
+        sound=sound,
     )
     print("Sent.")
     return 0
