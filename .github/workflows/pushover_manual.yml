@@ -1,0 +1,35 @@
+name: Send Pushover (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "תוכן ההודעה"
+        required: true
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    env:
+      PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_TOKEN }}
+      PUSHOVER_USER: ${{ secrets.PUSHOVER_USER }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependency
+        run: pip install requests
+
+      - name: Send notification
+        run: |
+          python tools/pushover_send.py \
+            --title "🔴 התראה חשובה" \
+            --message "${{ inputs.message }}" \
+            --priority 1 \
+            --sound siren
