@@ -6,6 +6,14 @@ on:
       message:
         description: "תוכן ההודעה"
         required: true
+      url:
+        description: "קישור (חובה כולל https://)"
+        required: false
+        default: ""
+      url_title:
+        description: "טקסט לקישור"
+        required: false
+        default: "פתח פרטים"
 
 jobs:
   send:
@@ -28,8 +36,14 @@ jobs:
 
       - name: Send notification
         run: |
+          EXTRA=""
+          if [ -n "${{ inputs.url }}" ]; then
+            EXTRA="--url '${{ inputs.url }}' --url-title '${{ inputs.url_title }}'"
+          fi
+
           python tools/pushover_send.py \
             --title "🔴 התראה חשובה" \
             --message "${{ inputs.message }}" \
             --priority 1 \
-            --sound siren
+            --sound siren \
+            $EXTRA
