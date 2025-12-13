@@ -6,21 +6,15 @@ on:
       message:
         description: "תוכן ההודעה"
         required: true
-      url:
-        description: "קישור (חובה כולל https://)"
-        required: false
-        default: ""
-      url_title:
-        description: "טקסט לקישור"
-        required: false
-        default: "פתח פרטים"
 
 jobs:
   send:
     runs-on: ubuntu-latest
     env:
       PUSHOVER_TOKEN: ${{ secrets.PUSHOVER_TOKEN }}
-      PUSHOVER_USER: ${{ secrets.PUSHOVER_USER }}
+      PUSHOVER_USER:  ${{ secrets.PUSHOVER_USER }}
+      PUSHOVER_URL:   ${{ secrets.PUSHOVER_URL }}
+      PUSHOVER_URL_TITLE: ${{ secrets.PUSHOVER_URL_TITLE }}
 
     steps:
       - name: Checkout repository
@@ -36,14 +30,8 @@ jobs:
 
       - name: Send notification
         run: |
-          EXTRA=""
-          if [ -n "${{ inputs.url }}" ]; then
-            EXTRA="--url '${{ inputs.url }}' --url-title '${{ inputs.url_title }}'"
-          fi
-
           python tools/pushover_send.py \
             --title "🔴 התראה חשובה" \
             --message "${{ inputs.message }}" \
             --priority 1 \
-            --sound siren \
-            $EXTRA
+            --sound siren
