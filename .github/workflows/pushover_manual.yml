@@ -27,7 +27,7 @@ jobs:
       - name: Send notification
         run: |
           python tools/pushover_send.py \
-            --title "🔴 התראה חשובה 🔴" \
+            --title "🔴התראה חשובה🔴" \
             --message "הופיעה *התראת סיכון* בשיחת מטופלים" \
             --priority 1 \
             --sound siren
