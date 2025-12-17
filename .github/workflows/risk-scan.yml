@@ -1,0 +1,110 @@
+name: RISK scan (incremental users_tzvira -> risk_reviews)
+
+on:
+  # אוטומטי: כל 10 דקות
+  schedule:
+    - cron: "*/10 * * * *"
+  # ידני:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "כמה שורות users_tzvira לסרוק בכל ריצה (ברירת מחדל 200)"
+        required: false
+        default: "200"
+        type: string
+      dry_run:
+        description: "true = לא מכניס ל-risk_reviews ולא מעדכן watermark"
+        required: false
+        default: "false"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: risk-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      SUPABASE_URL: ${{ secrets.supabase_url }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      LIMIT: ${{ github.event.inputs.limit || '200' }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
+          fi
+          jq --version
+
+      - name: Validate required env
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "❌ Missing secret: supabase_url"; exit 1
+          fi
+          if [[ -z "${SUPABASE_KEY:-}" ]]; then
+            echo "❌ Missing secret: SUPABASE_SERVICE_ROLE_KEY"; exit 1
+          fi
+
+      - name: Get watermark (risk_scan_state)
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
+          echo "GET $ENDPOINT (last_time_key)"
+          # ניסיון לקרוא שורה ראשונה (בהנחה שיש id+last_time_key)
+          RESP="$(curl -sS \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            -H "Accept: application/json" \
+            -G "$ENDPOINT" \
+            --data-urlencode 'select=id,last_time_key' \
+            --data-urlencode 'order=id.asc' \
+            --data-urlencode 'limit=1' \
+          )"
+          echo "$RESP" > state.json
+
+          # אם אין שורה/שגיאה → fallback
+          ID="$(jq -r 'if type=="array" and length>0 then .[0].id else 1 end' state.json 2>/dev/null || echo 1)"
+          LAST="$(jq -r 'if type=="array" and length>0 and .[0].last_time_key!=null then .[0].last_time_key else "1970-01-01T00:00:00Z" end' state.json 2>/dev/null || echo "1970-01-01T00:00:00Z")"
+
+          echo "state_id=$ID" >> "$GITHUB_OUTPUT"
+          echo "last_time_key=$LAST" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch risk_phrases
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_phrases"
+          echo "GET $ENDPOINT"
+          # נביא גם enabled אם קיים; אם אין - לא יפיל אותנו (Node יתמודד)
+          if ! curl -sS --fail-with-body \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            -H "Accept: application/json" \
+            -G "$ENDPOINT" \
+            --data-urlencode 'select=id,phrase,severity,enabled' \
+            --data-urlencode 'order=id.asc' \
+            > phrases.json
+          then
+            echo "WARN: failed to fetch
