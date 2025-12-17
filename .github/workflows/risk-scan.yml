@@ -90,21 +90,30 @@ jobs:
 
           echo "state_id=$ID" >> "$GITHUB_OUTPUT"
           echo "last_time_key=$LAST" >> "$GITHUB_OUTPUT"
-
       - name: Fetch risk_phrases
         shell: bash
         run: |
           set -euo pipefail
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_phrases"
           echo "GET $ENDPOINT"
-          # נביא גם enabled אם קיים; אם אין - לא יפיל אותנו (Node יתמודד)
+
+          # נבנה query בצורה בטוחה, בלי שבירות-שורה בעייתיות
           if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
-            -G "$ENDPOINT" \
-            --data-urlencode 'select=id,phrase,severity,enabled' \
-            --data-urlencode 'order=id.asc' \
+            -G "${ENDPOINT}" \
+            --data-urlencode "select=id,phrase,severity,enabled" \
+            --data-urlencode "order=id.asc" \
             > phrases.json
           then
-            echo "WARN: failed to fetch
+            echo "WARN: failed to fetch risk_phrases; using []"
+            echo "[]" > phrases.json
+          fi
+
+          if ! jq -e . phrases.json >/dev/null 2>&1; then
+            echo "WARN: invalid JSON for phrases; using []"
+            echo "[]" > phrases.json
+          fi
+
+      
