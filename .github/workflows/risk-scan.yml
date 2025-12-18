@@ -48,6 +48,7 @@ jobs:
       - name: Ensure jq is available
         shell: bash
         run: |
+          set -euo pipefail
           if ! command -v jq >/dev/null 2>&1; then
             sudo apt-get update -y
             sudo apt-get install -y jq
@@ -73,14 +74,14 @@ jobs:
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
           echo "GET $ENDPOINT (last_time_key)"
 
-          RESP="$(curl -sS \
+          RESP="$(curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
             -G "$ENDPOINT" \
             --data-urlencode "select=id,last_time_key" \
             --data-urlencode "order=id.asc" \
-            --data-urlencode "limit=1" \
+            --data-urlencode "limit=1"
           )"
           echo "$RESP" > state.json
 
@@ -90,25 +91,51 @@ jobs:
           echo "state_id=$ID" >> "$GITHUB_OUTPUT"
           echo "last_time_key=$LAST" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch risk_phrases
+      - name: Fetch risk_phrases (and normalize for Node)
         shell: bash
         run: |
           set -euo pipefail
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_phrases"
           echo "GET $ENDPOINT"
 
+          # אצלך בטבלה: pattern_key, pattern, severity, is_active
           if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
             -G "${ENDPOINT}" \
-            --data-urlencode "select=id,phrase,severity,enabled" \
+            --data-urlencode "select=id,pattern_key,pattern,severity,is_active" \
             --data-urlencode "order=id.asc" \
-            > phrases.json
+            > phrases_raw.json
           then
             echo "WARN: failed to fetch risk_phrases; using []"
-            echo "[]" > phrases.json
+            echo "[]" > phrases_raw.json
           fi
+
+          if ! jq -e . phrases_raw.json >/dev/null 2>&1; then
+            echo "WARN: invalid JSON for phrases_raw; using []"
+            echo "[]" > phrases_raw.json
+          fi
+
+          # Normalize to the schema your Node builder already expects:
+          # { id, phrase, severity, enabled }
+          # severity mapping: 'high'->'HIGH', 'medium'->'MED'
+          jq -c '
+            if type!="array" then [] else
+              map({
+                id: (.pattern_key // (.id|tostring)),
+                phrase: (.pattern // ""),
+                severity: (
+                  ( .severity // "" )
+                  | ascii_downcase
+                  | if .=="high" then "HIGH"
+                    elif .=="medium" then "MED"
+                    else (. | ascii_upcase)
+                    end
+                ),
+                enabled: (.is_active // true)
+              })
+          ' phrases_raw.json > phrases.json
 
           if ! jq -e . phrases.json >/dev/null 2>&1; then
             echo "WARN: invalid JSON for phrases; using []"
@@ -193,12 +220,13 @@ jobs:
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
           echo "UPSERT $ENDPOINT id=$ID last_time_key=$MAXT"
 
+          # Upsert by id
           curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
-            -d "[{\"id\": ${ID}, \"last_time_key\": \"${MAXT}\"}]" \
+            -d "{\"id\": ${ID}, \"last_time_key\": \"${MAXT}\"}" \
             "$ENDPOINT" >/dev/null
 
       - name: Step summary (visible in run Summary tab)
