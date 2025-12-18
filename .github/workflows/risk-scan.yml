@@ -1,23 +1,41 @@
-
 name: RISK scan (incremental users_tzvira -> risk_reviews)
 
 on:
+  # אוטומטי: כל 10 דקות
   schedule:
     - cron: "*/10 * * * *"
+  # ידני:
   workflow_dispatch:
     inputs:
       limit:
-        description: "Max rows per run"
+        description: "כמה שורות users_tzvira לסרוק בכל ריצה (ברירת מחדל 200)"
         required: false
         default: "200"
+        type: string
       dry_run:
-        description: "true = no inserts, no watermark update"
+        description: "true = לא מכניס ל-risk_reviews ולא מעדכן watermark"
         required: false
         default: "false"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: risk-scan-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   scan:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      SUPABASE_URL: ${{ secrets.supabase_url }}
+      # Service Role key (server-side only; stored as GitHub secret)
+      SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      LIMIT: ${{ github.event.inputs.limit || '200' }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
 
     steps:
       - name: Checkout
@@ -26,122 +44,236 @@ jobs:
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
+
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
+          fi
+          jq --version
 
       - name: Validate required env
+        shell: bash
         run: |
-          test -n "${SUPABASE_URL}"
-          test -n "${SUPABASE_KEY}"
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-
-      - name: Get watermark (risk_scan_state)
-        run: |
-          curl -sS \
-            -H "apikey: ${SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_KEY}" \
-            "${SUPABASE_URL%/}/rest/v1/risk_scan_state?key=eq.last_time_key&select=value" \
-            | jq -r '.[0].value // "1970-01-01T00:00:00Z"' > watermark.txt
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-
-      - name: Fetch risk_phrases
-        run: |
-          curl -sS \
-            -H "apikey: ${SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_KEY}" \
-            "${SUPABASE_URL%/}/rest/v1/risk_phrases?select=pattern,pattern_key,severity,is_active" \
-            > phrases.json
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-
-      - name: Fetch users_tzvira incrementally
-        run: |
-          WATERMARK=$(cat watermark.txt)
-          curl -sS \
-            -H "apikey: ${SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_KEY}" \
-            "${SUPABASE_URL%/}/rest/v1/users_tzvira?select=id,created_at,content&created_at=gt.${WATERMARK}&order=created_at.asc&limit=${LIMIT}" \
-            > users.json
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          LIMIT: ${{ github.event.inputs.limit || '200' }}
-
-      - name: Build risk payload (Node)
-        run: |
-          node <<'NODE'
-          const fs = require('fs');
-          const crypto = require('crypto');
-
-          const phrases = JSON.parse(fs.readFileSync('phrases.json','utf8'));
-          const users   = JSON.parse(fs.readFileSync('users.json','utf8'));
-
-          const active = phrases.filter(p => p.is_active);
-          const out = [];
-
-          for (const u of users) {
-            for (const p of active) {
-              if (u.content && u.content.includes(p.pattern)) {
-                out.push({
-                  user_id: u.id,
-                  pattern: p.pattern,
-                  pattern_key: p.pattern_key,
-                  severity: p.severity,
-                  status: 'NEW',
-                  matched_at: u.created_at
-                });
-              }
-            }
-          }
-
-          fs.writeFileSync('payload.json', JSON.stringify(out, null, 2));
-          console.log(`Prepared ${out.length} risk rows`);
-          NODE
-
-      - name: Insert risk_reviews (ignore duplicates, show body on error)
-        run: |
-          if [ "${DRY_RUN}" = "true" ]; then
-            echo "DRY_RUN=true, skipping insert"
-            exit 0
+          set -euo pipefail
+          if [[ -z "${SUPABASE_URL:-}" ]]; then
+            echo "❌ Missing secret: supabase_url"; exit 1
+          fi
+          if [[ -z "${SUPABASE_KEY:-}" ]]; then
+            echo "❌ Missing secret: SUPABASE_SERVICE_ROLE_KEY"; exit 1
           fi
 
+      - name: Get watermark (risk_scan_state)
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
+          echo "GET $ENDPOINT (select=id,last_time_key)"
+
+          # Capture body + status code (so we can show PostgREST error body)
+          HTTP_CODE="$(curl -sS -o state.json -w "%{http_code}" \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            -H "Accept: application/json" \
+            -G "$ENDPOINT" \
+            --data-urlencode "select=id,last_time_key" \
+            --data-urlencode "order=id.asc" \
+            --data-urlencode "limit=1" \
+          )" || true
+
+          if [[ "${HTTP_CODE}" != 2* ]]; then
+            echo "WARN: risk_scan_state fetch failed (HTTP ${HTTP_CODE}). Body:"
+            cat state.json || true
+            echo "[]" > state.json
+          fi
+
+          # Be defensive: state.json might be [] or an object (error)
+          if jq -e 'type=="array"' state.json >/dev/null 2>&1; then
+            ID="$(jq -r 'if length>0 then .[0].id else 1 end' state.json)"
+            LAST="$(jq -r 'if length>0 and .[0].last_time_key!=null then .[0].last_time_key else "1970-01-01T00:00:00Z" end' state.json)"
+          else
+            ID="1"
+            LAST="1970-01-01T00:00:00Z"
+          fi
+
+          echo "state_id=$ID" >> "$GITHUB_OUTPUT"
+          echo "last_time_key=$LAST" >> "$GITHUB_OUTPUT"
+
+      - name: Fetch risk_phrases (match real schema)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_phrases"
+          echo "GET $ENDPOINT"
+
+          # REAL schema (from your screenshot):
+          # id (bigint), pattern_key (text NOT NULL UNIQUE), pattern (text), severity (text: medium/high), is_active (boolean)
+          HTTP_CODE="$(curl -sS -o phrases.json -w "%{http_code}" \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            -H "Accept: application/json" \
+            -G "${ENDPOINT}" \
+            --data-urlencode "select=id,pattern_key,pattern,severity,is_active" \
+            --data-urlencode "is_active=eq.true" \
+            --data-urlencode "order=id.asc" \
+          )" || true
+
+          if [[ "${HTTP_CODE}" != 2* ]]; then
+            echo "WARN: failed to fetch risk_phrases (HTTP ${HTTP_CODE}). Body:"
+            cat phrases.json || true
+            echo "[]" > phrases.json
+          fi
+
+          if ! jq -e . phrases.json >/dev/null 2>&1; then
+            echo "WARN: invalid JSON for phrases; using []"
+            echo "[]" > phrases.json
+          fi
+
+      - name: Fetch users_tzvira incrementally
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="${SUPABASE_URL%/}/rest/v1/users_tzvira"
+          LAST="${{ steps.state.outputs.last_time_key }}"
+          echo "GET $ENDPOINT (time > $LAST), limit=$LIMIT"
+
+          HTTP_CODE="$(curl -sS -o talks.json -w "%{http_code}" \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            -H "Accept: application/json" \
+            -G "$ENDPOINT" \
+            --data-urlencode "select=time,phone,last_talk_tzvira" \
+            --data-urlencode "time=gt.${LAST}" \
+            --data-urlencode "order=time.asc" \
+            --data-urlencode "limit=${LIMIT}" \
+          )" || true
+
+          if [[ "${HTTP_CODE}" != 2* ]]; then
+            echo "WARN: failed to fetch users_tzvira (HTTP ${HTTP_CODE}). Body:"
+            cat talks.json || true
+            echo "[]" > talks.json
+          fi
+
+          if ! jq -e . talks.json >/dev/null 2>&1; then
+            echo "WARN: invalid JSON for talks; using []"
+            echo "[]" > talks.json
+          fi
+
+      - name: Build risk payload (Node)
+        id: build_payload
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # NOTE: Your latest 400 body shows:
+          # "null value in column \"pattern_key\" of relation \"risk_reviews\" violates not-null constraint"
+          # That means payload.json must include pattern_key for each row.
+          # We now fetch pattern_key from risk_phrases; the Node builder must propagate it into payload.json.
+
+          node scripts/risk_scan_build_payload.mjs \
+            --talks talks.json \
+            --phrases phrases.json \
+            --out payload.json \
+            --out-max-time max_time.txt \
+            --context 80
+
+          HITS="$(jq 'if type=="array" then length else 0 end' payload.json 2>/dev/null || echo 0)"
+          MAXT="$(cat max_time.txt 2>/dev/null || true)"
+
+          echo "hits=$HITS" >> "$GITHUB_OUTPUT"
+          echo "max_time=$MAXT" >> "$GITHUB_OUTPUT"
+
+      - name: Validate payload has pattern_key (fail fast)
+        if: ${{ steps.build_payload.outputs.hits != '0' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # If any row misses pattern_key -> fail with clear message (prevents cryptic 400)
+          MISSING="$(jq '[.[] | select((.pattern_key // "") == "")] | length' payload.json 2>/dev/null || echo 0)"
+          if [[ "${MISSING}" != "0" ]]; then
+            echo "❌ payload.json contains ${MISSING} rows with missing pattern_key."
+            echo "This WILL fail because risk_reviews.pattern_key is NOT NULL."
+            echo "Fix scripts/risk_scan_build_payload.mjs to copy pattern_key from phrases into each hit."
+            echo "Example row (first missing):"
+            jq -c '.[] | select((.pattern_key // "") == "") | . | {phone, time, pattern_key, pattern, severity}' payload.json | head -n 1 || true
+            exit 1
+          fi
+
+      - name: Insert risk_reviews (ignore duplicates; show PostgREST body on 4xx/5xx)
+        if: ${{ steps.build_payload.outputs.hits != '0' && env.DRY_RUN != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_reviews"
-          curl -sS --fail-with-body \
+          echo "POST $ENDPOINT (Prefer: resolution=ignore-duplicates)"
+
+          HTTP_CODE="$(curl -sS -o insert_body.json -w "%{http_code}" \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=ignore-duplicates" \
             -d @payload.json \
-            "$ENDPOINT"
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+            "$ENDPOINT" \
+          )" || true
 
-      - name: Update watermark
+          if [[ "${HTTP_CODE}" != 2* ]]; then
+            echo "❌ Insert failed (HTTP ${HTTP_CODE}). Response body:"
+            cat insert_body.json || true
+            exit 1
+          fi
+
+      - name: Update watermark (risk_scan_state.last_time_key) - show body on 4xx/5xx
+        if: ${{ env.DRY_RUN != 'true' }}
+        shell: bash
         run: |
-          if [ "${DRY_RUN}" = "true" ]; then
-            echo "DRY_RUN=true, skipping watermark update"
+          set -euo pipefail
+          MAXT="${{ steps.build_payload.outputs.max_time }}"
+          if [[ -z "${MAXT:-}" || "${MAXT}" == "1970-01-01T00:00:00Z" ]]; then
+            echo "No max_time; skipping watermark update."
             exit 0
           fi
 
-          LAST=$(jq -r '.[-1].created_at' users.json)
-          curl -sS \
-            -X PATCH \
+          ID="${{ steps.state.outputs.state_id }}"
+          ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
+          echo "UPSERT $ENDPOINT id=$ID last_time_key=$MAXT"
+
+          HTTP_CODE="$(curl -sS -o upsert_body.json -w "%{http_code}" \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{\"value\":\"${LAST}\"}" \
-            "${SUPABASE_URL%/}/rest/v1/risk_scan_state?key=eq.last_time_key"
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "[{\"id\": ${ID}, \"last_time_key\": \"${MAXT}\"}]" \
+            "$ENDPOINT" \
+          )" || true
 
-      - name: Step summary
+          if [[ "${HTTP_CODE}" != 2* ]]; then
+            echo "❌ Watermark upsert failed (HTTP ${HTTP_CODE}). Response body:"
+            cat upsert_body.json || true
+            exit 1
+          fi
+
+      - name: Step summary (visible in run Summary tab)
+        if: always()
+        shell: bash
         run: |
-          echo "RISK scan completed" >> $GITHUB_STEP_SUMMARY
+          TALKS="$(jq 'if type=="array" then length else 0 end' talks.json 2>/dev/null || echo 0)"
+          PHRASES="$(jq 'if type=="array" then length else 0 end' phrases.json 2>/dev/null || echo 0)"
+          HITS="$(jq 'if type=="array" then length else 0 end' payload.json 2>/dev/null || echo 0)"
+          LAST="${{ steps.state.outputs.last_time_key }}"
+          MAXT="${{ steps.build_payload.outputs.max_time }}"
+          {
+            echo "## RISK scan – Summary"
+            echo ""
+            echo "- dry_run: ${DRY_RUN}"
+            echo "- limit: ${LIMIT}"
+            echo "- talks fetched: ${TALKS}"
+            echo "- phrases fetched (active): ${PHRASES}"
+            echo "- hits built: ${HITS}"
+            echo "- last_time_key (before): ${LAST}"
+            echo "- max_time (batch): ${MAXT}"
+          } >> "$GITHUB_STEP_SUMMARY"
