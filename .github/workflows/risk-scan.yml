@@ -98,7 +98,7 @@ jobs:
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_phrases"
           echo "GET $ENDPOINT"
 
-          # אצלך בטבלה: pattern_key, pattern, severity, is_active
+          # בטבלה אצלך: id, pattern_key, pattern, severity, is_active, created_at, updated_at
           if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
@@ -117,29 +117,27 @@ jobs:
             echo "[]" > phrases_raw.json
           fi
 
-          # Normalize to the schema your Node builder already expects:
+          # Normalize to schema expected by scripts/risk_scan_build_payload.mjs:
           # { id, phrase, severity, enabled }
-          # severity mapping: 'high'->'HIGH', 'medium'->'MED'
-       jq -c <<'JQ' phrases_raw.json > phrases.json
-if type != "array" then
-  []
-else
-  map({
-    id: (.pattern_key // (.id | tostring)),
-    phrase: (.pattern // ""),
-    severity: (
-      (.severity // "")
-      | ascii_downcase
-      | if . == "high" then "HIGH"
-        elif . == "medium" then "MED"
-        else ascii_upcase
-        end
-    ),
-    enabled: (.is_active // true)
-  })
-end
-JQ
-
+          jq -c <<'JQ' phrases_raw.json > phrases.json
+          if type != "array" then
+            []
+          else
+            map({
+              id: (.pattern_key // (.id | tostring)),
+              phrase: (.pattern // ""),
+              severity: (
+                (.severity // "")
+                | ascii_downcase
+                | if . == "high" then "HIGH"
+                  elif . == "medium" then "MED"
+                  else ascii_upcase
+                  end
+              ),
+              enabled: (.is_active // true)
+            })
+          end
+          JQ
 
           if ! jq -e . phrases.json >/dev/null 2>&1; then
             echo "WARN: invalid JSON for phrases; using []"
@@ -224,7 +222,6 @@ JQ
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
           echo "UPSERT $ENDPOINT id=$ID last_time_key=$MAXT"
 
-          # Upsert by id
           curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
