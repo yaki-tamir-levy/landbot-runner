@@ -120,22 +120,26 @@ jobs:
           # Normalize to the schema your Node builder already expects:
           # { id, phrase, severity, enabled }
           # severity mapping: 'high'->'HIGH', 'medium'->'MED'
-          jq -c '
-            if type!="array" then [] else
-              map({
-                id: (.pattern_key // (.id|tostring)),
-                phrase: (.pattern // ""),
-                severity: (
-                  ( .severity // "" )
-                  | ascii_downcase
-                  | if .=="high" then "HIGH"
-                    elif .=="medium" then "MED"
-                    else (. | ascii_upcase)
-                    end
-                ),
-                enabled: (.is_active // true)
-              })
-          ' phrases_raw.json > phrases.json
+       jq -c <<'JQ' phrases_raw.json > phrases.json
+if type != "array" then
+  []
+else
+  map({
+    id: (.pattern_key // (.id | tostring)),
+    phrase: (.pattern // ""),
+    severity: (
+      (.severity // "")
+      | ascii_downcase
+      | if . == "high" then "HIGH"
+        elif . == "medium" then "MED"
+        else ascii_upcase
+        end
+    ),
+    enabled: (.is_active // true)
+  })
+end
+JQ
+
 
           if ! jq -e . phrases.json >/dev/null 2>&1; then
             echo "WARN: invalid JSON for phrases; using []"
