@@ -4,7 +4,7 @@ on:
   # אוטומטי: כל 10 דקות
   schedule:
     - cron: "*/10 * * * *"
-  # ידני:
+  # ידני
   workflow_dispatch:
     inputs:
       limit:
@@ -32,7 +32,6 @@ jobs:
 
     env:
       SUPABASE_URL: ${{ secrets.supabase_url }}
-      # Service Role key (server-side only; stored as GitHub secret)
       SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       LIMIT: ${{ github.event.inputs.limit || '200' }}
       DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
@@ -49,7 +48,6 @@ jobs:
       - name: Ensure jq is available
         shell: bash
         run: |
-          set -euo pipefail
           if ! command -v jq >/dev/null 2>&1; then
             sudo apt-get update -y
             sudo apt-get install -y jq
@@ -73,10 +71,14 @@ jobs:
         run: |
           set -euo pipefail
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
-          echo "GET $ENDPOINT (select=id,last_time_key)"
+          echo "GET $ENDPOINT (id,last_time_key)"
 
-          # Capture body + status code (so we can show PostgREST error body)
-          HTTP_CODE="$(curl -sS -o state.json -w "%{http_code}" \
+          # IMPORTANT:
+          # last_time_key הוא BIGINT (לפי השגיאה שקיבלת). לכן:
+          # - ברירת מחדל: 0
+          # - נשמור ועדכן מספר (לא מחרוזת)
+
+          if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
@@ -84,48 +86,48 @@ jobs:
             --data-urlencode "select=id,last_time_key" \
             --data-urlencode "order=id.asc" \
             --data-urlencode "limit=1" \
-          )" || true
-
-          if [[ "${HTTP_CODE}" != 2* ]]; then
-            echo "WARN: risk_scan_state fetch failed (HTTP ${HTTP_CODE}). Body:"
-            cat state.json || true
+            > state.json
+          then
+            echo "WARN: failed to fetch risk_scan_state; using defaults"
             echo "[]" > state.json
           fi
 
-          # Be defensive: state.json might be [] or an object (error)
+          # state.json צפוי להיות מערך; אם זה לא מערך (למשל אובייקט שגיאה) – ניפול לברירות מחדל
           if jq -e 'type=="array"' state.json >/dev/null 2>&1; then
-            ID="$(jq -r 'if length>0 then .[0].id else 1 end' state.json)"
-            LAST="$(jq -r 'if length>0 and .[0].last_time_key!=null then .[0].last_time_key else "1970-01-01T00:00:00Z" end' state.json)"
+            ID="$(jq -r 'if length>0 and .[0].id!=null then .[0].id else 1 end' state.json)"
+            LAST="$(jq -r 'if length>0 and .[0].last_time_key!=null then .[0].last_time_key else 0 end' state.json)"
           else
             ID="1"
-            LAST="1970-01-01T00:00:00Z"
+            LAST="0"
+          fi
+
+          # הגנה: LAST חייב להיות מספר
+          if ! [[ "$LAST" =~ ^[0-9]+$ ]]; then
+            echo "WARN: last_time_key is not numeric ($LAST); forcing 0"
+            LAST="0"
           fi
 
           echo "state_id=$ID" >> "$GITHUB_OUTPUT"
           echo "last_time_key=$LAST" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch risk_phrases (match real schema)
+      - name: Fetch risk_phrases
         shell: bash
         run: |
           set -euo pipefail
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_phrases"
           echo "GET $ENDPOINT"
 
-          # REAL schema (from your screenshot):
-          # id (bigint), pattern_key (text NOT NULL UNIQUE), pattern (text), severity (text: medium/high), is_active (boolean)
-          HTTP_CODE="$(curl -sS -o phrases.json -w "%{http_code}" \
+          # חשוב: אל תשבור ריצה אם risk_phrases ריק/לא נגיש – נמשיך עם []
+          if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
             -G "${ENDPOINT}" \
-            --data-urlencode "select=id,pattern_key,pattern,severity,is_active" \
-            --data-urlencode "is_active=eq.true" \
+            --data-urlencode "select=*" \
             --data-urlencode "order=id.asc" \
-          )" || true
-
-          if [[ "${HTTP_CODE}" != 2* ]]; then
-            echo "WARN: failed to fetch risk_phrases (HTTP ${HTTP_CODE}). Body:"
-            cat phrases.json || true
+            > phrases.json
+          then
+            echo "WARN: failed to fetch risk_phrases; using []"
             echo "[]" > phrases.json
           fi
 
@@ -142,7 +144,7 @@ jobs:
           LAST="${{ steps.state.outputs.last_time_key }}"
           echo "GET $ENDPOINT (time > $LAST), limit=$LIMIT"
 
-          HTTP_CODE="$(curl -sS -o talks.json -w "%{http_code}" \
+          if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
@@ -151,11 +153,9 @@ jobs:
             --data-urlencode "time=gt.${LAST}" \
             --data-urlencode "order=time.asc" \
             --data-urlencode "limit=${LIMIT}" \
-          )" || true
-
-          if [[ "${HTTP_CODE}" != 2* ]]; then
-            echo "WARN: failed to fetch users_tzvira (HTTP ${HTTP_CODE}). Body:"
-            cat talks.json || true
+            > talks.json
+          then
+            echo "WARN: failed to fetch users_tzvira; using []"
             echo "[]" > talks.json
           fi
 
@@ -170,11 +170,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          # NOTE: Your latest 400 body shows:
-          # "null value in column \"pattern_key\" of relation \"risk_reviews\" violates not-null constraint"
-          # That means payload.json must include pattern_key for each row.
-          # We now fetch pattern_key from risk_phrases; the Node builder must propagate it into payload.json.
-
           node scripts/risk_scan_build_payload.mjs \
             --talks talks.json \
             --phrases phrases.json \
@@ -183,24 +178,39 @@ jobs:
             --context 80
 
           HITS="$(jq 'if type=="array" then length else 0 end' payload.json 2>/dev/null || echo 0)"
-          MAXT="$(cat max_time.txt 2>/dev/null || true)"
+
+          # IMPORTANT:
+          # watermark חייב להיות BIGINT, אז נשתמש במקסימום של talks[].time (מספר),
+          # ולא במחרוזת "max_time.txt" שה-Node מייצר.
+          MAX_KEY="$(jq -r 'if type=="array" and length>0 then ([.[].time] | max) else empty end' talks.json 2>/dev/null || true)"
+
+          if [[ -z "${MAX_KEY:-}" ]]; then
+            MAX_KEY="0"
+          fi
+          if ! [[ "$MAX_KEY" =~ ^[0-9]+$ ]]; then
+            echo "WARN: computed MAX_KEY is not numeric ($MAX_KEY); forcing 0"
+            MAX_KEY="0"
+          fi
 
           echo "hits=$HITS" >> "$GITHUB_OUTPUT"
-          echo "max_time=$MAXT" >> "$GITHUB_OUTPUT"
+          echo "max_time_key=$MAX_KEY" >> "$GITHUB_OUTPUT"
+
+          # לוג קצר (מועיל בדיבוג)
+          TALKS="$(jq 'if type=="array" then length else 0 end' talks.json 2>/dev/null || echo 0)"
+          PHRASES="$(jq 'if type=="array" then length else 0 end' phrases.json 2>/dev/null || echo 0)"
+          echo "talks=$TALKS phrases=$PHRASES hits=$HITS maxKey=$MAX_KEY"
 
       - name: Validate payload has pattern_key (fail fast)
         if: ${{ steps.build_payload.outputs.hits != '0' }}
         shell: bash
         run: |
           set -euo pipefail
-          # If any row misses pattern_key -> fail with clear message (prevents cryptic 400)
-          MISSING="$(jq '[.[] | select((.pattern_key // "") == "")] | length' payload.json 2>/dev/null || echo 0)"
-          if [[ "${MISSING}" != "0" ]]; then
-            echo "❌ payload.json contains ${MISSING} rows with missing pattern_key."
-            echo "This WILL fail because risk_reviews.pattern_key is NOT NULL."
-            echo "Fix scripts/risk_scan_build_payload.mjs to copy pattern_key from phrases into each hit."
-            echo "Example row (first missing):"
-            jq -c '.[] | select((.pattern_key // "") == "") | . | {phone, time, pattern_key, pattern, severity}' payload.json | head -n 1 || true
+          # אם יש רשומה בלי pattern_key – זה יפיל את ה-INSERT עם NOT NULL
+          MISSING="$(jq '[.[] | select((.pattern_key // "")=="")] | length' payload.json)"
+          if [[ "$MISSING" != "0" ]]; then
+            echo "❌ payload.json contains rows with missing pattern_key: $MISSING"
+            echo "First 5 offending rows:"
+            jq -c '.[] | select((.pattern_key // "")=="")' payload.json | head -n 5 || true
             exit 1
           fi
 
@@ -210,20 +220,31 @@ jobs:
         run: |
           set -euo pipefail
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_reviews"
-          echo "POST $ENDPOINT (Prefer: resolution=ignore-duplicates)"
+          echo "POST $ENDPOINT (Prefer: ignore-duplicates)"
 
-          HTTP_CODE="$(curl -sS -o insert_body.json -w "%{http_code}" \
-            -H "apikey: ${SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_KEY}" \
-            -H "Content-Type: application/json" \
-            -H "Prefer: resolution=ignore-duplicates" \
-            -d @payload.json \
-            "$ENDPOINT" \
-          )" || true
+          RESP_HEADERS="$(mktemp)"
+          RESP_BODY="$(mktemp)"
+          HTTP_CODE="$(
+            curl -sS \
+              -D "$RESP_HEADERS" \
+              -o "$RESP_BODY" \
+              -w "%{http_code}" \
+              -H "apikey: ${SUPABASE_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_KEY}" \
+              -H "Content-Type: application/json" \
+              -H "Prefer: resolution=ignore-duplicates" \
+              -d @payload.json \
+              "$ENDPOINT" || true
+          )"
 
-          if [[ "${HTTP_CODE}" != 2* ]]; then
-            echo "❌ Insert failed (HTTP ${HTTP_CODE}). Response body:"
-            cat insert_body.json || true
+          if [[ "$HTTP_CODE" =~ ^2 ]]; then
+            echo "Insert OK (HTTP $HTTP_CODE)"
+          else
+            echo "❌ Insert failed (HTTP $HTTP_CODE). Response headers:"
+            sed -n '1,120p' "$RESP_HEADERS" || true
+            echo ""
+            echo "❌ Insert failed. Response body:"
+            cat "$RESP_BODY" || true
             exit 1
           fi
 
@@ -232,28 +253,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          MAXT="${{ steps.build_payload.outputs.max_time }}"
-          if [[ -z "${MAXT:-}" || "${MAXT}" == "1970-01-01T00:00:00Z" ]]; then
-            echo "No max_time; skipping watermark update."
+
+          MAX_KEY="${{ steps.build_payload.outputs.max_time_key }}"
+          if [[ -z "${MAX_KEY:-}" || "${MAX_KEY}" == "0" ]]; then
+            echo "No max_time_key (no talks in batch); skipping watermark update."
             exit 0
           fi
 
           ID="${{ steps.state.outputs.state_id }}"
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
-          echo "UPSERT $ENDPOINT id=$ID last_time_key=$MAXT"
+          echo "UPSERT $ENDPOINT id=$ID last_time_key=$MAX_KEY"
 
-          HTTP_CODE="$(curl -sS -o upsert_body.json -w "%{http_code}" \
-            -H "apikey: ${SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_KEY}" \
-            -H "Content-Type: application/json" \
-            -H "Prefer: resolution=merge-duplicates" \
-            -d "[{\"id\": ${ID}, \"last_time_key\": \"${MAXT}\"}]" \
-            "$ENDPOINT" \
-          )" || true
+          BODY_FILE="$(mktemp)"
+          printf '[{"id": %s, "last_time_key": %s}]' "$ID" "$MAX_KEY" > "$BODY_FILE"
 
-          if [[ "${HTTP_CODE}" != 2* ]]; then
-            echo "❌ Watermark upsert failed (HTTP ${HTTP_CODE}). Response body:"
-            cat upsert_body.json || true
+          RESP_HEADERS="$(mktemp)"
+          RESP_BODY="$(mktemp)"
+          HTTP_CODE="$(
+            curl -sS \
+              -D "$RESP_HEADERS" \
+              -o "$RESP_BODY" \
+              -w "%{http_code}" \
+              -H "apikey: ${SUPABASE_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_KEY}" \
+              -H "Content-Type: application/json" \
+              -H "Prefer: resolution=merge-duplicates" \
+              -d @"$BODY_FILE" \
+              "$ENDPOINT" || true
+          )"
+
+          if [[ "$HTTP_CODE" =~ ^2 ]]; then
+            echo "Watermark upsert OK (HTTP $HTTP_CODE)"
+          else
+            echo "❌ Watermark upsert failed (HTTP $HTTP_CODE). Response body:"
+            cat "$RESP_BODY" || true
             exit 1
           fi
 
@@ -265,15 +298,15 @@ jobs:
           PHRASES="$(jq 'if type=="array" then length else 0 end' phrases.json 2>/dev/null || echo 0)"
           HITS="$(jq 'if type=="array" then length else 0 end' payload.json 2>/dev/null || echo 0)"
           LAST="${{ steps.state.outputs.last_time_key }}"
-          MAXT="${{ steps.build_payload.outputs.max_time }}"
+          MAXK="${{ steps.build_payload.outputs.max_time_key }}"
           {
             echo "## RISK scan – Summary"
             echo ""
             echo "- dry_run: ${DRY_RUN}"
             echo "- limit: ${LIMIT}"
             echo "- talks fetched: ${TALKS}"
-            echo "- phrases fetched (active): ${PHRASES}"
+            echo "- phrases fetched: ${PHRASES}"
             echo "- hits built: ${HITS}"
             echo "- last_time_key (before): ${LAST}"
-            echo "- max_time (batch): ${MAXT}"
+            echo "- max_time_key (batch): ${MAXK}"
           } >> "$GITHUB_STEP_SUMMARY"
