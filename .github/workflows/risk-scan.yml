@@ -48,7 +48,6 @@ jobs:
       - name: Ensure jq is available
         shell: bash
         run: |
-          set -euo pipefail
           if ! command -v jq >/dev/null 2>&1; then
             sudo apt-get update -y
             sudo apt-get install -y jq
@@ -74,14 +73,14 @@ jobs:
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
           echo "GET $ENDPOINT (last_time_key)"
 
-          RESP="$(curl -sS --fail-with-body \
+          RESP="$(curl -sS \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
             -G "$ENDPOINT" \
             --data-urlencode "select=id,last_time_key" \
             --data-urlencode "order=id.asc" \
-            --data-urlencode "limit=1"
+            --data-urlencode "limit=1" \
           )"
           echo "$RESP" > state.json
 
@@ -98,16 +97,19 @@ jobs:
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_phrases"
           echo "GET $ENDPOINT"
 
-          # בטבלה אצלך: id, pattern_key, pattern, severity, is_active, created_at, updated_at
-          if ! curl -sS --fail-with-body \
+          # מושכים לפי הסכימה האמיתית: pattern / severity / is_active
+          if curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
             -G "${ENDPOINT}" \
-            --data-urlencode "select=id,pattern_key,pattern,severity,is_active" \
+            --data-urlencode "select=id,pattern,severity,is_active,pattern_key" \
+            --data-urlencode "is_active=eq.true" \
             --data-urlencode "order=id.asc" \
             > phrases_raw.json
           then
+            :
+          else
             echo "WARN: failed to fetch risk_phrases; using []"
             echo "[]" > phrases_raw.json
           fi
@@ -117,27 +119,8 @@ jobs:
             echo "[]" > phrases_raw.json
           fi
 
-          # Normalize to schema expected by scripts/risk_scan_build_payload.mjs:
-          # { id, phrase, severity, enabled }
-          jq -c <<'JQ' phrases_raw.json > phrases.json
-          if type != "array" then
-            []
-          else
-            map({
-              id: (.pattern_key // (.id | tostring)),
-              phrase: (.pattern // ""),
-              severity: (
-                (.severity // "")
-                | ascii_downcase
-                | if . == "high" then "HIGH"
-                  elif . == "medium" then "MED"
-                  else ascii_upcase
-                  end
-              ),
-              enabled: (.is_active // true)
-            })
-          end
-          JQ
+          # מנרמלים לפורמט שה-Node מצפה לו: phrase/enabled
+          jq -c 'if type=="array" then map({id, phrase: .pattern, severity, enabled: .is_active, pattern_key}) else [] end' phrases_raw.json > phrases.json || echo "[]" > phrases.json
 
           if ! jq -e . phrases.json >/dev/null 2>&1; then
             echo "WARN: invalid JSON for phrases; using []"
@@ -152,7 +135,7 @@ jobs:
           LAST="${{ steps.state.outputs.last_time_key }}"
           echo "GET $ENDPOINT (time > $LAST), limit=$LIMIT"
 
-          if ! curl -sS --fail-with-body \
+          if curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
@@ -163,6 +146,8 @@ jobs:
             --data-urlencode "limit=${LIMIT}" \
             > talks.json
           then
+            :
+          else
             echo "WARN: failed to fetch users_tzvira; using []"
             echo "[]" > talks.json
           fi
@@ -171,6 +156,9 @@ jobs:
             echo "WARN: invalid JSON for talks; using []"
             echo "[]" > talks.json
           fi
+
+          # מחשבים max_time בצורה בטוחה מתוך talks.json (ISO כפי שמגיע מה-DB)
+          jq -r 'if type=="array" and length>0 then (map(.time) | max) else "" end' talks.json > max_time.txt
 
       - name: Build risk payload (Node)
         id: build_payload
@@ -182,7 +170,6 @@ jobs:
             --talks talks.json \
             --phrases phrases.json \
             --out payload.json \
-            --out-max-time max_time.txt \
             --context 80
 
           HITS="$(jq 'if type=="array" then length else 0 end' payload.json 2>/dev/null || echo 0)"
@@ -213,7 +200,7 @@ jobs:
         run: |
           set -euo pipefail
           MAXT="${{ steps.build_payload.outputs.max_time }}"
-          if [[ -z "${MAXT:-}" || "${MAXT}" == "1970-01-01T00:00:00Z" ]]; then
+          if [[ -z "${MAXT:-}" ]]; then
             echo "No max_time; skipping watermark update."
             exit 0
           fi
@@ -227,7 +214,7 @@ jobs:
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
-            -d "{\"id\": ${ID}, \"last_time_key\": \"${MAXT}\"}" \
+            -d "[{\"id\": ${ID}, \"last_time_key\": \"${MAXT}\"}]" \
             "$ENDPOINT" >/dev/null
 
       - name: Step summary (visible in run Summary tab)
