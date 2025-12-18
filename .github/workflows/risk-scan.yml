@@ -90,26 +90,23 @@ jobs:
           echo "state_id=$ID" >> "$GITHUB_OUTPUT"
           echo "last_time_key=$LAST" >> "$GITHUB_OUTPUT"
 
-      - name: Fetch risk_phrases (and normalize for Node)
+      - name: Fetch risk_phrases (schema-aware) and normalize for Node
         shell: bash
         run: |
           set -euo pipefail
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_phrases"
           echo "GET $ENDPOINT"
 
-          # מושכים לפי הסכימה האמיתית: pattern / severity / is_active
-          if curl -sS --fail-with-body \
+          # 1) משיכה גולמית לפי הסכימה האמיתית: pattern/severity/is_active
+          if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
             -G "${ENDPOINT}" \
-            --data-urlencode "select=id,pattern,severity,is_active,pattern_key" \
-            --data-urlencode "is_active=eq.true" \
+            --data-urlencode "select=id,pattern,severity,is_active" \
             --data-urlencode "order=id.asc" \
             > phrases_raw.json
           then
-            :
-          else
             echo "WARN: failed to fetch risk_phrases; using []"
             echo "[]" > phrases_raw.json
           fi
@@ -119,13 +116,18 @@ jobs:
             echo "[]" > phrases_raw.json
           fi
 
-          # מנרמלים לפורמט שה-Node מצפה לו: phrase/enabled
-          jq -c 'if type=="array" then map({id, phrase: .pattern, severity, enabled: .is_active, pattern_key}) else [] end' phrases_raw.json > phrases.json || echo "[]" > phrases.json
-
-          if ! jq -e . phrases.json >/dev/null 2>&1; then
-            echo "WARN: invalid JSON for phrases; using []"
-            echo "[]" > phrases.json
-          fi
+          # 2) נרמול למבנה שה-Node מצפה לו: phrase/severity/enabled
+          # (שומר את severity כפי שהוא בטבלה — אצלך זה lowercase: 'medium'/'high')
+          jq -c '
+            if type=="array" then
+              map({
+                id: .id,
+                phrase: (.pattern // ""),
+                severity: (.severity // ""),
+                enabled: (.is_active // false)
+              })
+            else [] end
+          ' phrases_raw.json > phrases.json
 
       - name: Fetch users_tzvira incrementally
         shell: bash
@@ -135,7 +137,7 @@ jobs:
           LAST="${{ steps.state.outputs.last_time_key }}"
           echo "GET $ENDPOINT (time > $LAST), limit=$LIMIT"
 
-          if curl -sS --fail-with-body \
+          if ! curl -sS --fail-with-body \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Accept: application/json" \
@@ -146,8 +148,6 @@ jobs:
             --data-urlencode "limit=${LIMIT}" \
             > talks.json
           then
-            :
-          else
             echo "WARN: failed to fetch users_tzvira; using []"
             echo "[]" > talks.json
           fi
@@ -156,9 +156,6 @@ jobs:
             echo "WARN: invalid JSON for talks; using []"
             echo "[]" > talks.json
           fi
-
-          # מחשבים max_time בצורה בטוחה מתוך talks.json (ISO כפי שמגיע מה-DB)
-          jq -r 'if type=="array" and length>0 then (map(.time) | max) else "" end' talks.json > max_time.txt
 
       - name: Build risk payload (Node)
         id: build_payload
@@ -170,6 +167,7 @@ jobs:
             --talks talks.json \
             --phrases phrases.json \
             --out payload.json \
+            --out-max-time max_time.txt \
             --context 80
 
           HITS="$(jq 'if type=="array" then length else 0 end' payload.json 2>/dev/null || echo 0)"
@@ -178,7 +176,7 @@ jobs:
           echo "hits=$HITS" >> "$GITHUB_OUTPUT"
           echo "max_time=$MAXT" >> "$GITHUB_OUTPUT"
 
-      - name: Insert risk_reviews (ignore duplicates)
+      - name: Insert risk_reviews (ignore duplicates) - show PostgREST body on 4xx/5xx
         if: ${{ steps.build_payload.outputs.hits != '0' && env.DRY_RUN != 'true' }}
         shell: bash
         run: |
@@ -186,21 +184,37 @@ jobs:
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_reviews"
           echo "POST $ENDPOINT (Prefer: ignore-duplicates)"
 
-          curl -sS --fail-with-body \
+          # חשוב: לא לזרוק את ה-body ל-/dev/null — אחרת לא נראה את השגיאה.
+          STATUS="$(curl -sS \
+            -o insert_body.json \
+            -D insert_headers.txt \
+            -w "%{http_code}" \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=ignore-duplicates" \
             -d @payload.json \
-            "$ENDPOINT" >/dev/null
+            "$ENDPOINT" || true)"
 
-      - name: Update watermark (risk_scan_state.last_time_key)
+          echo "HTTP status: $STATUS"
+          if [[ "$STATUS" -ge 200 && "$STATUS" -lt 300 ]]; then
+            echo "✅ Insert OK"
+          else
+            echo "❌ Insert failed. Response headers:"
+            sed -n '1,120p' insert_headers.txt || true
+            echo ""
+            echo "❌ Insert failed. Response body:"
+            cat insert_body.json || true
+            exit 1
+          fi
+
+      - name: Update watermark (risk_scan_state.last_time_key) - show body on 4xx/5xx
         if: ${{ env.DRY_RUN != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
           MAXT="${{ steps.build_payload.outputs.max_time }}"
-          if [[ -z "${MAXT:-}" ]]; then
+          if [[ -z "${MAXT:-}" || "${MAXT}" == "1970-01-01T00:00:00Z" ]]; then
             echo "No max_time; skipping watermark update."
             exit 0
           fi
@@ -209,13 +223,28 @@ jobs:
           ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
           echo "UPSERT $ENDPOINT id=$ID last_time_key=$MAXT"
 
-          curl -sS --fail-with-body \
+          STATUS="$(curl -sS \
+            -o wm_body.json \
+            -D wm_headers.txt \
+            -w "%{http_code}" \
             -H "apikey: ${SUPABASE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
             -d "[{\"id\": ${ID}, \"last_time_key\": \"${MAXT}\"}]" \
-            "$ENDPOINT" >/dev/null
+            "$ENDPOINT" || true)"
+
+          echo "HTTP status: $STATUS"
+          if [[ "$STATUS" -ge 200 && "$STATUS" -lt 300 ]]; then
+            echo "✅ Watermark OK"
+          else
+            echo "❌ Watermark failed. Response headers:"
+            sed -n '1,120p' wm_headers.txt || true
+            echo ""
+            echo "❌ Watermark failed. Response body:"
+            cat wm_body.json || true
+            exit 1
+          fi
 
       - name: Step summary (visible in run Summary tab)
         if: always()
