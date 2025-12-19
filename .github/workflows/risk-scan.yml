@@ -1,312 +1,273 @@
-name: RISK scan (incremental users_tzvira -> risk_reviews)
+#!/usr/bin/env node
+/**
+ * risk-scan.mjs
+ *
+ * מה זה עושה:
+ * - סורק את users_tzvira
+ * - מזהה מופעי RISK (כמו ה-Viewer)
+ * - עבור כל מופע RISK: בודק אם כבר קיים ב-risk_reviews לפי (time_key, phone, snippet_hash)
+ *   - אם קיים: לא עושה כלום
+ *   - אם לא קיים: INSERT שורה חדשה (status=pending, ללא שדות פסיכולוג)
+ *
+ * חשוב:
+ * - אין UPDATE לרשומות קיימות
+ * - אין שינוי שדות פסיכולוגיים (status/reviewed_at/reviewed_by/review_notes) אחרי INSERT
+ */
 
-on:
-  # אוטומטי: כל 10 דקות
-  schedule:
-    - cron: "*/10 * * * *"
-  # ידני
-  workflow_dispatch:
-    inputs:
-      limit:
-        description: "כמה שורות users_tzvira לסרוק בכל ריצה (ברירת מחדל 200)"
-        required: false
-        default: "200"
-        type: string
-      dry_run:
-        description: "true = לא מכניס ל-risk_reviews ולא מעדכן watermark"
-        required: false
-        default: "false"
-        type: string
+import process from "node:process";
+import { createClient } from "@supabase/supabase-js";
 
-permissions:
-  contents: read
+/* ==========================
+   Env / Config
+   ========================== */
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-concurrency:
-  group: risk-scan-${{ github.ref }}
-  cancel-in-progress: true
+const USERS_TZVIRA_TABLE = process.env.USERS_TZVIRA_TABLE || "users_tzvira";
+const RISK_REVIEWS_TABLE = process.env.RISK_REVIEWS_TABLE || "risk_reviews";
 
-jobs:
-  scan:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+const PAGE_SIZE = Math.max(50, Math.min(2000, parseInt(process.env.PAGE_SIZE || "500", 10) || 500));
 
-    env:
-      SUPABASE_URL: ${{ secrets.supabase_url }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      LIMIT: ${{ github.event.inputs.limit || '200' }}
-      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error("Missing env: SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY");
+  process.exit(1);
+}
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
 
-      - name: Use Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+/* ==========================
+   Helpers (match viewer behavior as close as possible)
+   ========================== */
+function escapeRegExp(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
-      - name: Ensure jq is available
-        shell: bash
-        run: |
-          if ! command -v jq >/dev/null 2>&1; then
-            sudo apt-get update -y
-            sudo apt-get install -y jq
-          fi
-          jq --version
+function stripAllHtml(raw) {
+  let s = String(raw ?? "");
+  s = s.replace(/<br\s*\/?>/gi, "\n");
+  s = s.replace(/<\/?[^>]+>/g, "");
+  return s;
+}
 
-      - name: Validate required env
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -z "${SUPABASE_URL:-}" ]]; then
-            echo "❌ Missing secret: supabase_url"; exit 1
-          fi
-          if [[ -z "${SUPABASE_KEY:-}" ]]; then
-            echo "❌ Missing secret: SUPABASE_SERVICE_ROLE_KEY"; exit 1
-          fi
+function normalizeWs(raw) {
+  return String(raw ?? "")
+    .replace(/[\u200e\u200f\u202a-\u202e\u200b]/g, "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{2,}/g, "\n");
+}
 
-      - name: Get watermark (risk_scan_state)
-        id: state
-        shell: bash
-        run: |
-          set -euo pipefail
-          ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
-          echo "GET $ENDPOINT (id,last_time_key)"
+function cleanTalk(raw) {
+  return normalizeWs(stripAllHtml(raw));
+}
 
-          # IMPORTANT:
-          # last_time_key הוא BIGINT (לפי השגיאה שקיבלת). לכן:
-          # - ברירת מחדל: 0
-          # - נשמור ועדכן מספר (לא מחרוזת)
+function rx(s) { return new RegExp(s, "iu"); }
 
-          if ! curl -sS --fail-with-body \
-            -H "apikey: ${SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_KEY}" \
-            -H "Accept: application/json" \
-            -G "$ENDPOINT" \
-            --data-urlencode "select=id,last_time_key" \
-            --data-urlencode "order=id.asc" \
-            --data-urlencode "limit=1" \
-            > state.json
-          then
-            echo "WARN: failed to fetch risk_scan_state; using defaults"
-            echo "[]" > state.json
-          fi
+/**
+ * RISK patterns copied from your Viewer code (same keys and regex strings).
+ * Note: Keep in sync with viewer to preserve snippet_hash stability.
+ */
+const RISK = [
+  { key: "suicide", rx: rx("בא\\s*לי\\s*למות|רוצה\\s*למות|לא\\s*רוצה\\s*לחיות|אין\\s*לי\\s*בשביל\\s*מה\\s*לחיות|לסיים\\s*(?:את)?\\s*(?:ה(?:כול|כל|חיים))|להתאבד|התאבד(?:ו|ות)?|לפגוע\\s*בעצ(?:מי|מה|מו)|פגיעה\\s*עצמית|חתכ(?:תי|ים)|מנת\\s*יתר|הרס\\s*עצמי|ייאוש\\s*מוחלט|אין\\s*טעם|אני\\s*נואש|פאניקה\\s*קשה") },
+  { key: "violence", rx: rx("אהרוג|ארצח|לפגוע\\s*בו|אלימות\\s*קשה|מאיים\\s*עלי(?:י)?|עוקב\\s*אחר(?:י|ַי)|התעללות|אונס|הטרדה\\s*מינית") },
+  { key: "psychosis", rx: rx("פסיכוזה|שומע\\s*קולות|הלוצינציות") },
+  { key: "substances", rx: rx("לקחתי\\s*יותר\\s*מדי\\s*תרופות|אלכוהול\\s*בכמויות") },
+  { key: "hard_drugs", rx: rx("(סמים\\s*קשים|קוקאין|קראק|הרואין|פנטניל|מורפין|אוקסי(?:קודון)?|אופיאט(?:ים)?|מתאמפטמין|קריסטל(?:\\s*מת)?|(?:^|\\s)מת(?:\\s|$)|MDMA|אקסטז[יי]|LSD|אסיד|מסניף(?:ה)?|שואף(?:ת)?|הזרקתי|זריקה|מזרק|טריפ)") },
+];
 
-          # state.json צפוי להיות מערך; אם זה לא מערך (למשל אובייקט שגיאה) – ניפול לברירות מחדל
-          if jq -e 'type=="array"' state.json >/dev/null 2>&1; then
-            ID="$(jq -r 'if length>0 and .[0].id!=null then .[0].id else 1 end' state.json)"
-            LAST="$(jq -r 'if length>0 and .[0].last_time_key!=null then .[0].last_time_key else 0 end' state.json)"
-          else
-            ID="1"
-            LAST="0"
-          fi
+/** djb2-xor hash like in viewer */
+function hashStr(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) {
+    const cc = str.charCodeAt(i);
+    h = ((h << 5) + h) ^ cc;
+  }
+  // unsigned 32-bit, hex
+  return (h >>> 0).toString(16);
+}
 
-          # הגנה: LAST חייב להיות מספר
-          if ! [[ "$LAST" =~ ^[0-9]+$ ]]; then
-            echo "WARN: last_time_key is not numeric ($LAST); forcing 0"
-            LAST="0"
-          fi
+function snippetAround(full, match) {
+  const s = String(full ?? "");
+  const idx = s.indexOf(match);
+  if (idx === -1) return s.slice(0, 60);
+  const start = Math.max(0, idx - 18);
+  const end = Math.min(s.length, idx + match.length + 18);
+  return (start > 0 ? "…" : "") + s.slice(start, end).trim() + (end < s.length ? "…" : "");
+}
 
-          echo "state_id=$ID" >> "$GITHUB_OUTPUT"
-          echo "last_time_key=$LAST" >> "$GITHUB_OUTPUT"
+/**
+ * Parse into dialog lines similar to viewer:
+ * - patient lines are prefixed by "<patientName>:"
+ * - therapist lines prefixed by "המטפל:"
+ * - also supports "שאלה:" / "תשובה:"
+ *
+ * We only scan patient lines (speaker === 'patient') like the viewer.
+ */
+function toDialogLines(patientName, rawText) {
+  const patient = (patientName && String(patientName).trim()) ? String(patientName).trim() : "מטופל/ת";
+  const rxPatientName = new RegExp("^\\s*" + escapeRegExp(patient) + ":\\s*");
+  const rxTher = /^\s*המטפל:\s*/;
 
-      - name: Fetch risk_phrases
-        shell: bash
-        run: |
-          set -euo pipefail
-          ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_phrases"
-          echo "GET $ENDPOINT"
+  const lines = String(rawText ?? "").split(/\n/);
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    const s = String(lines[i]);
+    if (rxPatientName.test(s)) { out.push({ speaker: "patient", body: s.replace(rxPatientName, "") }); continue; }
+    if (rxTher.test(s)) { out.push({ speaker: "therapist", body: s.replace(rxTher, "") }); continue; }
+    if (/^\s*שאלה:\s*/.test(s)) { out.push({ speaker: "patient", body: s.replace(/^\s*שאלה:\s*/, "") }); continue; }
+    if (/^\s*תשובה:\s*/.test(s)) { out.push({ speaker: "therapist", body: s.replace(/^\s*תשובה:\s*/, "") }); continue; }
+    out.push({ speaker: "text", body: s });
+  }
+  return { patient, lines: out };
+}
 
-          # חשוב: אל תשבור ריצה אם risk_phrases ריק/לא נגיש – נמשיך עם []
-          if ! curl -sS --fail-with-body \
-            -H "apikey: ${SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_KEY}" \
-            -H "Accept: application/json" \
-            -G "${ENDPOINT}" \
-            --data-urlencode "select=*" \
-            --data-urlencode "order=id.asc" \
-            > phrases.json
-          then
-            echo "WARN: failed to fetch risk_phrases; using []"
-            echo "[]" > phrases.json
-          fi
+function collectRiskHits(dialogLines) {
+  const hits = [];
+  for (let idx = 0; idx < dialogLines.length; idx++) {
+    const ln = dialogLines[idx];
+    if (ln.speaker !== "patient") continue;
+    const txt = String(ln.body ?? "");
+    for (const rk of RISK) {
+      const m = txt.match(rk.rx);
+      if (m) {
+        const matchText = m[0];
+        const hash = hashStr(matchText.replace(/\s+/g, " ").toLowerCase() + "|" + rk.key);
+        hits.push({
+          snippet_hash: hash,
+          pattern_key: rk.key,
+          matchText,
+          snippet_text: snippetAround(txt, matchText),
+        });
+      }
+    }
+  }
+  return hits;
+}
 
-          if ! jq -e . phrases.json >/dev/null 2>&1; then
-            echo "WARN: invalid JSON for phrases; using []"
-            echo "[]" > phrases.json
-          fi
+/* ==========================
+   DB helpers
+   ========================== */
 
-      - name: Fetch users_tzvira incrementally
-        shell: bash
-        run: |
-          set -euo pipefail
-          ENDPOINT="${SUPABASE_URL%/}/rest/v1/users_tzvira"
-          LAST="${{ steps.state.outputs.last_time_key }}"
-          echo "GET $ENDPOINT (time > $LAST), limit=$LIMIT"
+async function existsRiskRow(time_key, phone, snippet_hash) {
+  // Fast existence check
+  const { data, error } = await supa
+    .from(RISK_REVIEWS_TABLE)
+    .select("time_key")
+    .eq("time_key", time_key)
+    .eq("phone", phone)
+    .eq("snippet_hash", snippet_hash)
+    .limit(1);
 
-          if ! curl -sS --fail-with-body \
-            -H "apikey: ${SUPABASE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_KEY}" \
-            -H "Accept: application/json" \
-            -G "$ENDPOINT" \
-            --data-urlencode "select=time,phone,last_talk_tzvira" \
-            --data-urlencode "time=gt.${LAST}" \
-            --data-urlencode "order=time.asc" \
-            --data-urlencode "limit=${LIMIT}" \
-            > talks.json
-          then
-            echo "WARN: failed to fetch users_tzvira; using []"
-            echo "[]" > talks.json
-          fi
+  if (error) throw error;
+  return (data && data.length > 0);
+}
 
-          if ! jq -e . talks.json >/dev/null 2>&1; then
-            echo "WARN: invalid JSON for talks; using []"
-            echo "[]" > talks.json
-          fi
+async function insertRiskRow(payload) {
+  const { error } = await supa.from(RISK_REVIEWS_TABLE).insert(payload);
+  if (error) throw error;
+}
 
-      - name: Build risk payload (Node)
-        id: build_payload
-        shell: bash
-        run: |
-          set -euo pipefail
+/* ==========================
+   Main scan
+   ========================== */
 
-          node scripts/risk_scan_build_payload.mjs \
-            --talks talks.json \
-            --phrases phrases.json \
-            --out payload.json \
-            --out-max-time max_time.txt \
-            --context 80
+async function fetchUsersPage(offset, limit) {
+  // Select only what we need
+  const { data, error } = await supa
+    .from(USERS_TZVIRA_TABLE)
+    .select("time, phone, name, last_talk_tzvira")
+    .order("time", { ascending: true })
+    .range(offset, offset + limit - 1);
 
-          HITS="$(jq 'if type=="array" then length else 0 end' payload.json 2>/dev/null || echo 0)"
+  if (error) throw error;
+  return data || [];
+}
 
-          # IMPORTANT:
-          # watermark חייב להיות BIGINT, אז נשתמש במקסימום של talks[].time (מספר),
-          # ולא במחרוזת "max_time.txt" שה-Node מייצר.
-          MAX_KEY="$(jq -r 'if type=="array" and length>0 then ([.[].time] | max) else empty end' talks.json 2>/dev/null || true)"
+function uniqByKey(arr, keyFn) {
+  const seen = new Set();
+  const out = [];
+  for (const x of arr) {
+    const k = keyFn(x);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(x);
+  }
+  return out;
+}
 
-          if [[ -z "${MAX_KEY:-}" ]]; then
-            MAX_KEY="0"
-          fi
-          if ! [[ "$MAX_KEY" =~ ^[0-9]+$ ]]; then
-            echo "WARN: computed MAX_KEY is not numeric ($MAX_KEY); forcing 0"
-            MAX_KEY="0"
-          fi
+async function run() {
+  console.log(`[risk-scan] start @ ${new Date().toISOString()}`);
+  console.log(`[risk-scan] tables: users=${USERS_TZVIRA_TABLE} reviews=${RISK_REVIEWS_TABLE} page_size=${PAGE_SIZE}`);
 
-          echo "hits=$HITS" >> "$GITHUB_OUTPUT"
-          echo "max_time_key=$MAX_KEY" >> "$GITHUB_OUTPUT"
+  let offset = 0;
+  let totalUsers = 0;
+  let totalHits = 0;
+  let totalInserted = 0;
 
-          # לוג קצר (מועיל בדיבוג)
-          TALKS="$(jq 'if type=="array" then length else 0 end' talks.json 2>/dev/null || echo 0)"
-          PHRASES="$(jq 'if type=="array" then length else 0 end' phrases.json 2>/dev/null || echo 0)"
-          echo "talks=$TALKS phrases=$PHRASES hits=$HITS maxKey=$MAX_KEY"
+  // Basic loop until page returns empty
+  for (;;) {
+    const rows = await fetchUsersPage(offset, PAGE_SIZE);
+    if (!rows.length) break;
 
-      - name: Validate payload has pattern_key (fail fast)
-        if: ${{ steps.build_payload.outputs.hits != '0' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # אם יש רשומה בלי pattern_key – זה יפיל את ה-INSERT עם NOT NULL
-          MISSING="$(jq '[.[] | select((.pattern_key // "")=="")] | length' payload.json)"
-          if [[ "$MISSING" != "0" ]]; then
-            echo "❌ payload.json contains rows with missing pattern_key: $MISSING"
-            echo "First 5 offending rows:"
-            jq -c '.[] | select((.pattern_key // "")=="")' payload.json | head -n 5 || true
-            exit 1
-          fi
+    totalUsers += rows.length;
 
-      - name: Insert risk_reviews (ignore duplicates; show PostgREST body on 4xx/5xx)
-        if: ${{ steps.build_payload.outputs.hits != '0' && env.DRY_RUN != 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_reviews"
-          echo "POST $ENDPOINT (Prefer: ignore-duplicates)"
+    for (const r of rows) {
+      const time_key = r.time;
+      const phone = r.phone ?? "";
+      const patient_name = r.name ?? null;
 
-          RESP_HEADERS="$(mktemp)"
-          RESP_BODY="$(mktemp)"
-          HTTP_CODE="$(
-            curl -sS \
-              -D "$RESP_HEADERS" \
-              -o "$RESP_BODY" \
-              -w "%{http_code}" \
-              -H "apikey: ${SUPABASE_KEY}" \
-              -H "Authorization: Bearer ${SUPABASE_KEY}" \
-              -H "Content-Type: application/json" \
-              -H "Prefer: resolution=ignore-duplicates" \
-              -d @payload.json \
-              "$ENDPOINT" || true
-          )"
+      if (!time_key || !phone) continue;
 
-          if [[ "$HTTP_CODE" =~ ^2 ]]; then
-            echo "Insert OK (HTTP $HTTP_CODE)"
-          else
-            echo "❌ Insert failed (HTTP $HTTP_CODE). Response headers:"
-            sed -n '1,120p' "$RESP_HEADERS" || true
-            echo ""
-            echo "❌ Insert failed. Response body:"
-            cat "$RESP_BODY" || true
-            exit 1
-          fi
+      const talkClean = cleanTalk(r.last_talk_tzvira ?? "");
+      if (!talkClean) continue;
 
-      - name: Update watermark (risk_scan_state.last_time_key) - show body on 4xx/5xx
-        if: ${{ env.DRY_RUN != 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
+      const parsed = toDialogLines(patient_name, talkClean);
+      const hits = collectRiskHits(parsed.lines);
+      if (!hits.length) continue;
 
-          MAX_KEY="${{ steps.build_payload.outputs.max_time_key }}"
-          if [[ -z "${MAX_KEY:-}" || "${MAX_KEY}" == "0" ]]; then
-            echo "No max_time_key (no talks in batch); skipping watermark update."
-            exit 0
-          fi
+      // Some lines may match multiple patterns; we keep unique (snippet_hash, pattern_key, snippet_text)
+      const uniqHits = uniqByKey(hits, h => `${h.snippet_hash}|${h.pattern_key}|${h.snippet_text}`);
+      totalHits += uniqHits.length;
 
-          ID="${{ steps.state.outputs.state_id }}"
-          ENDPOINT="${SUPABASE_URL%/}/rest/v1/risk_scan_state"
-          echo "UPSERT $ENDPOINT id=$ID last_time_key=$MAX_KEY"
+      for (const h of uniqHits) {
+        const snippet_hash = h.snippet_hash;
 
-          BODY_FILE="$(mktemp)"
-          printf '[{"id": %s, "last_time_key": %s}]' "$ID" "$MAX_KEY" > "$BODY_FILE"
+        const already = await existsRiskRow(time_key, phone, snippet_hash);
+        if (already) continue;
 
-          RESP_HEADERS="$(mktemp)"
-          RESP_BODY="$(mktemp)"
-          HTTP_CODE="$(
-            curl -sS \
-              -D "$RESP_HEADERS" \
-              -o "$RESP_BODY" \
-              -w "%{http_code}" \
-              -H "apikey: ${SUPABASE_KEY}" \
-              -H "Authorization: Bearer ${SUPABASE_KEY}" \
-              -H "Content-Type: application/json" \
-              -H "Prefer: resolution=merge-duplicates" \
-              -d @"$BODY_FILE" \
-              "$ENDPOINT" || true
-          )"
+        const payload = {
+          time_key,
+          phone,
+          patient_name,
+          snippet_hash,
+          snippet_text: h.snippet_text,
+          pattern_key: h.pattern_key,
+          status: "pending",
+          reviewed_at: null,
+          reviewed_by: null,
+          review_notes: null,
+        };
 
-          if [[ "$HTTP_CODE" =~ ^2 ]]; then
-            echo "Watermark upsert OK (HTTP $HTTP_CODE)"
-          else
-            echo "❌ Watermark upsert failed (HTTP $HTTP_CODE). Response body:"
-            cat "$RESP_BODY" || true
-            exit 1
-          fi
+        await insertRiskRow(payload);
+        totalInserted += 1;
 
-      - name: Step summary (visible in run Summary tab)
-        if: always()
-        shell: bash
-        run: |
-          TALKS="$(jq 'if type=="array" then length else 0 end' talks.json 2>/dev/null || echo 0)"
-          PHRASES="$(jq 'if type=="array" then length else 0 end' phrases.json 2>/dev/null || echo 0)"
-          HITS="$(jq 'if type=="array" then length else 0 end' payload.json 2>/dev/null || echo 0)"
-          LAST="${{ steps.state.outputs.last_time_key }}"
-          MAXK="${{ steps.build_payload.outputs.max_time_key }}"
-          {
-            echo "## RISK scan – Summary"
-            echo ""
-            echo "- dry_run: ${DRY_RUN}"
-            echo "- limit: ${LIMIT}"
-            echo "- talks fetched: ${TALKS}"
-            echo "- phrases fetched: ${PHRASES}"
-            echo "- hits built: ${HITS}"
-            echo "- last_time_key (before): ${LAST}"
-            echo "- max_time_key (batch): ${MAXK}"
-          } >> "$GITHUB_STEP_SUMMARY"
+        if (totalInserted % 50 === 0) {
+          console.log(`[risk-scan] inserted ${totalInserted} (users=${totalUsers}, hits=${totalHits})`);
+        }
+      }
+    }
+
+    offset += PAGE_SIZE;
+    console.log(`[risk-scan] page done, offset=${offset}, users=${totalUsers}, hits=${totalHits}, inserted=${totalInserted}`);
+  }
+
+  console.log(`[risk-scan] done. users=${totalUsers}, hits=${totalHits}, inserted=${totalInserted}`);
+}
+
+run().catch((e) => {
+  console.error("[risk-scan] FAILED:", e?.message || e);
+  if (e?.details) console.error("details:", e.details);
+  if (e?.hint) console.error("hint:", e.hint);
+  process.exit(1);
+});
