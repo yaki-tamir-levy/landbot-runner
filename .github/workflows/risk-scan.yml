@@ -3,7 +3,6 @@ name: risk-scan
 on:
   workflow_dispatch:
   schedule:
-    # כל שעה (אפשר לשנות לפי הצורך)
     - cron: "0 * * * *"
 
 jobs:
@@ -14,10 +13,8 @@ jobs:
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      # Optional: override table names if needed
       USERS_TZVIRA_TABLE: users_tzvira
       RISK_REVIEWS_TABLE: risk_reviews
-      # Optional: batch/page size
       PAGE_SIZE: "500"
 
     steps:
