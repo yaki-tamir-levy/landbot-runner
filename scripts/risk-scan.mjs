@@ -1,244 +1,315 @@
 #!/usr/bin/env node
 /**
- * risk-scan.mjs (v2 - "PATTERN ONLY")
+ * risk-scan.mjs
  *
- * שינוי לפי ההנחיה שלך:
- * - אין תלות ב"זיהוי שורות מטופל" לפי שם/תוויות
- * - אין בדיקת הקשר/שלילה/מילים לפני/אחרי לצורך החלטה אם זה RISK
- * - מחפשים רק את ה-PATTERN בטקסט המנורמל כולו
- * - עדיין שומרים snippet_text לחלון תצוגה סביב ההתאמה (לתצוגה בלבד)
+ * Goal (as agreed):
+ * - NO hardcoded RISK words/regex in code.
+ * - Load all RISK patterns ONLY from DB table: public.risk_phrases
+ * - Detection is substring-only (indexOf) on normalized text.
  *
- * DB:
- * - עבור כל התאמה: בודקים קיום לפי (time_key, phone, snippet_hash)
- *   - אם קיים: לא עושים כלום
- *   - אם לא: INSERT status='pending' ושדות פסיכולוג ריקים
+ * Required env:
+ *   SUPABASE_URL                 e.g. https://xxxx.supabase.co
+ *   SUPABASE_SERVICE_ROLE_KEY    Service Role key (server-side only)
+ *
+ * Optional env:
+ *   RISK_PHRASES_TABLE           default: risk_phrases
+ *   USERS_TABLE                  default: users_tzvira
+ *   USERS_TEXT_FIELD             default: last_talk_tzvira
+ *   USERS_PHONE_FIELD            default: phone
+ *   USERS_TIME_FIELD             default: time
+ *   RISK_REVIEWS_TABLE           default: risk_reviews
+ *   SNIPPET_WINDOW_CHARS         default: 120   (60 before + 60 after)
+ *   MAX_ROWS                     default: 5000  (max users rows to scan per run)
+ *   PAGE_SIZE                    default: 1000
+ *
+ * Notes:
+ * - This script assumes your DB already has the tables/columns you use today.
+ * - The ONLY behavioral change here is: patterns come from risk_phrases, not code.
  */
 
-import process from "node:process";
-import { createClient } from "@supabase/supabase-js";
+import crypto from "node:crypto";
 
-/* ==========================
-   Env / Config
-   ========================== */
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const CFG = {
+  SUPABASE_URL: process.env.SUPABASE_URL?.replace(/\/+$/, "") || "",
+  SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
 
-const USERS_TZVIRA_TABLE = process.env.USERS_TZVIRA_TABLE || "users_tzvira";
-const RISK_REVIEWS_TABLE = process.env.RISK_REVIEWS_TABLE || "risk_reviews";
+  RISK_PHRASES_TABLE: process.env.RISK_PHRASES_TABLE || "risk_phrases",
+  USERS_TABLE: process.env.USERS_TABLE || "users_tzvira",
+  USERS_TEXT_FIELD: process.env.USERS_TEXT_FIELD || "last_talk_tzvira",
+  USERS_PHONE_FIELD: process.env.USERS_PHONE_FIELD || "phone",
+  USERS_TIME_FIELD: process.env.USERS_TIME_FIELD || "time",
+  RISK_REVIEWS_TABLE: process.env.RISK_REVIEWS_TABLE || "risk_reviews",
 
-const PAGE_SIZE = Math.max(50, Math.min(2000, parseInt(process.env.PAGE_SIZE || "500", 10) || 500));
+  SNIPPET_WINDOW_CHARS: Number(process.env.SNIPPET_WINDOW_CHARS || 120),
+  MAX_ROWS: Number(process.env.MAX_ROWS || 5000),
+  PAGE_SIZE: Number(process.env.PAGE_SIZE || 1000),
+};
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error("Missing env: SUPABASE_URL and/or SUPABASE_SERVICE_ROLE_KEY");
+function die(msg) {
+  console.error(`ERROR: ${msg}`);
   process.exit(1);
 }
 
-const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+if (!CFG.SUPABASE_URL) die("SUPABASE_URL is missing");
+if (!CFG.SUPABASE_SERVICE_ROLE_KEY) die("SUPABASE_SERVICE_ROLE_KEY is missing");
 
-/* ==========================
-   Text normalization (same as Viewer)
-   ========================== */
-function stripAllHtml(raw) {
-  let s = String(raw ?? "");
-  s = s.replace(/<br\s*\/?>/gi, "\n");
-  s = s.replace(/<\/?[^>]+>/g, "");
-  return s;
-}
-
-function normalizeWs(raw) {
-  return String(raw ?? "")
-    .replace(/[\u200e\u200f\u202a-\u202e\u200b]/g, "")
-    .replace(/\u00a0/g, " ")
-    .replace(/\r/g, "")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{2,}/g, "\n");
-}
-
-function cleanTalk(raw) {
-  return normalizeWs(stripAllHtml(raw));
-}
-
-function rx(s) { return new RegExp(s, "iu"); }
-
-/**
- * RISK patterns copied from your Viewer code.
- * Keep in sync with Viewer to preserve snippet_hash stability.
- */
-const RISK = [
-  { key: "suicide",    rx: rx("בא\\s*לי\\s*למות|רוצה\\s*למות|לא\\s*רוצה\\s*לחיות|אין\\s*לי\\s*בשביל\\s*מה\\s*לחיות|לסיים\\s*(?:את)?\\s*(?:ה(?:כול|כל|חיים))|להתאבד|התאבד(?:ו|ות)?|לפגוע\\s*בעצ(?:מי|מה|מו)|פגיעה\\s*עצמית|חתכ(?:תי|ים)|מנת\\s*יתר|הרס\\s*עצמי|ייאוש\\s*מוחלט|אין\\s*טעם|אני\\s*נואש|פאניקה\\s*קשה") },
-  { key: "violence",   rx: rx("אהרוג|ארצח|לפגוע\\s*בו|אלימות\\s*קשה|מאיים\\s*עלי(?:י)?|עוקב\\s*אחר(?:י|ַי)|התעללות|אונס|הטרדה\\s*מינית") },
-  { key: "psychosis",  rx: rx("פסיכוזה|שומע\\s*קולות|הלוצינציות") },
-  { key: "substances", rx: rx("לקחתי\\s*יותר\\s*מדי\\s*תרופות|אלכוהול\\s*בכמויות") },
-  { key: "hard_drugs", rx: rx("(סמים\\s*קשים|קוקאין|קראק|הרואין|פנטניל|מורפין|אוקסי(?:קודון)?|אופיאט(?:ים)?|מתאמפטמין|קריסטל(?:\\s*מת)?|(?:^|\\s)מת(?:\\s|$)|MDMA|אקסטז[יי]|LSD|אסיד|מסניף(?:ה)?|שואף(?:ת)?|הזרקתי|זריקה|מזרק|טריפ)") },
-];
-
-/** djb2-xor hash like in viewer */
-function hashStr(str) {
-  let h = 5381;
-  for (let i = 0; i < str.length; i++) {
-    const cc = str.charCodeAt(i);
-    h = ((h << 5) + h) ^ cc;
-  }
-  return (h >>> 0).toString(16);
-}
-
-function snippetAroundAt(full, idx, len) {
-  const s = String(full ?? "");
-  if (idx < 0 || idx >= s.length) return s.slice(0, 60);
-  const start = Math.max(0, idx - 18);
-  const end = Math.min(s.length, idx + len + 18);
-  return (start > 0 ? "…" : "") + s.slice(start, end).trim() + (end < s.length ? "…" : "");
+function md5Hex(s) {
+  return crypto.createHash("md5").update(s, "utf8").digest("hex");
 }
 
 /**
- * PATTERN ONLY scan over the entire cleaned text:
- * - Find all matches (global) for each pattern
- * - Build hits with snippet_hash + snippet_text
+ * Normalize text:
+ * - lower-case
+ * - remove Hebrew niqqud/cantillation
+ * - collapse whitespace
  */
-function collectRiskHitsFromText(fullText) {
-  const hits = [];
-  const txt = String(fullText ?? "");
-  if (!txt) return hits;
+function normalizeText(s) {
+  if (s == null) return "";
+  let t = String(s);
 
-  for (const rk of RISK) {
-    // Make a global version of the same regex
-    const flags = rk.rx.flags.includes("g") ? rk.rx.flags : (rk.rx.flags + "g");
-    const rgx = new RegExp(rk.rx.source, flags);
+  // Remove Hebrew diacritics (niqqud + cantillation marks)
+  // Ranges: U+0591–U+05BD, U+05BF, U+05C1–U+05C2, U+05C4–U+05C7
+  t = t.replace(/[\u0591-\u05BD\u05BF\u05C1-\u05C2\u05C4-\u05C7]/g, "");
 
-    for (const m of txt.matchAll(rgx)) {
-      const matchText = m[0];
-      const idx = (typeof m.index === "number") ? m.index : txt.indexOf(matchText);
-      const snippet_text = snippetAroundAt(txt, idx, matchText.length);
+  t = t.toLowerCase();
+  t = t.replace(/\s+/g, " ").trim();
+  return t;
+}
 
-      const snippet_hash = hashStr(matchText.replace(/\s+/g, " ").toLowerCase() + "|" + rk.key);
+async function supabaseFetch(path, { method = "GET", headers = {}, body } = {}) {
+  const url = `${CFG.SUPABASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+  const res = await fetch(url, {
+    method,
+    headers: {
+      apikey: CFG.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${CFG.SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
 
-      hits.push({
-        snippet_hash,
-        pattern_key: rk.key,
-        snippet_text,
-      });
-    }
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = text;
   }
-  return hits;
+
+  if (!res.ok) {
+    const detail = typeof json === "string" ? json : JSON.stringify(json);
+    throw new Error(`HTTP ${res.status} ${res.statusText} for ${url} :: ${detail}`);
+  }
+  return json;
 }
 
-/* ==========================
-   DB helpers
-   ========================== */
-async function existsRiskRow(time_key, phone, snippet_hash) {
-  const { data, error } = await supa
-    .from(RISK_REVIEWS_TABLE)
-    .select("time_key")
-    .eq("time_key", time_key)
-    .eq("phone", phone)
-    .eq("snippet_hash", snippet_hash)
-    .limit(1);
+async function loadActivePatterns() {
+  // We only need 'pattern' (substring), optional fields kept if exist
+  // If your table uses different column names, map here.
+  const table = CFG.RISK_PHRASES_TABLE;
+  const rows = await supabaseFetch(
+    `/rest/v1/${table}?select=pattern,pattern_key,severity,is_active&is_active=eq.true`
+  );
 
-  if (error) throw error;
-  return (data && data.length > 0);
-}
+  const patterns = (rows || [])
+    .map((r) => {
+      const raw = r?.pattern ?? "";
+      const patternNorm = normalizeText(raw);
+      return {
+        pattern_key: r?.pattern_key ?? md5Hex(patternNorm),
+        pattern_raw: String(raw),
+        pattern_norm: patternNorm,
+        severity: r?.severity ?? null,
+      };
+    })
+    .filter((p) => p.pattern_norm.length > 0);
 
-async function insertRiskRow(payload) {
-  const { error } = await supa.from(RISK_REVIEWS_TABLE).insert(payload);
-  if (error) throw error;
-}
-
-async function fetchUsersPage(offset, limit) {
-  const { data, error } = await supa
-    .from(USERS_TZVIRA_TABLE)
-    .select("time, phone, name, last_talk_tzvira")
-    .order("time", { ascending: true })
-    .range(offset, offset + limit - 1);
-
-  if (error) throw error;
-  return data || [];
-}
-
-function uniqByKey(arr, keyFn) {
+  // Deduplicate by pattern_norm (defensive)
   const seen = new Set();
-  const out = [];
-  for (const x of arr) {
-    const k = keyFn(x);
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(x);
+  const uniq = [];
+  for (const p of patterns) {
+    if (seen.has(p.pattern_norm)) continue;
+    seen.add(p.pattern_norm);
+    uniq.push(p);
   }
-  return out;
+
+  // Sort longer patterns first (helps avoid tiny patterns “winning” in UX; still substring-only)
+  uniq.sort((a, b) => b.pattern_norm.length - a.pattern_norm.length);
+
+  return uniq;
 }
 
-/* ==========================
-   Main
-   ========================== */
-async function run() {
-  console.log(`[risk-scan] start @ ${new Date().toISOString()}`);
-  console.log(`[risk-scan] mode=PATTERN_ONLY users=${USERS_TZVIRA_TABLE} reviews=${RISK_REVIEWS_TABLE} page_size=${PAGE_SIZE}`);
+function buildSnippet(textNorm, matchStart, matchLen, windowChars) {
+  const half = Math.max(1, Math.floor(windowChars / 2));
+  const start = Math.max(0, matchStart - half);
+  const end = Math.min(textNorm.length, matchStart + matchLen + half);
+  return textNorm.slice(start, end);
+}
 
+/**
+ * Iterate users rows with paging using Range headers.
+ * PostgREST supports "Range" + "Prefer: count=exact" if needed.
+ */
+async function* fetchUsersRows(maxRows) {
+  const table = CFG.USERS_TABLE;
+  const select = [
+    CFG.USERS_PHONE_FIELD,
+    CFG.USERS_TIME_FIELD,
+    CFG.USERS_TEXT_FIELD,
+  ].join(",");
+
+  let fetched = 0;
   let offset = 0;
-  let totalUsers = 0;
-  let totalHits = 0;
-  let totalInserted = 0;
 
-  for (;;) {
-    const rows = await fetchUsersPage(offset, PAGE_SIZE);
-    if (!rows.length) break;
+  while (fetched < maxRows) {
+    const limit = Math.min(CFG.PAGE_SIZE, maxRows - fetched);
+    const from = offset;
+    const to = offset + limit - 1;
 
-    totalUsers += rows.length;
+    const rows = await supabaseFetch(
+      `/rest/v1/${table}?select=${encodeURIComponent(select)}&${encodeURIComponent(
+        CFG.USERS_TEXT_FIELD
+      )}=not.is.null&order=${encodeURIComponent(CFG.USERS_TIME_FIELD)}.desc`,
+      {
+        headers: {
+          Range: `${from}-${to}`,
+        },
+      }
+    );
+
+    if (!rows || rows.length === 0) break;
 
     for (const r of rows) {
-      const time_key = r.time;
-      const phone = r.phone ?? "";
-      const patient_name = r.name ?? null;
-
-      if (!time_key || !phone) continue;
-
-      const talkClean = cleanTalk(r.last_talk_tzvira ?? "");
-      if (!talkClean) continue;
-
-      const hits = collectRiskHitsFromText(talkClean);
-      if (!hits.length) continue;
-
-      // Deduplicate within same talk by (snippet_hash, pattern_key, snippet_text)
-      const uniqHits = uniqByKey(hits, h => `${h.snippet_hash}|${h.pattern_key}|${h.snippet_text}`);
-      totalHits += uniqHits.length;
-
-      for (const h of uniqHits) {
-        const already = await existsRiskRow(time_key, phone, h.snippet_hash);
-        if (already) continue;
-
-        const payload = {
-          time_key,
-          phone,
-          patient_name,
-          snippet_hash: h.snippet_hash,
-          snippet_text: h.snippet_text,
-          pattern_key: h.pattern_key,
-          status: "pending",
-          reviewed_at: null,
-          reviewed_by: null,
-          review_notes: null,
-        };
-
-        await insertRiskRow(payload);
-        totalInserted += 1;
-
-        if (totalInserted % 50 === 0) {
-          console.log(`[risk-scan] inserted=${totalInserted} users=${totalUsers} hits=${totalHits}`);
-        }
-      }
+      yield r;
+      fetched += 1;
+      if (fetched >= maxRows) break;
     }
 
-    offset += PAGE_SIZE;
-    console.log(`[risk-scan] page done offset=${offset} users=${totalUsers} hits=${totalHits} inserted=${totalInserted}`);
+    offset += rows.length;
+    if (rows.length < limit) break; // last page
   }
-
-  console.log(`[risk-scan] done users=${totalUsers} hits=${totalHits} inserted=${totalInserted}`);
 }
 
-run().catch((e) => {
-  console.error("[risk-scan] FAILED:", e?.message || e);
-  if (e?.details) console.error("details:", e.details);
-  if (e?.hint) console.error("hint:", e.hint);
+async function upsertRiskReview({
+  time_key,
+  phone,
+  snippet_hash,
+  snippet_text,
+  pattern_key,
+  pattern,
+  severity,
+}) {
+  const table = CFG.RISK_REVIEWS_TABLE;
+
+  // IMPORTANT:
+  // We assume your DB already has a UNIQUE constraint on (time_key, phone, snippet_hash).
+  // We use PostgREST upsert with on_conflict + Prefer resolution=ignore-duplicates
+  // so repeated runs stay idempotent.
+  const qs = `?on_conflict=${encodeURIComponent("time_key,phone,snippet_hash")}`;
+  await supabaseFetch(`/rest/v1/${table}${qs}`, {
+    method: "POST",
+    headers: {
+      Prefer: "resolution=ignore-duplicates,return=minimal",
+    },
+    body: [
+      {
+        time_key,
+        phone,
+        snippet_hash,
+        snippet_text,
+        pattern_key,
+        pattern,
+        severity,
+        status: "pending",
+      },
+    ],
+  });
+}
+
+async function main() {
+  const patterns = await loadActivePatterns();
+  console.log(`Loaded ${patterns.length} active patterns from ${CFG.RISK_PHRASES_TABLE}`);
+
+  if (patterns.length === 0) {
+    console.log("No active patterns. Nothing to scan.");
+    return;
+  }
+
+  let totalRows = 0;
+  let totalMatches = 0;
+  let totalInsertedOrIgnored = 0;
+
+  for await (const row of fetchUsersRows(CFG.MAX_ROWS)) {
+    totalRows += 1;
+
+    const phone = String(row?.[CFG.USERS_PHONE_FIELD] ?? "").trim();
+    const time_key = row?.[CFG.USERS_TIME_FIELD];
+    const textRaw = row?.[CFG.USERS_TEXT_FIELD];
+
+    if (!phone || !time_key || !textRaw) continue;
+
+    const textNorm = normalizeText(textRaw);
+    if (!textNorm) continue;
+
+    // Substring-only scanning
+    for (const p of patterns) {
+      const idx = textNorm.indexOf(p.pattern_norm);
+      if (idx === -1) continue;
+
+      totalMatches += 1;
+
+      const snippet_text = buildSnippet(
+        textNorm,
+        idx,
+        p.pattern_norm.length,
+        CFG.SNIPPET_WINDOW_CHARS
+      );
+      const snippet_hash = md5Hex(snippet_text);
+
+      try {
+        await upsertRiskReview({
+          time_key,
+          phone,
+          snippet_hash,
+          snippet_text,
+          pattern_key: p.pattern_key,
+          pattern: p.pattern_norm, // store normalized pattern for audit/display
+          severity: p.severity || "high",
+        });
+        totalInsertedOrIgnored += 1;
+      } catch (e) {
+        // If your schema differs (column names/unique keys), you'll see it here clearly.
+        console.error("Failed inserting risk_review:", {
+          phone,
+          time_key,
+          pattern: p.pattern_norm,
+          err: String(e?.message || e),
+        });
+        throw e;
+      }
+
+      // NOTE: we do NOT break; multiple patterns may match the same talk text.
+      // If you want "first match only" behavior, add: break;
+    }
+  }
+
+  console.log("DONE");
+  console.log(
+    JSON.stringify(
+      {
+        scanned_rows: totalRows,
+        matches_found: totalMatches,
+        inserts_attempted: totalInsertedOrIgnored,
+        max_rows: CFG.MAX_ROWS,
+      },
+      null,
+      2
+    )
+  );
+}
+
+main().catch((e) => {
+  console.error(e?.stack || String(e));
   process.exit(1);
 });
