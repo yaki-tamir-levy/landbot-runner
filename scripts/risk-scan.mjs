@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * risk-scan.mjs
+ * risk-scan.mjs (v2 - "PATTERN ONLY")
  *
- * מה זה עושה:
- * - סורק את users_tzvira
- * - מזהה מופעי RISK (כמו ה-Viewer)
- * - עבור כל מופע RISK: בודק אם כבר קיים ב-risk_reviews לפי (time_key, phone, snippet_hash)
- *   - אם קיים: לא עושה כלום
- *   - אם לא קיים: INSERT שורה חדשה (status=pending, ללא שדות פסיכולוג)
+ * שינוי לפי ההנחיה שלך:
+ * - אין תלות ב"זיהוי שורות מטופל" לפי שם/תוויות
+ * - אין בדיקת הקשר/שלילה/מילים לפני/אחרי לצורך החלטה אם זה RISK
+ * - מחפשים רק את ה-PATTERN בטקסט המנורמל כולו
+ * - עדיין שומרים snippet_text לחלון תצוגה סביב ההתאמה (לתצוגה בלבד)
  *
- * חשוב:
- * - אין UPDATE לרשומות קיימות
- * - אין שינוי שדות פסיכולוגיים (status/reviewed_at/reviewed_by/review_notes) אחרי INSERT
+ * DB:
+ * - עבור כל התאמה: בודקים קיום לפי (time_key, phone, snippet_hash)
+ *   - אם קיים: לא עושים כלום
+ *   - אם לא: INSERT status='pending' ושדות פסיכולוג ריקים
  */
 
 import process from "node:process";
@@ -38,10 +38,8 @@ const supa = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 });
 
 /* ==========================
-   Helpers (match viewer behavior as close as possible)
+   Text normalization (same as Viewer)
    ========================== */
-function escapeRegExp(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
-
 function stripAllHtml(raw) {
   let s = String(raw ?? "");
   s = s.replace(/<br\s*\/?>/gi, "\n");
@@ -65,13 +63,13 @@ function cleanTalk(raw) {
 function rx(s) { return new RegExp(s, "iu"); }
 
 /**
- * RISK patterns copied from your Viewer code (same keys and regex strings).
- * Note: Keep in sync with viewer to preserve snippet_hash stability.
+ * RISK patterns copied from your Viewer code.
+ * Keep in sync with Viewer to preserve snippet_hash stability.
  */
 const RISK = [
-  { key: "suicide", rx: rx("בא\\s*לי\\s*למות|רוצה\\s*למות|לא\\s*רוצה\\s*לחיות|אין\\s*לי\\s*בשביל\\s*מה\\s*לחיות|לסיים\\s*(?:את)?\\s*(?:ה(?:כול|כל|חיים))|להתאבד|התאבד(?:ו|ות)?|לפגוע\\s*בעצ(?:מי|מה|מו)|פגיעה\\s*עצמית|חתכ(?:תי|ים)|מנת\\s*יתר|הרס\\s*עצמי|ייאוש\\s*מוחלט|אין\\s*טעם|אני\\s*נואש|פאניקה\\s*קשה") },
-  { key: "violence", rx: rx("אהרוג|ארצח|לפגוע\\s*בו|אלימות\\s*קשה|מאיים\\s*עלי(?:י)?|עוקב\\s*אחר(?:י|ַי)|התעללות|אונס|הטרדה\\s*מינית") },
-  { key: "psychosis", rx: rx("פסיכוזה|שומע\\s*קולות|הלוצינציות") },
+  { key: "suicide",    rx: rx("בא\\s*לי\\s*למות|רוצה\\s*למות|לא\\s*רוצה\\s*לחיות|אין\\s*לי\\s*בשביל\\s*מה\\s*לחיות|לסיים\\s*(?:את)?\\s*(?:ה(?:כול|כל|חיים))|להתאבד|התאבד(?:ו|ות)?|לפגוע\\s*בעצ(?:מי|מה|מו)|פגיעה\\s*עצמית|חתכ(?:תי|ים)|מנת\\s*יתר|הרס\\s*עצמי|ייאוש\\s*מוחלט|אין\\s*טעם|אני\\s*נואש|פאניקה\\s*קשה") },
+  { key: "violence",   rx: rx("אהרוג|ארצח|לפגוע\\s*בו|אלימות\\s*קשה|מאיים\\s*עלי(?:י)?|עוקב\\s*אחר(?:י|ַי)|התעללות|אונס|הטרדה\\s*מינית") },
+  { key: "psychosis",  rx: rx("פסיכוזה|שומע\\s*קולות|הלוצינציות") },
   { key: "substances", rx: rx("לקחתי\\s*יותר\\s*מדי\\s*תרופות|אלכוהול\\s*בכמויות") },
   { key: "hard_drugs", rx: rx("(סמים\\s*קשים|קוקאין|קראק|הרואין|פנטניל|מורפין|אוקסי(?:קודון)?|אופיאט(?:ים)?|מתאמפטמין|קריסטל(?:\\s*מת)?|(?:^|\\s)מת(?:\\s|$)|MDMA|אקסטז[יי]|LSD|אסיד|מסניף(?:ה)?|שואף(?:ת)?|הזרקתי|זריקה|מזרק|טריפ)") },
 ];
@@ -83,63 +81,44 @@ function hashStr(str) {
     const cc = str.charCodeAt(i);
     h = ((h << 5) + h) ^ cc;
   }
-  // unsigned 32-bit, hex
   return (h >>> 0).toString(16);
 }
 
-function snippetAround(full, match) {
+function snippetAroundAt(full, idx, len) {
   const s = String(full ?? "");
-  const idx = s.indexOf(match);
-  if (idx === -1) return s.slice(0, 60);
+  if (idx < 0 || idx >= s.length) return s.slice(0, 60);
   const start = Math.max(0, idx - 18);
-  const end = Math.min(s.length, idx + match.length + 18);
+  const end = Math.min(s.length, idx + len + 18);
   return (start > 0 ? "…" : "") + s.slice(start, end).trim() + (end < s.length ? "…" : "");
 }
 
 /**
- * Parse into dialog lines similar to viewer:
- * - patient lines are prefixed by "<patientName>:"
- * - therapist lines prefixed by "המטפל:"
- * - also supports "שאלה:" / "תשובה:"
- *
- * We only scan patient lines (speaker === 'patient') like the viewer.
+ * PATTERN ONLY scan over the entire cleaned text:
+ * - Find all matches (global) for each pattern
+ * - Build hits with snippet_hash + snippet_text
  */
-function toDialogLines(patientName, rawText) {
-  const patient = (patientName && String(patientName).trim()) ? String(patientName).trim() : "מטופל/ת";
-  const rxPatientName = new RegExp("^\\s*" + escapeRegExp(patient) + ":\\s*");
-  const rxTher = /^\s*המטפל:\s*/;
-
-  const lines = String(rawText ?? "").split(/\n/);
-  const out = [];
-  for (let i = 0; i < lines.length; i++) {
-    const s = String(lines[i]);
-    if (rxPatientName.test(s)) { out.push({ speaker: "patient", body: s.replace(rxPatientName, "") }); continue; }
-    if (rxTher.test(s)) { out.push({ speaker: "therapist", body: s.replace(rxTher, "") }); continue; }
-    if (/^\s*שאלה:\s*/.test(s)) { out.push({ speaker: "patient", body: s.replace(/^\s*שאלה:\s*/, "") }); continue; }
-    if (/^\s*תשובה:\s*/.test(s)) { out.push({ speaker: "therapist", body: s.replace(/^\s*תשובה:\s*/, "") }); continue; }
-    out.push({ speaker: "text", body: s });
-  }
-  return { patient, lines: out };
-}
-
-function collectRiskHits(dialogLines) {
+function collectRiskHitsFromText(fullText) {
   const hits = [];
-  for (let idx = 0; idx < dialogLines.length; idx++) {
-    const ln = dialogLines[idx];
-    if (ln.speaker !== "patient") continue;
-    const txt = String(ln.body ?? "");
-    for (const rk of RISK) {
-      const m = txt.match(rk.rx);
-      if (m) {
-        const matchText = m[0];
-        const hash = hashStr(matchText.replace(/\s+/g, " ").toLowerCase() + "|" + rk.key);
-        hits.push({
-          snippet_hash: hash,
-          pattern_key: rk.key,
-          matchText,
-          snippet_text: snippetAround(txt, matchText),
-        });
-      }
+  const txt = String(fullText ?? "");
+  if (!txt) return hits;
+
+  for (const rk of RISK) {
+    // Make a global version of the same regex
+    const flags = rk.rx.flags.includes("g") ? rk.rx.flags : (rk.rx.flags + "g");
+    const rgx = new RegExp(rk.rx.source, flags);
+
+    for (const m of txt.matchAll(rgx)) {
+      const matchText = m[0];
+      const idx = (typeof m.index === "number") ? m.index : txt.indexOf(matchText);
+      const snippet_text = snippetAroundAt(txt, idx, matchText.length);
+
+      const snippet_hash = hashStr(matchText.replace(/\s+/g, " ").toLowerCase() + "|" + rk.key);
+
+      hits.push({
+        snippet_hash,
+        pattern_key: rk.key,
+        snippet_text,
+      });
     }
   }
   return hits;
@@ -148,9 +127,7 @@ function collectRiskHits(dialogLines) {
 /* ==========================
    DB helpers
    ========================== */
-
 async function existsRiskRow(time_key, phone, snippet_hash) {
-  // Fast existence check
   const { data, error } = await supa
     .from(RISK_REVIEWS_TABLE)
     .select("time_key")
@@ -168,12 +145,7 @@ async function insertRiskRow(payload) {
   if (error) throw error;
 }
 
-/* ==========================
-   Main scan
-   ========================== */
-
 async function fetchUsersPage(offset, limit) {
-  // Select only what we need
   const { data, error } = await supa
     .from(USERS_TZVIRA_TABLE)
     .select("time, phone, name, last_talk_tzvira")
@@ -196,16 +168,18 @@ function uniqByKey(arr, keyFn) {
   return out;
 }
 
+/* ==========================
+   Main
+   ========================== */
 async function run() {
   console.log(`[risk-scan] start @ ${new Date().toISOString()}`);
-  console.log(`[risk-scan] tables: users=${USERS_TZVIRA_TABLE} reviews=${RISK_REVIEWS_TABLE} page_size=${PAGE_SIZE}`);
+  console.log(`[risk-scan] mode=PATTERN_ONLY users=${USERS_TZVIRA_TABLE} reviews=${RISK_REVIEWS_TABLE} page_size=${PAGE_SIZE}`);
 
   let offset = 0;
   let totalUsers = 0;
   let totalHits = 0;
   let totalInserted = 0;
 
-  // Basic loop until page returns empty
   for (;;) {
     const rows = await fetchUsersPage(offset, PAGE_SIZE);
     if (!rows.length) break;
@@ -222,25 +196,22 @@ async function run() {
       const talkClean = cleanTalk(r.last_talk_tzvira ?? "");
       if (!talkClean) continue;
 
-      const parsed = toDialogLines(patient_name, talkClean);
-      const hits = collectRiskHits(parsed.lines);
+      const hits = collectRiskHitsFromText(talkClean);
       if (!hits.length) continue;
 
-      // Some lines may match multiple patterns; we keep unique (snippet_hash, pattern_key, snippet_text)
+      // Deduplicate within same talk by (snippet_hash, pattern_key, snippet_text)
       const uniqHits = uniqByKey(hits, h => `${h.snippet_hash}|${h.pattern_key}|${h.snippet_text}`);
       totalHits += uniqHits.length;
 
       for (const h of uniqHits) {
-        const snippet_hash = h.snippet_hash;
-
-        const already = await existsRiskRow(time_key, phone, snippet_hash);
+        const already = await existsRiskRow(time_key, phone, h.snippet_hash);
         if (already) continue;
 
         const payload = {
           time_key,
           phone,
           patient_name,
-          snippet_hash,
+          snippet_hash: h.snippet_hash,
           snippet_text: h.snippet_text,
           pattern_key: h.pattern_key,
           status: "pending",
@@ -253,16 +224,16 @@ async function run() {
         totalInserted += 1;
 
         if (totalInserted % 50 === 0) {
-          console.log(`[risk-scan] inserted ${totalInserted} (users=${totalUsers}, hits=${totalHits})`);
+          console.log(`[risk-scan] inserted=${totalInserted} users=${totalUsers} hits=${totalHits}`);
         }
       }
     }
 
     offset += PAGE_SIZE;
-    console.log(`[risk-scan] page done, offset=${offset}, users=${totalUsers}, hits=${totalHits}, inserted=${totalInserted}`);
+    console.log(`[risk-scan] page done offset=${offset} users=${totalUsers} hits=${totalHits} inserted=${totalInserted}`);
   }
 
-  console.log(`[risk-scan] done. users=${totalUsers}, hits=${totalHits}, inserted=${totalInserted}`);
+  console.log(`[risk-scan] done users=${totalUsers} hits=${totalHits} inserted=${totalInserted}`);
 }
 
 run().catch((e) => {
