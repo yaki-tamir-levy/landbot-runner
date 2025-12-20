@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
  * risk-scan.mjs
- * VERSION: 2025-12-20-FIX5 (stable match hash based on pattern_key; patient-only scan + word snippet)
+ * VERSION: 2025-12-20-FIX6 (snippet_text = pattern only; stable match hash based on pattern_key)
  *
  * AGREED BEHAVIOR:
  * - NO hardcoded RISK words/regex in code.
  * - Load patterns ONLY from DB table: public.risk_phrases
  * - Detection is substring-only on normalized text.
  * - Scan ONLY patient utterances (exclude therapist) using SAME speaker rules as viewer (toDialogLines()).
- * - snippet_text = match + 2 words before + 2 words after. (display only; NOT used for dedup)
+ * - snippet_text = THE FOUND PATTERN ONLY (no 2+2 words). Display-only; NOT used for dedup.
  * - Dedup is DB-only via on_conflict (time_key, phone, snippet_hash).
- *   In FIX5, snippet_hash is a stable hash of pattern_key (NOT of snippet_text) to prevent re-opening
+ *   snippet_hash is a stable hash of pattern_key (NOT of snippet_text) to prevent re-opening
  *   pending reviews when snippet_text shifts.
  *
  * Required env:
@@ -97,16 +97,6 @@ function escapeRegExp(s) {
 
 /**
  * Speaker parsing: align with viewer's toDialogLines()
- *
- * Viewer rules summary:
- * - Optional WhatsApp timestamp prefix: "[...]" at start of line
- * - Patient line if starts with: "{patientName}:" OR "מטופל:"/"המטופל:"/"מטופל/ת:" (generic)
- * - Therapist line if starts with: "המטפל:"
- * - Q: is patient, A: is therapist
- * - "שאלה:" patient, "תשובה:" therapist
- * - Lines without a prefix belong to the last known speaker.
- *
- * We extract ONLY patient content (excluding therapist).
  */
 function buildSpeakerRegexes(patientName) {
   const name = (patientName && String(patientName).trim()) ? String(patientName).trim() : "";
@@ -147,7 +137,6 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
   for (let line of lines) {
     if (!line) continue;
 
-    // Patient by explicit name
     if (rx.rxPatientName && rx.rxPatientName.test(line)) {
       speaker = "patient";
       line = line.replace(rx.rxPatientName, "").trim();
@@ -155,14 +144,11 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
       continue;
     }
 
-    // Therapist by "המטפל:"
     if (rx.rxTher.test(line) || rx.rxGenericTher.test(line)) {
       speaker = "therapist";
-      // do not collect therapist content
       continue;
     }
 
-    // Q/A
     if (rx.rxQ.test(line)) {
       speaker = "patient";
       line = line.replace(rx.rxQ, "").trim();
@@ -171,11 +157,9 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
     }
     if (rx.rxA.test(line)) {
       speaker = "therapist";
-      // do not collect therapist
       continue;
     }
 
-    // Generic patient prefix
     if (rx.rxGenericPatient.test(line)) {
       speaker = "patient";
       line = line.replace(rx.rxGenericPatient, "").trim();
@@ -183,7 +167,6 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
       continue;
     }
 
-    // Hebrew "שאלה/תשובה"
     if (rx.rxHebQ.test(line)) {
       speaker = "patient";
       line = line.replace(rx.rxHebQ, "").trim();
@@ -195,7 +178,6 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
       continue;
     }
 
-    // No prefix: attribute to previous speaker
     if (speaker === "patient") out.push(line);
   }
 
@@ -238,12 +220,16 @@ async function loadActivePatterns() {
 
   const list = (rows || [])
     .map((r) => {
-      const raw = r?.pattern ?? "";
-      const norm = normalizeInline(raw);
+      const rawPattern = String(r?.pattern ?? "").trim();
+      const norm = normalizeInline(rawPattern);
       if (!norm) return null;
+
+      const pk = String(r?.pattern_key ?? "").trim() || md5Hex(norm);
+
       return {
-        pattern_key: r?.pattern_key ?? md5Hex(norm),
-        pattern_norm: norm,
+        pattern_key: pk,             // stable reference
+        pattern_norm: norm,          // for matching
+        pattern_display: rawPattern || norm, // for snippet_text (display only)
       };
     })
     .filter(Boolean);
@@ -259,36 +245,6 @@ async function loadActivePatterns() {
 
   uniq.sort((a, b) => b.pattern_norm.length - a.pattern_norm.length);
   return uniq;
-}
-
-/**
- * Build snippet by words: 2 words before + match words + 2 words after.
- * We locate the match by character indices on the normalized patient-only text.
- */
-function snippetByWords(textNorm, matchStart, matchLen, wordsBefore = 2, wordsAfter = 2) {
-  const tokens = [];
-  const re = /\S+/g;
-  let m;
-  while ((m = re.exec(textNorm)) !== null) {
-    tokens.push({ w: m[0], s: m.index, e: m.index + m[0].length });
-  }
-  if (!tokens.length) return "";
-
-  const matchEnd = matchStart + matchLen;
-
-  let iStart = 0;
-  while (iStart < tokens.length && tokens[iStart].e <= matchStart) iStart++;
-
-  let iEnd = iStart;
-  while (iEnd < tokens.length && tokens[iEnd].s < matchEnd) iEnd++;
-
-  if (iStart >= tokens.length) iStart = tokens.length - 1;
-  if (iEnd <= iStart) iEnd = iStart + 1;
-
-  const from = Math.max(0, iStart - wordsBefore);
-  const to = Math.min(tokens.length, iEnd + wordsAfter);
-
-  return tokens.slice(from, to).map((t) => t.w).join(" ");
 }
 
 async function* fetchUsersRows(maxRows) {
@@ -349,7 +305,7 @@ async function upsertRiskReview({ time_key, phone, snippet_hash, snippet_text, p
 }
 
 async function main() {
-  console.log("RISK_SCAN_VERSION=2025-12-20-FIX5");
+  console.log("RISK_SCAN_VERSION=2025-12-20-FIX6");
 
   const patterns = await loadActivePatterns();
   console.log(`Loaded ${patterns.length} active patterns from ${CFG.RISK_PHRASES_TABLE}`);
@@ -384,11 +340,11 @@ async function main() {
 
       matches += 1;
 
-      const snippet_text = snippetByWords(patientText, idx, p.pattern_norm.length, 2, 2);
+      // FIX6: snippet_text is the found pattern only (display-only)
+      const snippet_text = p.pattern_display;
 
-      // FIX5: stable dedup key based ONLY on pattern_key (NOT on snippet_text)
-      // This prevents re-opening pending reviews when snippet_text shifts.
-      const snippet_hash = md5Hex(String(p.pattern_key ?? ""));
+      // Stable dedup key based ONLY on pattern_key (NOT on snippet_text)
+      const snippet_hash = md5Hex(p.pattern_key);
 
       await upsertRiskReview({
         time_key,
