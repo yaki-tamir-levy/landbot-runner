@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 /**
  * risk-scan.mjs
- * VERSION: 2025-12-19-FIX4 (speaker parsing aligned with viewer HTML + patient-only scan + word snippet)
+ * VERSION: 2025-12-20-FIX5 (stable match hash based on pattern_key; patient-only scan + word snippet)
  *
  * AGREED BEHAVIOR:
  * - NO hardcoded RISK words/regex in code.
  * - Load patterns ONLY from DB table: public.risk_phrases
  * - Detection is substring-only on normalized text.
  * - Scan ONLY patient utterances (exclude therapist) using SAME speaker rules as viewer (toDialogLines()).
- * - snippet_text = match + 2 words before + 2 words after.
+ * - snippet_text = match + 2 words before + 2 words after. (display only; NOT used for dedup)
+ * - Dedup is DB-only via on_conflict (time_key, phone, snippet_hash).
+ *   In FIX5, snippet_hash is a stable hash of pattern_key (NOT of snippet_text) to prevent re-opening
+ *   pending reviews when snippet_text shifts.
  *
  * Required env:
  *   SUPABASE_URL
@@ -346,7 +349,7 @@ async function upsertRiskReview({ time_key, phone, snippet_hash, snippet_text, p
 }
 
 async function main() {
-  console.log("RISK_SCAN_VERSION=2025-12-19-FIX4");
+  console.log("RISK_SCAN_VERSION=2025-12-20-FIX5");
 
   const patterns = await loadActivePatterns();
   console.log(`Loaded ${patterns.length} active patterns from ${CFG.RISK_PHRASES_TABLE}`);
@@ -382,7 +385,10 @@ async function main() {
       matches += 1;
 
       const snippet_text = snippetByWords(patientText, idx, p.pattern_norm.length, 2, 2);
-      const snippet_hash = md5Hex(snippet_text);
+
+      // FIX5: stable dedup key based ONLY on pattern_key (NOT on snippet_text)
+      // This prevents re-opening pending reviews when snippet_text shifts.
+      const snippet_hash = md5Hex(String(p.pattern_key ?? ""));
 
       await upsertRiskReview({
         time_key,
