@@ -1,17 +1,15 @@
 #!/usr/bin/env node
 /**
  * risk-scan.mjs
- * VERSION: 2025-12-20-FIX6 (snippet_text = pattern only; stable match hash based on pattern_key)
+ * VERSION: 2025-12-21-FIX5 (snippet_text = pattern only, stable snippet_hash by pattern)
  *
  * AGREED BEHAVIOR:
  * - NO hardcoded RISK words/regex in code.
  * - Load patterns ONLY from DB table: public.risk_phrases
  * - Detection is substring-only on normalized text.
  * - Scan ONLY patient utterances (exclude therapist) using SAME speaker rules as viewer (toDialogLines()).
- * - snippet_text = THE FOUND PATTERN ONLY (no 2+2 words). Display-only; NOT used for dedup.
- * - Dedup is DB-only via on_conflict (time_key, phone, snippet_hash).
- *   snippet_hash is a stable hash of pattern_key (NOT of snippet_text) to prevent re-opening
- *   pending reviews when snippet_text shifts.
+ * - snippet_text = ONLY the matched risk pattern (no 2+2 words context).
+ * - snippet_hash = stable per pattern (use pattern_key as-is).
  *
  * Required env:
  *   SUPABASE_URL
@@ -56,7 +54,7 @@ if (!CFG.SUPABASE_URL) die("SUPABASE_URL is missing");
 if (!CFG.SUPABASE_SERVICE_ROLE_KEY) die("SUPABASE_SERVICE_ROLE_KEY is missing");
 
 function md5Hex(s) {
-  return crypto.createHash("md5").update(s, "utf8").digest("hex");
+  return crypto.createHash("md5").update(String(s ?? ""), "utf8").digest("hex");
 }
 
 /**
@@ -97,6 +95,16 @@ function escapeRegExp(s) {
 
 /**
  * Speaker parsing: align with viewer's toDialogLines()
+ *
+ * Viewer rules summary:
+ * - Optional WhatsApp timestamp prefix: "[...]" at start of line
+ * - Patient line if starts with: "{patientName}:" OR "מטופל:"/"המטופל:"/"מטופל/ת:" (generic)
+ * - Therapist line if starts with: "המטפל:"
+ * - Q: is patient, A: is therapist
+ * - "שאלה:" patient, "תשובה:" therapist
+ * - Lines without a prefix belong to the last known speaker.
+ *
+ * We extract ONLY patient content (excluding therapist).
  */
 function buildSpeakerRegexes(patientName) {
   const name = (patientName && String(patientName).trim()) ? String(patientName).trim() : "";
@@ -137,6 +145,7 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
   for (let line of lines) {
     if (!line) continue;
 
+    // Patient by explicit name
     if (rx.rxPatientName && rx.rxPatientName.test(line)) {
       speaker = "patient";
       line = line.replace(rx.rxPatientName, "").trim();
@@ -144,11 +153,13 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
       continue;
     }
 
+    // Therapist by "המטפל:"
     if (rx.rxTher.test(line) || rx.rxGenericTher.test(line)) {
       speaker = "therapist";
       continue;
     }
 
+    // Q/A
     if (rx.rxQ.test(line)) {
       speaker = "patient";
       line = line.replace(rx.rxQ, "").trim();
@@ -160,6 +171,7 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
       continue;
     }
 
+    // Generic patient prefix
     if (rx.rxGenericPatient.test(line)) {
       speaker = "patient";
       line = line.replace(rx.rxGenericPatient, "").trim();
@@ -167,6 +179,7 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
       continue;
     }
 
+    // Hebrew "שאלה/תשובה"
     if (rx.rxHebQ.test(line)) {
       speaker = "patient";
       line = line.replace(rx.rxHebQ, "").trim();
@@ -178,6 +191,7 @@ function extractPatientOnlyByViewerRules(textNormWithNL, patientName) {
       continue;
     }
 
+    // No prefix: attribute to previous speaker
     if (speaker === "patient") out.push(line);
   }
 
@@ -220,16 +234,16 @@ async function loadActivePatterns() {
 
   const list = (rows || [])
     .map((r) => {
-      const rawPattern = String(r?.pattern ?? "").trim();
-      const norm = normalizeInline(rawPattern);
+      const raw = String(r?.pattern ?? "").trim();
+      const norm = normalizeInline(raw);
       if (!norm) return null;
 
-      const pk = String(r?.pattern_key ?? "").trim() || md5Hex(norm);
+      const pattern_key = String(r?.pattern_key ?? "").trim() || md5Hex(norm);
 
       return {
-        pattern_key: pk,             // stable reference
-        pattern_norm: norm,          // for matching
-        pattern_display: rawPattern || norm, // for snippet_text (display only)
+        pattern_key,
+        pattern_norm: norm,    // for matching
+        pattern_raw: raw,      // for snippet_text (human-readable)
       };
     })
     .filter(Boolean);
@@ -305,7 +319,7 @@ async function upsertRiskReview({ time_key, phone, snippet_hash, snippet_text, p
 }
 
 async function main() {
-  console.log("RISK_SCAN_VERSION=2025-12-20-FIX6");
+  console.log("RISK_SCAN_VERSION=2025-12-21-FIX5");
 
   const patterns = await loadActivePatterns();
   console.log(`Loaded ${patterns.length} active patterns from ${CFG.RISK_PHRASES_TABLE}`);
@@ -340,11 +354,11 @@ async function main() {
 
       matches += 1;
 
-      // FIX6: snippet_text is the found pattern only (display-only)
-      const snippet_text = p.pattern_display;
+      // (1) snippet_text = ONLY the risk pattern
+      const snippet_text = p.pattern_raw || p.pattern_norm;
 
-      // Stable dedup key based ONLY on pattern_key (NOT on snippet_text)
-      const snippet_hash = md5Hex(p.pattern_key);
+      // (B) stable hash by the pattern itself -> reuse the stable pattern_key
+      const snippet_hash = p.pattern_key;
 
       await upsertRiskReview({
         time_key,
