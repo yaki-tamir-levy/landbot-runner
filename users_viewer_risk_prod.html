@@ -2,7 +2,6 @@
 <html lang="he" dir="rtl">
 <head>
   <script>
-<script>
   (function () {
     // אותה הסיסמה כמו בקובץ launcher.html
     const APP_PASSWORD   = "yon1234";
@@ -25,7 +24,7 @@
     }
   })();
 </script>
-</script>
+
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>כל הסוגים</title>
@@ -36,7 +35,6 @@
     body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
     .wrap{max-width:1000px;margin:0 auto;padding:20px}
     h2{margin:0 0 12px 0; text-align:center}
-
     .card{background:var(--card);border:1px solid var(--divider);border-radius:14px;padding:14px}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
     label{font-size:12px;color:var(--muted)}
@@ -45,87 +43,58 @@
     button{cursor:pointer}
     .controls{margin-bottom:10px}
     .table{margin-top:12px;display:flex;flex-direction:column;gap:10px}
-
     .talk{border:1px solid var(--divider);border-radius:12px;overflow:hidden;background:#fff}
-
     .head{
-      display:grid;
-      grid-template-columns:auto auto 140px 140px 160px auto 150px;
-      align-items:center;
-      gap:8px;
-      background:#fafafa;
-      padding:10px 12px;
-      border-bottom:1px solid #e5e7eb
-    }
-
-    .patient-name{font-weight:900;font-size:1.35rem;}
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:8px;
+  background:#fafafa;
+  padding:10px 12px;
+  border-bottom:1px solid #e5e7eb
+}
+.patient-name{font-weight:900;font-size:1.35rem;}
     .patient-phone{font-weight:400;font-size:0.9rem;color:var(--muted);}
-
-    .btn-toggle,
-    .btn-summarized_linked_talk,
-    .btn-raw-summary,
-    .btn-home{
+    .btn-toggle,.btn-summarized_linked_talk,.btn-raw-summary,.btn-home{
       font-weight:700; border:2px solid #d1d5db; border-radius:10px; padding:8px 10px; background:#fff; min-width:140px; text-align:center
     }
     .btn-home{font-weight:400; min-width:150px; border-width:1px}
-    .btn-selected{
-      background:#f3e8ff !important;
-      border-color:#e9d5ff !important;
-    }
-
-    .btn-placeholder{
-      display:inline-block;
-      visibility:hidden;
-      font-weight:700;
-      border-radius:1rem;
-      padding:8px 10px;
-      min-width:140px;
-      text-align:center;
-    }
-
+    .btn-selected{ background:#f3e8ff !important; border-color:#e9d5ff !important; }
+    .btn-placeholder{ display:none; }
     .btn-state-active{ background:#dcfce7; border-color:#bbf7d0; }
-    .btn-state-locked{ background:#e5e7eb; border-color:#d1d5db; cursor:not-allowed; }
-
     .btn-summarized_linked_talk[disabled]{opacity:.55; cursor:not-allowed}
     .btn-toggle:hover,.btn-summarized_linked_talk:hover,.btn-raw-summary:hover{box-shadow:0 0 0 2px #e5e7eb inset}
-
     .meta{color:var(--muted);font-weight:600}
-
     .body{padding:12px;white-space:pre-wrap;line-height:1.55}
     .summarized_linked_talk{padding:12px; white-space:pre-wrap; line-height:1.6; background:#fffaf0; border-top:1px dashed #f1d29b; display:none}
     .summarized_linked_talk .empty{color:#9ca3af}
-
     .hint{color:#6b7280;font-size:12px}
     .counts{margin-top:6px}
-
     mark.risk{ background:#ffe4e6; color:#000; padding:0 3px; border-radius:4px; font-weight:900; font-size:1.08em; }
     mark.risk.reviewed{ background:#d1fae5; color:#065f46; }
-
     .alertbar{border:1px solid #fecaca;background:#fee2e2;border-radius:12px;padding:10px 12px;margin:0 0 10px}
     .alertbar h3{margin:0 0 6px 0;color:#7f1d1d;font-size:14px}
     .alertitem{margin:6px 0;padding:8px 10px;border-radius:8px;background:#fff;border:1px dashed #fecaca}
     .alertitem .when{color:#7f1d1d;font-weight:700}
-
     .pill{ display:inline-block; padding:6px 12px; border-radius:999px; background:#ffe4e6; color:#000; font-size:16px; margin:2px 6px 2px 0; font-weight:900; border:1px solid #fecaca }
     .btn-open-risk{ font-weight:900; background:#ffd1d6; border:2px solid #fca5a5; padding:6px 12px; border-radius:10px; }
     .btn-open-risk:hover{ filter:brightness(0.98) }
-
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     .speaker{white-space:pre-wrap}
     .speaker-patient{font-weight:700}
     .speaker-therapist{font-weight:800;font-style:italic;font-size:1.05em}
     .line-spacer{height:1em}
-
     .target-blink{animation: blink 1.3s ease-in-out 1}
     @keyframes blink{ 0%{background:var(--hi)} 100%{background:transparent} }
-
     #statusBar{margin:10px 0}
     #statusBar .err{background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d;padding:10px;border-radius:10px}
-
+    #statusBar .ok{background:#dcfce7;border:1px solid #bbf7d0;color:#065f46;padding:10px;border-radius:10px}
     .inline-msg{margin:8px 12px;background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d;padding:8px 10px;border-radius:10px}
     .note-yellow{background:var(--hi); padding:0 4px; border-radius:4px}
     .btn-review-inline,.btn-unreview-inline{margin-inline-start:8px}
-  </style>
+  
+  .meta.why{ display:inline-block; margin:0 8px; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; }
+</style>
 </head>
 <body>
 <div class="wrap">
@@ -166,10 +135,27 @@
 (function () {
   "use strict";
 
+  function $(id){ return document.getElementById(id); }
+  var el = {
+    fPhone:$("fPhone"), fName:$("fName"), fFrom:$("fFrom"), fTo:$("fTo"), fKind:$("fKind"),
+    btnRun:$("btnRun"), btnClear:$("btnClear"),
+    out:$("out"), alertHost:$("alertHost"), statusBar:$("statusBar"), countInfo:$("countInfo")
+  };
+
+  // default date range: To = today (leave empty = ALL)
+  try{
+    if (!el.fTo.value || String(el.fTo.value).trim() === '2025.12.31'){
+      el.fTo.value = todayYMD();
+    }
+  } catch(e){}
+
+  function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]); }); }
+  function setStatusErr(msg){ el.statusBar.innerHTML = msg ? '<div class="err">' + escapeHtml(msg) + '</div>' : ''; }
+  function setStatusOk(msg){ el.statusBar.innerHTML = msg ? '<div class="ok">' + escapeHtml(msg) + '</div>' : ''; }
+
   window.addEventListener('error', function(e){
     var m = 'שגיאת סקריפט: ' + (e && e.message ? e.message : e);
-    var sb = document.getElementById('statusBar');
-    if (sb) sb.innerHTML = '<div class="err">'+m+'</div>';
+    setStatusErr(m);
   });
 
   /* Supabase */
@@ -180,19 +166,289 @@
   var FLAGS_TABLE       = "talk_read_flags";
   var USERS_INFO_TABLE  = "users_information";
 
+  if (!window.supabase || !window.supabase.createClient){
+    setStatusErr('ספריית Supabase לא נטענה (בדוק חיבור אינטרנט / חסימת CDN).');
+    return;
+  }
   var supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-  function $(id){ return document.getElementById(id); }
-  var el = {
-    fPhone:$("fPhone"), fName:$("fName"), fFrom:$("fFrom"), fTo:$("fTo"), fKind:$("fKind"),
-    btnRun:$("btnRun"), btnClear:$("btnClear"),
-    out:$("out"), alertHost:$("alertHost"), statusBar:$("statusBar"), countInfo:$("countInfo")
+
+  // ------------------------------------------------------------
+  // users_information.status backfill — at most one DB call per phone
+  // Goal: never show "לא ידוע" if the status exists in users_information.
+  // ------------------------------------------------------------
+  var UI_STATUS_FETCH = new Map(); // normPhone(phone) -> Promise<any|null>
+
+  function uiPhoneVariants(rawPhone){
+    var s = String(rawPhone == null ? '' : rawPhone).trim();
+    var digits = s.replace(/\D+/g,'');
+    var set = new Set();
+    if (digits) set.add(digits);
+
+    if (digits.length === 9) set.add('0' + digits);
+    if (digits.length === 10 && digits.charAt(0) === '0'){
+      set.add(digits.slice(1));
+      set.add('972' + digits.slice(1));
+    }
+
+    if (digits.startsWith('972') && digits.length >= 11){
+      var rest = digits.slice(3);
+      if (rest.length === 9) set.add('0' + rest);
+      if (rest.length === 10) set.add(rest);
+      set.add(rest);
+    }
+
+    if (/^\d+$/.test(s)) set.add(s);
+    return Array.from(set).filter(function(x){ return x && String(x).trim() !== ''; });
+  }
+
+  function hasInfoStatus(phoneRaw){
+    try{
+      var info = CACHE && CACHE.infoMap ? CACHE.infoMap.get(normPhone(phoneRaw)) : null;
+      return !!(info && info.status != null && String(info.status).trim() !== '');
+    } catch(e){
+      return false;
+    }
+  }
+
+  function fetchUsersInformationStatusOnce(phoneRaw){
+    var key = normPhone(phoneRaw);
+    if (UI_STATUS_FETCH.has(key)) return UI_STATUS_FETCH.get(key);
+
+    // if already present in cache, don't hit DB
+    if (hasInfoStatus(phoneRaw)){
+      var p0 = Promise.resolve(CACHE.infoMap.get(key).status);
+      UI_STATUS_FETCH.set(key, p0);
+      return p0;
+    }
+
+    var variants = uiPhoneVariants(phoneRaw);
+    var orParts = variants.map(function(v){ return 'phone.eq.' + v; }).join(',');
+    var p = supa.from(USERS_INFO_TABLE)
+      .select('status, phone')
+      .or(orParts)
+      .limit(1)
+      .then(function(res){
+        var row = (res && res.data && res.data.length) ? res.data[0] : null;
+        if (row && row.status != null && String(row.status).trim() !== ''){
+          // backfill into CACHE.infoMap so filters/labels use it everywhere
+          putInfoStatus(phoneRaw, row.status);
+          return row.status;
+        }
+        return null;
+      })
+      .catch(function(){
+        return null;
+      });
+
+    UI_STATUS_FETCH.set(key, p);
+    return p;
+  }
+
+  function ensureUsersInformationForRows(rows){
+    var uniq = new Map(); // key->raw
+    (rows || []).forEach(function(r){
+      var raw = (r && r.phone != null) ? r.phone : '';
+      var k = normPhone(raw);
+      if (!uniq.has(k)) uniq.set(k, raw);
+    });
+
+    var ps = [];
+    uniq.forEach(function(raw, k){
+      if (!hasInfoStatus(raw)){
+        ps.push(fetchUsersInformationStatusOnce(raw));
+      }
+    });
+    return Promise.all(ps);
+  }
+  function putInfoStatus(phoneRaw, statusVal){
+    var status = statusVal;
+    if (status == null || String(status).trim() === '') return;
+
+    var s = String(phoneRaw == null ? '' : phoneRaw).trim();
+    var digits = s.replace(/\D+/g,'');
+    var keys = new Set();
+
+    // normalized main key
+    var norm = normPhone(phoneRaw);
+    if (norm) keys.add(norm);
+
+    if (digits) keys.add(digits);
+    if (digits.length === 9) keys.add('0' + digits);
+    if (digits.length === 10 && digits.charAt(0) === '0'){
+      keys.add(digits.slice(1));
+      keys.add('972' + digits.slice(1));
+    }
+    if (digits.startsWith('972') && digits.length >= 11){
+      var rest = digits.slice(3);
+      keys.add(rest);
+      if (rest.length === 9) keys.add('0' + rest);
+      if (rest.length === 10) keys.add(rest);
+    }
+
+    keys.forEach(function(k){
+      if (!k) return;
+      try{ CACHE.infoMap.set(k, { status: status }); } catch(e){}
+    });
+  }
+
+  // ------------------------------------------------------------
+  // CACHE MODE (Stage 1):
+  // טעינה ראשונית מביאה *את כל הנתונים* (ללא סלקציה) כדי ששום RISK לא יחמוק.
+  // לאחר מכן כל סלקציה היא מקומית (ללא רשת), ושיחות עם RISK עוקפות סלקציות.
+  // ------------------------------------------------------------
+  var CACHE = {
+    loaded: false,
+    allRows: [],
+    flagsMap: new Map(),   // key(time,phone) -> {is_hidden}
+    infoMap:  new Map(),   // phone -> {status}
+    riskMap:  new Map(),   // key(time,phone) -> [riskRows]
+    riskKeySet: new Set()  // key(time,phone)
   };
 
+  function fetchAllPaged(tableName, selectCols, orderCol){
+    var pageSize = 1000;
+    var out = [];
+    var offset = 0;
 
+    function step(){
+      var q = supa.from(tableName).select(selectCols);
+      if (orderCol) q = q.order(orderCol, { ascending: true });
+      return q.range(offset, offset + pageSize - 1).then(function(res){
+        if (res.error){
+          throw new Error('Fetch failed for ' + tableName + ': ' + (res.error.message || 'unknown'));
+        }
+        var data = res.data || [];
+        out = out.concat(data);
+        if (data.length < pageSize) return out;
+        offset += pageSize;
+        return step();
+      });
+    }
+    return step();
+  }
+
+  function buildRiskCache(allRisk){
+    CACHE.riskMap = new Map();
+    CACHE.riskKeySet = new Set();
+    (allRisk || []).forEach(function(rr){
+      var tk = rr.time_key;
+      var ph = rr.phone;
+      if (!tk || !ph) return;
+      var k = keyOf(tk, ph);
+      CACHE.riskKeySet.add(k);
+      var arr = CACHE.riskMap.get(k);
+      if (!arr){ arr = []; CACHE.riskMap.set(k, arr); }
+      arr.push(rr);
+    });
+  }
+
+  function markRowsWithRisk(){
+    (CACHE.allRows || []).forEach(function(r){
+      r._forceRisk = CACHE.riskKeySet.has(keyOf(r.time, r.phone));
+    });
+  }
+
+  function loadAllDataFromServer(){
+    setStatusErr('');
+    setStatusOk('טעינה ראשונית: מביא את כל השיחות ללא סלקציה…');
+
+    CACHE.loaded = false;
+    CACHE.allRows = [];
+    CACHE.flagsMap = new Map();
+    CACHE.infoMap = new Map();
+    CACHE.riskMap = new Map();
+    CACHE.riskKeySet = new Set();
+
+    return fetchAllPaged(TABLE, 'time, phone, name, last_talk_tzvira, summarized_linked_talk', 'time')
+      .then(function(allRows){
+        CACHE.allRows = allRows || [];
+        setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
+        return fetchAllPaged(REVIEWS_TABLE, 'time_key, phone, snippet_hash, snippet_text, pattern_key, status, reviewed_at, reviewed_by', 'time_key');
+      })
+      .then(function(allRisk){
+        buildRiskCache(allRisk || []);
+        markRowsWithRisk();
+        setStatusOk('RISK נטען (צמדים=' + CACHE.riskKeySet.size + '). טוען דגלי הסתרה…');
+        return fetchAllPaged(FLAGS_TABLE, 'time_key, phone, is_hidden', 'time_key');
+      })
+      .then(function(allFlags){
+        (allFlags || []).forEach(function(fr){
+          CACHE.flagsMap.set(keyOf(fr.time_key, fr.phone), { is_hidden: !!fr.is_hidden });
+        });
+        setStatusOk('דגלי הסתרה נטענו (' + CACHE.flagsMap.size + '). טוען סטטוסים…');
+        return fetchAllPaged(USERS_INFO_TABLE, 'phone, status', 'phone');
+      })
+      .then(function(allInfo){
+        (allInfo || []).forEach(function(ir){
+          putInfoStatus(ir.phone, ir.status);
+        });
+        CACHE.loaded = true;
+        setStatusOk('טעינה ראשונית הושלמה. סלקציות כעת מקומיות.');
+      })
+      .catch(function(e){
+        setStatusErr('שגיאת טעינה: ' + (e && e.message ? e.message : e));
+        throw e;
+      });
+  }
+
+  function getFilteredRowsFromCache(){
+    var phoneNeedle = (el.fPhone.value || '').trim();
+    var nameNeedle  = (el.fName.value  || '').trim();
+    var f = (el.fFrom.value || '').trim();
+    var t = (el.fTo.value   || '').trim();
+
+    var fromTime = isYL(f) ? (f + '-00.00.00') : null;
+    var toTime   = isYL(t) ? (t + '-23.59.59') : null;
+
+    var pnLow = phoneNeedle ? phoneNeedle.toLowerCase() : '';
+    var nnLow = nameNeedle  ? nameNeedle.toLowerCase()  : '';
+
+    var out = [];
+    (CACHE.allRows || []).forEach(function(r){
+      if (r && r._forceRisk){ out.push(r); return; }
+
+      if (pnLow && String(r.phone || '').toLowerCase().indexOf(pnLow) === -1) return;
+      if (nnLow && String(r.name  || '').toLowerCase().indexOf(nnLow) === -1) return;
+      if (fromTime && String(r.time||'') < fromTime) return;
+      if (toTime   && String(r.time||'') > toTime)   return;
+
+      out.push(r);
+    });
+
+    out.sort(function(a,b){
+      var ta = String(a.time||''), tb = String(b.time||'');
+      if (ta < tb) return -1;
+      if (ta > tb) return 1;
+      var pa = String(a.phone||''), pb = String(b.phone||'');
+      if (pa < pb) return -1;
+      if (pa > pb) return 1;
+      return 0;
+    });
+
+    return out;
+  }
+
+  function rerenderFromCache(){
+    if (!CACHE.loaded){
+      setStatusOk('הנתונים עדיין לא נטענו. לחץ "טען".');
+      return;
+    }
+    setStatusErr('');
+    setStatusOk('מרנדר מקומית…');
+    var talkKind = (el.fKind.value || '').trim();
+    var rows = getFilteredRowsFromCache();
+
+    ensureUsersInformationForRows(rows).then(function(){
+      return render(rows, CACHE.flagsMap, CACHE.infoMap, talkKind);
+    }).then(function(info){
+      el.countInfo.textContent = 'מציג ' + (info.patientsCount||0) + ' מטופלים · ' + (info.shownCount||0) + ' שיחות פתוחות · ' + (info.hiddenCount||0) + ' שיחות מוסתרות';
+      setStatusOk('מוכן.');
+    }).catch(function(e){
+      setStatusErr('שגיאת רינדור: ' + (e && e.message ? e.message : e));
+    });
+  }
   var LS_STATUS_KEY = 'uvr_status_filter';
-
-  // מיפוי סטטוס לכותרת מלאה
   var STATUS_TITLE_MAP = {
     "":  "כל הסוגים",
     "1": "השיחות של המטפל הוירטואלי",
@@ -203,31 +459,58 @@
 
   function updateTitlesFromStatus() {
     var kind = (el.fKind && el.fKind.value) ? el.fKind.value : "";
-    var fullTitle = STATUS_TITLE_MAP.hasOwnProperty(kind) ? STATUS_TITLE_MAP[kind] : "השיחות של המטפל הוירטואלי";
+    var fullTitle = Object.prototype.hasOwnProperty.call(STATUS_TITLE_MAP, kind) ? STATUS_TITLE_MAP[kind] : "כל הסוגים";
     document.title = fullTitle;
-    var h2 = document.getElementById("pageTitle");
-    if (h2) {
-      h2.textContent = fullTitle;
-    }
+    var h2 = $("pageTitle");
+    if (h2) h2.textContent = fullTitle;
   }
 
-  // שחזור בחירת סטטוס מהפעם הקודמת, אם קיים
   try {
     if (window.localStorage) {
       var savedStatus = localStorage.getItem(LS_STATUS_KEY);
-      if (savedStatus !== null) {
-        el.fKind.value = savedStatus;
-      }
+      if (savedStatus !== null) el.fKind.value = savedStatus;
     }
   } catch(e) {}
+
   var LIMIT = 100;
 
   function isYL(s){ return /^\d{4}\.\d{2}\.\d{2}$/.test(s||''); }
-  function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, function(m){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]); }); }
-  function stripAllHtml(raw){
+
+  function todayYMD(){
+    // מתאים ל-<input type="date"> (YYYY-MM-DD)
+    try{
+      var d = new Date();
+      var y = d.getFullYear();
+      var m = String(d.getMonth()+1).padStart(2,'0');
+      var day = String(d.getDate()).padStart(2,'0');
+      return y + '-' + m + '-' + day;
+    }catch(e){
+      return '';
+    }
+  }
+
+  // תווית למצב משתמש (מטפל/מדריך) שמגיע מ-users_information.status
+  function statusLabel(statusVal){
+    if (statusVal == null) return 'לא ידוע';
+    var s = String(statusVal).trim();
+    if (!s) return 'לא ידוע';
+
+    // התאמות נפוצות (שמור גמיש - לא מניח קידוד יחיד)
+    var low = s.toLowerCase();
+    if (s === '1' || low === 'therapist' || low === 't') return 'מטפל וירטואלי';
+    if (s === '3' || low === 'mentor'    || low === 'm') return 'מדריך קורס';
+
+    // אם כבר הגיע בעברית - נשאיר בקירוב תקין
+    if (s.indexOf('מטפל') !== -1)  return 'מטפל וירטואלי';
+    if (s.indexOf('מדריך') !== -1) return 'מדריך קורס';
+
+    return s;
+  }
+
+function stripAllHtml(raw){
     var s = String(raw==null?'':raw);
-    s = s.replace(/<br\s*\/?>/gi, '\n');
-    s = s.replace(/<\/?[^>]+>/g, '');
+    s = s.replace(/<br\s*\/?>(?=\s*)/gi, '\n');
+    s = s.replace(/<\/?.*?>/g, '');
     return s;
   }
   function normalizeWs(raw){
@@ -273,8 +556,29 @@
     catch(e){ return ts; }
   }
   function nowISO(){ return new Date().toISOString(); }
-  function setStatus(msg){ el.statusBar.innerHTML = msg ? '<div class="err">' + escapeHtml(msg) + '</div>' : ''; }
-  function keyOf(time_key, phone){ return String(time_key||'') + '|' + String(phone||''); }
+  function normPhone(p){
+    var s = String(p == null ? '' : p);
+    // keep digits only
+    var d = s.replace(/\D+/g,'');
+    if (!d) return s.trim();
+
+    // normalize Israel +972XXXXXXXXX -> 0XXXXXXXXX when possible
+    if (d.startsWith('972') && d.length >= 11){
+      var rest = d.slice(3);
+      if (rest.length === 9) return '0' + rest;
+      if (rest.length === 10 && rest.startsWith('0')) return rest;
+      return rest;
+    }
+
+    // normalize Israel numbers missing leading 0 (e.g. 526010111 -> 0526010111)
+    if (d.length === 9){
+      return '0' + d;
+    }
+
+    return d;
+  }
+
+function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(phone); }
 
   function showInlineMsg(talkElem, msg){
     if (!talkElem) return;
@@ -290,99 +594,69 @@
   }
 
   // -------------------------------
-  // דיאלוג: תמיד יוצג "שם המטופל" / "המטפל" גם אם הגיעו פורמטים אחרים (Q/A, טיימסטמפ, וכו׳)
+  // דיאלוג לפורמטים שונים (שם מטופל/ת, "המטפל:", Q/A, וכו')
   // -------------------------------
   function toDialogLines(name, rawText){
     var patient = (name && String(name).trim()) ? String(name).trim() : 'מטופל/ת';
 
-    // אופציונלית: טיימסטמפ של וואטסאפ בתחילת השורה, למשל: [0:19, 16.11.2025]
     var tsPrefix = '\\s*(?:\\[[^\\]]*\\]\\s*)?';
-
-    // שם המטופל (משדה name) + נקודותיים
     var rxPatientName = new RegExp('^' + tsPrefix + escapeRegExp(patient) + ':\\s*');
-
-    // המטפל:
     var rxTher = new RegExp('^' + tsPrefix + 'המטפל:\\s*');
-
-    // תמיכה ב-Q: / A: (אם המערכת הקודמת מייצרת כך)
     var rxQ = new RegExp('^' + tsPrefix + 'Q:\\s*', 'i');
     var rxA = new RegExp('^' + tsPrefix + 'A:\\s*', 'i');
-
-    // תמיכה במבנים גנריים "מטופל:" / "המטופל:" / "מטופל/ת:"
     var rxGenericPatient = new RegExp('^' + tsPrefix + '(?:המטופל|מטופל\\/ת|מטופל):\\s*');
     var rxGenericTher = new RegExp('^' + tsPrefix + '(?:המטפל):\\s*');
 
-    var lines = String(rawText).split(/\n/);
+    var lines = String(rawText||'').split(/\n/);
     var out = [];
 
     for (var i=0;i<lines.length;i++){
-      var s = String(lines[i]);
+      var s = String(lines[i]||'');
 
-      // מטופל לפי השם
-      if (rxPatientName.test(s)){
-        out.push({ speaker:'patient', body:s.replace(rxPatientName,'') });
-        continue;
-      }
+      if (rxPatientName.test(s)){ out.push({ speaker:'patient', body:s.replace(rxPatientName,'') }); continue; }
+      if (rxTher.test(s)){ out.push({ speaker:'therapist', body:s.replace(rxTher,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (rxQ.test(s)){ out.push({ speaker:'patient', body:s.replace(rxQ,'') }); continue; }
+      if (rxA.test(s)){ out.push({ speaker:'therapist', body:s.replace(rxA,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (rxGenericPatient.test(s)){ out.push({ speaker:'patient', body:s.replace(rxGenericPatient,'') }); continue; }
+      if (rxGenericTher.test(s)){ out.push({ speaker:'therapist', body:s.replace(rxGenericTher,'') }); out.push({ speaker:'spacer' }); continue; }
 
-      // מטפל לפי "המטפל:" עם/בלי טיימסטמפ
-      if (rxTher.test(s)){
-        out.push({ speaker:'therapist', body:s.replace(rxTher,'') });
-        out.push({ speaker:'spacer' });
-        continue;
-      }
+      if (/^\s*שאלה:\s*/.test(s)){ out.push({ speaker:'patient', body:s.replace(/^\s*שאלה:\s*/,'') }); continue; }
+      if (/^\s*תשובה:\s*/.test(s)){ out.push({ speaker:'therapist', body:s.replace(/^\s*תשובה:\s*/,'') }); out.push({ speaker:'spacer' }); continue; }
 
-      // Q: נחשב כמטופל
-      if (rxQ.test(s)){
-        out.push({ speaker:'patient', body:s.replace(rxQ,'') });
-        continue;
-      }
-
-      // A: נחשב כמטפל
-      if (rxA.test(s)){
-        out.push({ speaker:'therapist', body:s.replace(rxA,'') });
-        out.push({ speaker:'spacer' });
-        continue;
-      }
-
-      // "מטופל:" / "המטופל:" וכו׳
-      if (rxGenericPatient.test(s)){
-        out.push({ speaker:'patient', body:s.replace(rxGenericPatient,'') });
-        continue;
-      }
-
-      // "המטפל:" גנרי
-      if (rxGenericTher.test(s)){
-        out.push({ speaker:'therapist', body:s.replace(rxGenericTher,'') });
-        out.push({ speaker:'spacer' });
-        continue;
-      }
-
-      // תמיכה ישנה: "שאלה:" / "תשובה:"
-      if (/^\s*שאלה:\s*/.test(s)){
-        out.push({ speaker:'patient', body:s.replace(/^\s*שאלה:\s*/,'') });
-        continue;
-      }
-      if (/^\s*תשובה:\s*/.test(s)){
-        out.push({ speaker:'therapist', body:s.replace(/^\s*תשובה:\s*/,'') });
-        out.push({ speaker:'spacer' });
-        continue;
-      }
-
-      // שורה רגילה (טקסט חופשי)
       out.push({ speaker:'text', body:s });
     }
-
     return { patient: patient, lines: out };
   }
 
-  function rx(s){ return new RegExp(s, "iu"); }
-  var RISK = [
-    {key:'suicide',    rx: rx("בא\\s*לי\\s*למות|רוצה\\s*למות|לא\\s*רוצה\\s*לחיות|אין\\s*לי\\s*בשביל\\s*מה\\s*לחיות|לסיים\\s*(?:את)?\\s*(?:ה(?:כול|כל|חיים))|להתאבד|התאבד(?:ו|ות)?|לפגוע\\s*בעצ(?:מי|מה|מו)|פגיעה\\s*עצמית|חתכ(?:תי|ים)|מנת\\s*יתר|הרס\\s*עצמי|ייאוש\\s*מוחלט|אין\\s*טעם|אני\\s*נואש|פאניקה\\s*קשה") },
-    {key:'violence',   rx: rx("אהרוג|ארצח|לפגוע\\s*בו|אלימות\\s*קשה|מאיים\\s*עלי(?:י)?|עוקב\\s*אחר(?:י|ַי)|התעללות|אונס|הטרדה\\s*מינית") },
-    {key:'psychosis',  rx: rx("פסיכוזה|שומע\\s*קולות|הלוצינציות") },
-    {key:'substances', rx: rx("לקחתי\\s*יותר\\s*מדי\\s*תרופות|אלכוהול\\s*בכמויות") },
-    {key:'hard_drugs', rx: rx("(סמים\\s*קשים|קוקאין|קראק|הרואין|פנטניל|מורפין|אוקסי(?:קודון)?|אופיאט(?:ים)?|מתאמפטמין|קריסטל(?:\\s*מת)?|(?:^|\\s)מת(?:\\s|$)|MDMA|אקסטז[יי]|LSD|אסיד|מסניף(?:ה)?|שואף(?:ת)?|הזרקתי|זריקה|מזרק|טריפ)") }
-  ];
+  // -------------------------------
+  // RISK: מגיע רק מ-risk_reviews (בלי Regex)
+  // -------------------------------
+  function loadRiskRows(time_key, phone){
+    if (!time_key || !phone) return Promise.resolve([]);
+    if (CACHE && CACHE.loaded){
+      return Promise.resolve(CACHE.riskMap.get(keyOf(time_key, phone)) || []);
+    }
+    // fallback (לא אמור לקרות אחרי טעינה ראשונית)
+    return supa.from(REVIEWS_TABLE)
+      .select('snippet_hash, snippet_text, pattern_key, status, reviewed_at, reviewed_by')
+      .eq('time_key', time_key)
+      .eq('phone', phone)
+      .then(function(res){
+        if (res.error) return [];
+        return res.data || [];
+      });
+  }
+
+
+
+  function snippetAround(full, match){
+    var s = String(full||''), m = String(match||'');
+    if (!m) return s.slice(0, 60);
+    var idx = s.indexOf(m);
+    if (idx === -1) return (m.length>80? m.slice(0,80)+'…' : m);
+    var start = Math.max(0, idx - 18), end = Math.min(s.length, idx + m.length + 18);
+    return (start>0?'…':'') + s.slice(start, end).trim() + (end<s.length?'…':'');
+  }
 
   function hashStr(str){
     var h=5381, i=0, cc;
@@ -390,76 +664,101 @@
     return (h>>>0).toString(16);
   }
 
-  function collectRiskHits(dialogLines, talkDomId){
+  // מנסים לעגן כל RISK בתוך שורת מטופל כדי לאפשר "פתח את הסיכון"
+  function bindRiskToDialog(dialogLines, talkDomId, riskRows){
     var hits = [];
+    var used = new Set();
+
     for (var idx=0; idx<dialogLines.length; idx++){
       var ln = dialogLines[idx];
       if (ln.speaker !== 'patient') continue;
+
       var txt = String(ln.body || '');
-      for (var k=0;k<RISK.length;k++){
-        var rk = RISK[k];
-        var m = txt.match(rk.rx);
-        if (m){
-          var matchText = m[0];
-          var hash = hashStr(matchText.replace(/\s+/g,' ').toLowerCase() + '|' + rk.key);
-          var targetId = 'line-' + talkDomId + '-' + idx + '-' + hash.slice(0,6);
+      for (var r=0; r<riskRows.length; r++){
+        var rr = riskRows[r];
+        var needle = String(rr.snippet_text || '').trim();
+        if (!needle) continue;
+
+        // אם כבר שיבצנו את אותו hash בעוגן – דלג
+        var sh = rr.snippet_hash || (hashStr(needle + '|' + (rr.pattern_key||'')));
+        if (used.has(sh)) continue;
+
+        if (txt.indexOf(needle) !== -1){
+          var targetId = 'line-' + talkDomId + '-' + idx + '-' + String(sh).slice(0,6);
           ln._anchorId = targetId;
-          hits.push({hash:hash, pattern_key:rk.key, targetId:targetId, lineIndex:idx, matchText:matchText});
+          hits.push({
+            hash: sh,
+            pattern_key: rr.pattern_key || '',
+            targetId: targetId,
+            lineIndex: idx,
+            matchText: needle,
+            status: rr.status || 'pending',
+            reviewed_at: rr.reviewed_at || null,
+            reviewed_by: rr.reviewed_by || ''
+          });
+          used.add(sh);
         }
       }
     }
+
+    // RISK שלא נמצא בטקסט (למשל חוסר התאמה) – עדיין יחושבו להתרעות למעלה
+    for (var r2=0; r2<riskRows.length; r2++){
+      var rr2 = riskRows[r2];
+      var needle2 = String(rr2.snippet_text || '').trim();
+      if (!needle2) continue;
+      var sh2 = rr2.snippet_hash || (hashStr(needle2 + '|' + (rr2.pattern_key||'')));
+      if (used.has(sh2)) continue;
+      hits.push({
+        hash: sh2,
+        pattern_key: rr2.pattern_key || '',
+        targetId: '',
+        lineIndex: -1,
+        matchText: needle2,
+        status: rr2.status || 'pending',
+        reviewed_at: rr2.reviewed_at || null,
+        reviewed_by: rr2.reviewed_by || ''
+      });
+      used.add(sh2);
+    }
+
     return hits;
   }
 
-  function loadReviewedMap(time_key, phone, hashArr){
-    if (!hashArr.length) return Promise.resolve(new Map());
-    return supa.from(REVIEWS_TABLE)
-      .select('snippet_hash, reviewed_at, reviewed_by, status')
-      .eq('time_key', time_key)
-      .eq('phone', phone)
-      .eq('status','reviewed')
-      .in('snippet_hash', hashArr)
-      .then(function(res){
-        if (res.error) return new Map();
-        var mp = new Map();
-        (res.data||[]).forEach(function(r){ mp.set(r.snippet_hash, {reviewed_at:r.reviewed_at, reviewed_by:r.reviewed_by||''}); });
-        return mp;
-      });
-  }
-
-  function snippetAround(full, match){
-    var s = String(full), idx = s.indexOf(match);
-    if (idx === -1) return s.slice(0, 60);
-    var start = Math.max(0, idx - 18), end = Math.min(s.length, idx + match.length + 18);
-    return (start>0?'…':'') + s.slice(start, end).trim() + (end<s.length?'…':'');
-  }
-
-  function renderDialogHtml(patientName, dialogLines, hits, reviewedMap){
+  function renderDialogHtml(patientName, dialogLines, hits){
     var html = [];
+
+    function hitForLine(i){
+      for (var j=0;j<hits.length;j++){
+        if (hits[j].lineIndex === i) return hits[j];
+      }
+      return null;
+    }
+
     for (var i=0;i<dialogLines.length;i++){
       var ln = dialogLines[i];
+
       if (ln.speaker === 'patient'){
         var body = escapeHtml(ln.body || '');
-        var h=null;
-        for (var j=0;j<hits.length;j++){ if (hits[j].lineIndex===i){ h=hits[j]; break; } }
-        if (h){
-          var rxm = new RegExp(escapeRegExp(h.matchText), 'u');
-          var note = '';
-          var cls = 'risk';
-          var btn = '';
-          var snippet = snippetAround(ln.body||'', h.matchText);
+        var h = hitForLine(i);
 
-          if (reviewedMap.has(h.hash)){
-            var r = reviewedMap.get(h.hash);
-            var stamp = ilStamp(r.reviewed_at);
-            note = ' <span class="note-yellow">(המטפל בדק בתאריך ' + escapeHtml(stamp) + (r.reviewed_by?(', ' + escapeHtml(r.reviewed_by)):'') + ')</span>';
+        if (h && h.matchText){
+          var rxm = new RegExp(escapeRegExp(h.matchText), 'u');
+          var cls = 'risk';
+          var note = '';
+          var btn = '';
+
+          if (String(h.status||'') === 'reviewed'){
             cls += ' reviewed';
-            btn = ' <button class="btn-unreview-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" data-snippet="'+escapeHtml(snippet)+'" title="בטל סימון">בטל סימון</button>';
+            var stamp = h.reviewed_at ? ilStamp(h.reviewed_at) : '';
+            note = ' <span class="note-yellow">(המטפל בדק' + (stamp?(' בתאריך ' + escapeHtml(stamp)):'') + (h.reviewed_by?(', ' + escapeHtml(h.reviewed_by)):'') + ')</span>';
+            btn = ' <button class="btn-unreview-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" title="בטל סימון">בטל סימון</button>';
           } else {
-            btn = ' <button class="btn-review-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" data-snippet="'+escapeHtml(snippet)+'" title="סמן כטופל">סמן כטופל</button>';
+            btn = ' <button class="btn-review-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" data-snippet="'+escapeHtml(h.matchText)+'" title="סמן כטופל">סמן כטופל</button>';
           }
+
           body = body.replace(rxm, '<mark class="' + cls + '" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'">$&</mark>' + note + btn);
         }
+
         html.push('<div class="line speaker"><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> <span id="' + escapeHtml(ln._anchorId||'') + '">' + body + '</span></div>');
       } else if (ln.speaker === 'therapist'){
         html.push('<div class="line speaker"><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + '</div>');
@@ -469,101 +768,23 @@
         html.push('<div class="line">' + escapeHtml(ln.body || '') + '</div>');
       }
     }
+
     return html.join('\n');
   }
 
-  function queryPage(){
-    setStatus('');
-    var fromIdx = 0, toIdx = LIMIT - 1;
-    var talkKind = (el.fKind.value || '').trim(); // "1" / "2"
-
-    var q = supa.from(TABLE)
-      .select('time, phone, name, last_talk_tzvira, summarized_linked_talk', { count:'exact' })
-      .order('time', { ascending: true });
-
-    if (el.fPhone.value.trim()) q = q.ilike('phone', '%' + el.fPhone.value.trim() + '%');
-    if (el.fName.value.trim())  q = q.ilike('name',  '%' + el.fName.value.trim() + '%');
-    var f = el.fFrom.value.trim(), t = el.fTo.value.trim();
-    if (isYL(f) && isYL(t))      q = q.gte('time', f + '-00.00.00').lte('time', t + '-23.59.59');
-    else if (isYL(f))            q = q.gte('time', f + '-00.00.00');
-    else if (isYL(t))            q = q.lte('time', t + '-23.59.59');
-
-    q = q.range(fromIdx, toIdx).then(function(res){
-      if (res.error){
-        setStatus('שגיאת נתונים: ' + res.error.message);
-        el.out.innerHTML = '';
-        el.alertHost.innerHTML = '';
-        el.countInfo.textContent = '';
-        return;
-      }
-
-      var lastCount = res.count || 0;
-      var rows = res.data || [];
-      var times = [], phones = [], ST = new Set(), SP = new Set();
-      for (var i=0;i<rows.length;i++){
-        var r = rows[i];
-        if (r.time && !ST.has(r.time)){ ST.add(r.time); times.push(r.time); }
-        if (r.phone && String(r.phone).trim()!==''){
-          var p = String(r.phone).trim();
-          if (!SP.has(p)){ SP.add(p); phones.push(p); }
-        }
-      }
-
-      function fetchFlags(timesArr, phonesArr){
-        if (!rows.length || !timesArr.length || !phonesArr.length){
-          return Promise.resolve(new Map());
-        }
-        return supa.from(FLAGS_TABLE)
-          .select('time_key, phone, is_hidden')
-          .in('time_key', timesArr)
-          .in('phone', phonesArr)
-          .then(function(fres){
-            var flagsMap = new Map();
-            if (!fres.error){
-              (fres.data||[]).forEach(function(fr){
-                var k = keyOf(fr.time_key, fr.phone);
-                flagsMap.set(k, { is_hidden: !!fr.is_hidden });
-              });
-            }
-            return flagsMap;
-          });
-      }
-
-      function fetchStatuses(phonesArr){
-        if (!phonesArr.length){
-          return Promise.resolve(new Map());
-        }
-        return supa.from(USERS_INFO_TABLE)
-          .select('phone, status')
-          .in('phone', phonesArr)
-          .then(function(resInfo){
-            var infoMap = new Map();
-            if (!resInfo.error){
-              (resInfo.data || []).forEach(function(row){
-                var p = String(row.phone || '').trim();
-                if (!p) return;
-                infoMap.set(p, { status: row.status });
-              });
-            }
-            return infoMap;
-          });
-      }
-
-      Promise.all([fetchFlags(times, phones), fetchStatuses(phones)]).then(function(allMaps){
-        var flagsMap = allMaps[0] || new Map();
-        var infoMap  = allMaps[1] || new Map();
-
-        render(rows, flagsMap, infoMap, talkKind).then(function(info){
-          var patients = info.patientsCount || 0;
-          var openTalks = info.shownCount || 0;
-          var hiddenTalks = info.hiddenCount || 0;
-          el.countInfo.textContent = 'מציג ' + patients + ' מטופלים · ' + openTalks + ' שיחות פתוחות · ' + hiddenTalks + ' שיחות מוסתרות';
-        }).catch(function(e){
-          setStatus('שגיאת רינדור: ' + (e && e.message ? e.message : e));
-        });
-      });
-    });
+  function queryPage(forceReload){
+    // בטעינה הראשונית: מביאים את הכל ללא סלקציה.
+    // לאחר מכן: סלקציות מקומיות בלבד (ללא רשת).
+    if (CACHE.loaded && !forceReload){
+      rerenderFromCache();
+      return;
+    }
+    loadAllDataFromServer().then(function(){
+      rerenderFromCache();
+    }).catch(function(){});
   }
+
+
 
   function render(rows, flagsMap, infoMap, talkKind){
     return new Promise(function(resolve){
@@ -572,22 +793,16 @@
       var patientsShown = new Set();
 
       function isRowAllowed(row){
-        var kind = talkKind;
-        // אם לא נבחר סטטוס – אין סינון לפי סטטוס
-        if (!kind){ return true; }
-
-        var phoneKey = row.phone ? String(row.phone).trim() : '';
-        if (!phoneKey){ return false; }
-
+        // שיחה שנוספה בגלל RISK עוקפת את כל סינון הסטטוס
+        if (row && row._forceRisk) return true;
+        if (!talkKind) return true;
+        var phoneKey = normPhone(row.phone);
+        if (!phoneKey) return false;
         var info = infoMap.get(phoneKey);
-        // אם אין סטטוס למטופל – לא ייכנס לרשימה כאשר יש פילטר
-        if (!info || info.status == null){ return false; }
-
+        if (!info || info.status == null) return false;
         var sVal = parseInt(info.status, 10);
-        var kVal = parseInt(kind, 10);
-        if (!isFinite(kVal)){ return true; }
-
-        // מסננים רק מטופלים שהסטטוס שלהם שווה לפילטר שנבחר
+        var kVal = parseInt(talkKind, 10);
+        if (!isFinite(kVal)) return true;
         return sVal === kVal;
       }
 
@@ -601,13 +816,17 @@
             var top = ['<div class="alertbar"><h3>⚠️ נמצאו ' + totalHits + ' ביטויי סיכון ב-' + alerts.length + ' שיחות</h3>'];
             for (var a=0;a<alerts.length;a++){
               var AA = alerts[a];
-              top.push('<div class="alertitem" data-time="' + escapeHtml(AA.time_key) + '" data-phone="' + escapeHtml(AA.phone) + '">');
+              top.push('<div class="alertitem">');
               top.push('<div><strong>' + escapeHtml(AA.name) + '</strong> · ' + escapeHtml(AA.phone) + '</div>');
               top.push('<div class="when">' + escapeHtml(AA.time) + '</div><div>');
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
                 top.push('<span class="pill mono" title="' + escapeHtml(it.text) +'">'+ escapeHtml(it.text) +'</span> ');
-                top.push('<button class="btn-open-risk" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">פתח את הסיכון</button> ');
+                if (it.targetId){
+                  top.push('<button class="btn-open-risk" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">פתח את הסיכון</button> ');
+                } else {
+                  top.push('<button class="btn-open-risk" disabled title="לא נמצא עוגן בטקסט">פתח את הסיכון</button> ');
+                }
               }
               top.push('</div></div>');
             }
@@ -627,30 +846,24 @@
             el.alertHost.innerHTML = '';
           }
 
-          resolve({ hiddenCount:hiddenCount, shownCount:shownCount, totalHits:totalHits, patientsCount: patientsShown.size });
+          resolve({ hiddenCount:hiddenCount, shownCount:shownCount, patientsCount: patientsShown.size });
           return;
         }
 
         var r = rows[i];
-
-        // סינון לפי סטטוס ב-users_information וסוג שיחה
-        if (!isRowAllowed(r)){
-          nextRow(i+1);
-          return;
-        }
+        if (!isRowAllowed(r)){ nextRow(i+1); return; }
 
         var talkClean = cleanTalk(r.last_talk_tzvira || '');
         var parsed = toDialogLines(r.name, talkClean);
         var talkDomId = (r.time || '').replace(/[^0-9]/g,'') || Math.random().toString(36).slice(2);
 
-        var hits = collectRiskHits(parsed.lines, talkDomId);
-        var uniq = []; var seen = {};
-        for (var h=0; h<hits.length; h++){ var hh = hits[h]; if (!seen[hh.hash]){ seen[hh.hash]=1; uniq.push(hh.hash); } }
+        loadRiskRows(r.time, r.phone).then(function(riskRows){
+          var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
-        loadReviewedMap(r.time, r.phone, uniq).then(function(reviewedMap){
+          // open risks for alerts (status != reviewed)
           var notRev = [];
-          for (var h2=0; h2<hits.length; h2++){
-            if (!reviewedMap.has(hits[h2].hash)) notRev.push(hits[h2]);
+          for (var h=0; h<hits.length; h++){
+            if (String(hits[h].status||'') !== 'reviewed') notRev.push(hits[h]);
           }
 
           var k = keyOf(r.time, r.phone);
@@ -661,14 +874,17 @@
             var items = [];
             for (var nn=0; nn<notRev.length; nn++){
               var hh2 = notRev[nn];
-              var bodyTxt = parsed.lines[hh2.lineIndex].body;
-              items.push({ text: snippetAround(bodyTxt, hh2.matchText), hash: hh2.hash, pattern_key: hh2.pattern_key, targetId: parsed.lines[hh2.lineIndex]._anchorId });
+              items.push({
+                text: hh2.matchText,
+                hash: hh2.hash,
+                pattern_key: hh2.pattern_key,
+                targetId: hh2.targetId || ''
+              });
             }
             alerts.push({
               name: r.name || 'מטופל/ת',
               phone: r.phone || '',
               time: timeKeyToHuman(r.time),
-              time_key: r.time,
               items: items
             });
           }
@@ -677,79 +893,83 @@
           var phoneHtml = '<span class="patient-phone">' + escapeHtml(r.phone || '') + '</span>';
           var btnLabel  = isHidden ? 'הצג שיחה' : 'הסתר שיחה';
 
-          var toggleClasses = 'btn-toggle btn-state-active';
-          // כפתור "הצג מקוצרת" פתוח רק כאשר השיחה מוצגת (לא מוסתרת) ואין ביטויי סיכון פתוחים
-          var summClasses   = 'btn-summarized_linked_talk btn-state-active';
           var rawHasContent = !!(r.summarized_linked_talk && String(r.summarized_linked_talk).trim());
 
           var headParts = [];
           headParts.push('<div class="head">');
           headParts.push('<div class="head-name">', nameHtml, '</div>');
           headParts.push('<div class="head-phone">', phoneHtml, '</div>');
+                              // למה השיחה נבחרה: (א) RISK override אם יש RISK, (ב) סוג שיחה לפי users_information.status,
+          // ואם אין מידע—נשתמש בסוג שנבחר בסלקציה הנוכחית (fKind) כ־fallback.
+          var kindTxt = 'לא ידוע';
+          try{
+            var info2 = infoMap.get(normPhone(r.phone));
+            if (info2 && info2.status != null && String(info2.status).trim() !== ''){
+              kindTxt = statusLabel(info2.status);
+            } else {
+              var fk = (el && el.fKind ? String(el.fKind.value||'').trim() : '');
+              if (fk && fk !== 'all'){
+                kindTxt = statusLabel(fk);
+              }
+            }
+          } catch(e){}
+          if (r && r._forceRisk){
+            kindTxt = 'RISK override · ' + kindTxt;
+          }
+          headParts.push('<div class="meta why">', escapeHtml(kindTxt), '</div>');
+
+          if (r._forceRisk){
+            headParts.push('<div class="meta"><span class="pill">RISK override</span></div>');
+          }
 
           var canToggle = (isHidden || (!isHidden && notRev.length === 0));
           var canSumm   = (!isHidden && notRev.length === 0);
           var canRaw    = (!isHidden && rawHasContent);
 
-          // כפתור "הצג שיחה" – או פלייסהולדר כאשר אינו זמין
           if (canToggle) {
             headParts.push(
-              '<button class="' + toggleClasses + '" data-time="', escapeHtml(r.time),
+              '<button class="btn-toggle btn-state-active" data-time="', escapeHtml(r.time),
               '" data-phone="', escapeHtml(r.phone||''),
               '" data-name="', escapeHtml(r.name||''),
               '" data-hidden="', (isHidden?'1':'0'),
-              '" data-notrev="', (notRev.length), '">',
-              btnLabel,
-              '</button>'
+              '" data-notrev="', (notRev.length), '">', btnLabel, '</button>'
             );
           } else {
             headParts.push('<button class="btn-placeholder">' + btnLabel + '</button>');
           }
 
-          // כפתור "הצג מקוצרת" – או פלייסהולדר כאשר אינו זמין
           if (canSumm) {
-            headParts.push(
-              '<button class="' + summClasses + '" data-notrev="', (notRev.length), '">הצג מקוצרת</button>'
-            );
+            headParts.push('<button class="btn-summarized_linked_talk btn-state-active" data-notrev="0">הצג מקוצרת</button>');
           } else {
             headParts.push('<button class="btn-placeholder">הצג מקוצרת</button>');
           }
 
-          // כפתור "הצג שיחות קודמות" – או פלייסהולדר כאשר אינו זמין
           if (canRaw) {
-            headParts.push(
-              '<button class="btn-raw-summary btn-state-active" title="הצג את summarized_linked_talk כפי שהוא">הצג שיחות קודמות</button>'
-            );
+            headParts.push('<button class="btn-raw-summary btn-state-active" title="הצג את summarized_linked_talk כפי שהוא">הצג שיחות קודמות</button>');
           } else {
             headParts.push('<button class="btn-placeholder">הצג שיחות קודמות</button>');
           }
 
-          headParts.push(
-            '<span class="meta mono">', escapeHtml(timeKeyToHuman(r.time)), '</span>',
-            '<button class="btn-home" title="חזרה למסך הראשון">חזרה למסך הראשון</button>',
-            '</div>'
-          );
-
-          var headHtml = headParts.join('');
+          headParts.push('<span class="meta mono">', escapeHtml(timeKeyToHuman(r.time)), '</span>');
+          headParts.push('<button class="btn-home" title="חזרה למסך הראשון">חזרה למסך הראשון</button>');
+          headParts.push('</div>');
 
           parts.push('<div class="talk" data-time="' + escapeHtml(r.time) + '" data-phone="' + escapeHtml(r.phone||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
-          parts.push(headHtml);
+          parts.push(headParts.join(''));
 
           if (isHidden){
             hiddenCount++;
           } else {
             shownCount++;
-            if (r.phone) {
-              patientsShown.add(String(r.phone).trim());
-            }
-            var dialogHtml = renderDialogHtml(parsed.patient, parsed.lines, hits, reviewedMap);
+            if (r.phone) patientsShown.add(String(r.phone).trim());
+
+            var dialogHtml = renderDialogHtml(parsed.patient, parsed.lines, hits);
             parts.push('<div class="body">' + dialogHtml + '</div>');
 
             var sumRaw = (r.summarized_linked_talk || '').trim();
             var sumCut = sliceSummaryFromLastMarker(sumRaw);
             var sumHtml = sumCut ? escapeHtml(sumCut) : '<span class="empty">אין סיכום שיחה.</span>';
             var sumRawB64 = b64Enc(sumRaw);
-
             parts.push('<div class="summarized_linked_talk" data-raw-b64="'+escapeHtml(sumRawB64)+'">'+ sumHtml +'</div>');
           }
 
@@ -757,16 +977,17 @@
           nextRow(i+1);
         });
       }
+
       nextRow(0);
     });
   }
 
   // האזנות על רשימת התוצאות
-  document.getElementById('out').addEventListener('click', function(ev){
+  el.out.addEventListener('click', function(ev){
     var btnHome = ev.target.closest('.btn-home');
     if (btnHome){
       el.fPhone.value=''; el.fName.value=''; el.fFrom.value=''; el.fTo.value='';
-      queryPage();
+      queryPage(true);
       window.scrollTo({top:0, behavior:'smooth'});
       return;
     }
@@ -794,7 +1015,12 @@
               showInlineMsg(talkElem, 'שגיאה בעדכון מצב השיחה: ' + (res2.error.message || 'unknown'));
               return;
             }
-            queryPage();
+            if (CACHE && CACHE.loaded){
+              CACHE.flagsMap.set(keyOf(time_key, phone), { is_hidden: !isHidden });
+              rerenderFromCache();
+            } else {
+              queryPage(true);
+            }
           });
       return;
     }
@@ -802,15 +1028,8 @@
     var btnSumm = ev.target.closest('.btn-summarized_linked_talk');
     if (btnSumm){
       var talk = btnSumm.closest('.talk');
-      var notRev = parseInt(btnSumm.getAttribute('data-notrev')||'0',10);
       var body = talk.querySelector('.body');
       var sum  = talk.querySelector('.summarized_linked_talk');
-
-      if (body && sum && body.style.display !== 'none' && notRev > 0){
-        showInlineMsg(talk, 'לא ניתן לעבור למקוצרת כל עוד קיימים ביטויי סיכון שלא טופלו.');
-        return;
-      }
-
       if (body && sum){
         var showingFull = (body.style.display !== 'none');
         if (showingFull){
@@ -830,26 +1049,26 @@
 
     var btnRaw = ev.target.closest('.btn-raw-summary');
     if (btnRaw){
-      var talk = btnRaw.closest('.talk');
-      var body = talk.querySelector('.body');
-      var sum  = talk.querySelector('.summarized_linked_talk');
-      if (!sum) return;
+      var talk2 = btnRaw.closest('.talk');
+      var body2 = talk2.querySelector('.body');
+      var sum2  = talk2.querySelector('.summarized_linked_talk');
+      if (!sum2) return;
 
       var showingRaw = btnRaw.getAttribute('data-showing') === '1';
       if (!showingRaw){
-        var rawB64 = sum.getAttribute('data-raw-b64') || '';
+        var rawB64 = sum2.getAttribute('data-raw-b64') || '';
         var rawTxt = b64Dec(rawB64);
-        if (!rawTxt){ showInlineMsg(talk, 'אין תוכן סיכום שיחות'); return; }
+        if (!rawTxt){ showInlineMsg(talk2, 'אין תוכן סיכום שיחות'); return; }
 
-        if (body) body.style.display = 'none';
-        sum.style.display = 'block';
-        sum.textContent   = rawTxt;
+        if (body2) body2.style.display = 'none';
+        sum2.style.display = 'block';
+        sum2.textContent   = rawTxt;
         btnRaw.textContent = 'הצג שיחה';
         btnRaw.setAttribute('data-showing','1');
         btnRaw.classList.add('btn-selected');
       } else {
-        if (sum)  sum.style.display  = 'none';
-        if (body) body.style.display = 'block';
+        if (sum2)  sum2.style.display  = 'none';
+        if (body2) body2.style.display = 'block';
         btnRaw.textContent = 'הצג שיחות קודמות';
         btnRaw.setAttribute('data-showing','0');
         btnRaw.classList.remove('btn-selected');
@@ -877,12 +1096,17 @@
       supa.from(REVIEWS_TABLE)
           .upsert(payload2, { onConflict: 'time_key,phone,snippet_hash' })
           .then(function(res3){
-        if (res3.error){
-          showInlineMsg(talkElem2, 'שגיאה בסימון: ' + (res3.error.message || 'unknown'));
-          return;
-        }
-        queryPage();
-      });
+            if (res3.error){
+              showInlineMsg(talkElem2, 'שגיאה בסימון: ' + (res3.error.message || 'unknown'));
+              return;
+            }
+            if (CACHE && CACHE.loaded){
+              CACHE.flagsMap.set(keyOf(time_key, phone), { is_hidden: !isHidden });
+              rerenderFromCache();
+            } else {
+              queryPage(true);
+            }
+          });
       return;
     }
 
@@ -903,33 +1127,48 @@
               showInlineMsg(talkElem3, 'שגיאה בביטול סימון: ' + (res4.error.message || 'unknown'));
               return;
             }
-            queryPage();
+            if (CACHE && CACHE.loaded){
+              CACHE.flagsMap.set(keyOf(time_key, phone), { is_hidden: !isHidden });
+              rerenderFromCache();
+            } else {
+              if (CACHE && CACHE.loaded){
+              var kk3 = keyOf(time_key3, phone3);
+              var arr3 = CACHE.riskMap.get(kk3) || [];
+              for (var jj=0; jj<arr3.length; jj++){
+                if (String(arr3[jj].snippet_hash||'') === String(hash3||'')) arr3[jj].status = 'pending';
+              }
+              CACHE.riskMap.set(kk3, arr3);
+              rerenderFromCache();
+            } else {
+              queryPage(true);
+            }
+            }
           });
     }
   });
 
-
-  // שינוי סטטוס – שומר ב-localStorage, מעדכן כותרת ומרענן את הרשימה
   el.fKind.addEventListener('change', function(){
     try {
-      if (window.localStorage) {
-        localStorage.setItem(LS_STATUS_KEY, el.fKind.value || '');
-      }
+      if (window.localStorage) localStorage.setItem(LS_STATUS_KEY, el.fKind.value || '');
     } catch(e) {}
     updateTitlesFromStatus();
-    queryPage();
+    if (CACHE && CACHE.loaded){ rerenderFromCache(); } else { queryPage(true); }
   });
-  el.btnRun.onclick   = function(){ queryPage(); };
+
+  el.btnRun.onclick   = function(){ queryPage(true); };
   el.btnClear.onclick = function(){
-    el.fPhone.value='';
-    el.fName.value='';
-    el.fFrom.value='';
-    el.fTo.value='';
-    queryPage();
+    el.fPhone.value=''; el.fName.value=''; el.fFrom.value=''; el.fTo.value='';
+    if (CACHE && CACHE.loaded){ rerenderFromCache(); } else { queryPage(true); }
   };
 
   updateTitlesFromStatus();
-  queryPage();
+
+  // init אחרי שה-DOM מוכן (למקרה של race)
+  if (document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', function(){ queryPage(true); });
+  } else {
+    queryPage(true);
+  }
 })();
 </script>
 </body>
