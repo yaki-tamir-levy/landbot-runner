@@ -1,0 +1,56 @@
+name: Pushover Notify (Israel Time)
+
+on:
+  schedule:
+    # Israel winter time (UTC+2):
+    # 10,14,18,22 Israel  ==>  8,12,16,20 UTC
+    - cron: "0 8,12,16,20 * * *"
+
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "Message to send (optional)"
+        required: false
+        default: ""
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build message
+        shell: bash
+        run: |
+          set -euo pipefail
+          INPUT_MSG="${{ github.event.inputs.message }}"
+          if [ -n "${INPUT_MSG}" ]; then
+            MSG="${INPUT_MSG}"
+          else
+            MSG="Scheduled notification (Israel time)"
+          fi
+
+          echo "MSG<<EOF" >> "$GITHUB_ENV"
+          echo "${MSG}" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Send pushover (python script)
+        env:
+          PUSHOVER_TOKEN:     ${{ secrets.PUSHOVER_TOKEN }}
+          PUSHOVER_USER:      ${{ secrets.PUSHOVER_USER }}
+          PUSHOVER_USER_2:    ${{ secrets.PUSHOVER_USER_2 }}    # אופציונלי
+          PUSHOVER_URL:       ${{ secrets.PUSHOVER_URL }}       # כבר יש אצלך
+          PUSHOVER_URL_TITLE: ${{ secrets.PUSHOVER_URL_TITLE }} # אופציונלי (למשל "פתח אפליקציה")
+          MSG:                ${{ env.MSG }}
+        run: |
+          python tools/pushover_send.py --message "${MSG}"
