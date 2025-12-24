@@ -1,11 +1,6 @@
 name: Pushover Notify (Israel Time)
 
 on:
-  schedule:
-    # Israel winter time (UTC+2):
-    # 10,14,18,22 Israel  ==>  8,12,16,20 UTC
-    # - cron: "0 8,12,16,20 * * *"
-
   workflow_dispatch:
     inputs:
       message:
