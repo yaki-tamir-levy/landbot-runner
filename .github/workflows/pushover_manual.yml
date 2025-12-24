@@ -1,15 +1,17 @@
-name: Pushover Notify (1 or 2 phones)
+name: Pushover Notify (Israel Time)
 
 on:
+  schedule:
+    # Israel winter time (UTC+2):
+    # 10,14,18,22 Israel  ==>  8,12,16,20 UTC
+    - cron: "0 8,12,16,20 * * *"
+
   workflow_dispatch:
     inputs:
       message:
         description: "Message to send (optional)"
         required: false
         default: ""
-  # אם תרצה גם ריצה מתוזמנת, בטל הערה:
-  # schedule:
-  #   - cron: "0 * * * *"  # כל שעה
 
 jobs:
   notify:
@@ -21,13 +23,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # אם הוזן message ידני (workflow_dispatch) – נשתמש בו,
-          # אחרת נשלח הודעת בדיקה.
           INPUT_MSG="${{ github.event.inputs.message }}"
           if [ -n "${INPUT_MSG}" ]; then
             MSG="${INPUT_MSG}"
           else
-            MSG="Test notification from GitHub Actions @ $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            MSG="Scheduled notification (Israel time) @ $(date -u +'%Y-%m-%d %H:%M UTC')"
           fi
 
           echo "MSG<<EOF" >> "$GITHUB_ENV"
@@ -38,31 +38,30 @@ jobs:
         env:
           PUSHOVER_APP_TOKEN:  ${{ secrets.PUSHOVER_APP_TOKEN }}
           PUSHOVER_USER_KEY:   ${{ secrets.PUSHOVER_USER_KEY }}
-          PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }} # אופציונלי – אפשר לא להגדיר בכלל
+          PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }} # אופציונלי
           MSG:                 ${{ env.MSG }}
         shell: bash
         run: |
           set -euo pipefail
 
           if [ -z "${PUSHOVER_APP_TOKEN:-}" ] || [ -z "${PUSHOVER_USER_KEY:-}" ]; then
-            echo "Missing required secrets: PUSHOVER_APP_TOKEN and/or PUSHOVER_USER_KEY"
+            echo "Missing required secrets"
             exit 1
           fi
 
           recipients=("${PUSHOVER_USER_KEY}")
 
-          # מוסיפים טלפון נוסף רק אם הוגדר בפועל
+          # טלפון נוסף – רק אם הוגדר
           if [ -n "${PUSHOVER_USER_KEY_2:-}" ]; then
             recipients+=("${PUSHOVER_USER_KEY_2}")
           fi
 
           for user_key in "${recipients[@]}"; do
-            echo "Sending Pushover to user_key=${user_key:0:6}******"
-            curl -sS --fail-with-body -X POST "https://api.pushover.net/1/messages.json" \
+            curl -sS --fail-with-body -X POST https://api.pushover.net/1/messages.json \
               -d token="${PUSHOVER_APP_TOKEN}" \
               -d user="${user_key}" \
               -d title="GitHub Actions" \
               -d message="${MSG}" >/dev/null
           done
 
-          echo "Done. Sent to ${#recipients[@]} recipient(s)."
+          echo "Sent to ${#recipients[@]} device(s)"
