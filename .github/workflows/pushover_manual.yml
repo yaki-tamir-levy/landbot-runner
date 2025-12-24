@@ -27,7 +27,7 @@ jobs:
           if [ -n "${INPUT_MSG}" ]; then
             MSG="${INPUT_MSG}"
           else
-            MSG="Scheduled notification (Israel time) @ $(date -u +'%Y-%m-%d %H:%M UTC')"
+            MSG="Scheduled notification (Israel time)"
           fi
 
           echo "MSG<<EOF" >> "$GITHUB_ENV"
@@ -36,29 +36,29 @@ jobs:
 
       - name: Pushover notify (optional second phone)
         env:
-          PUSHOVER_APP_TOKEN:  ${{ secrets.PUSHOVER_APP_TOKEN }}
-          PUSHOVER_USER_KEY:   ${{ secrets.PUSHOVER_USER_KEY }}
-          PUSHOVER_USER_KEY_2: ${{ secrets.PUSHOVER_USER_KEY_2 }} # אופציונלי
-          MSG:                 ${{ env.MSG }}
+          PUSHOVER_TOKEN:   ${{ secrets.PUSHOVER_TOKEN }}
+          PUSHOVER_USER:    ${{ secrets.PUSHOVER_USER }}
+          PUSHOVER_USER_2:  ${{ secrets.PUSHOVER_USER_2 }} # אופציונלי
+          MSG:              ${{ env.MSG }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -z "${PUSHOVER_APP_TOKEN:-}" ] || [ -z "${PUSHOVER_USER_KEY:-}" ]; then
+          if [ -z "${PUSHOVER_TOKEN:-}" ] || [ -z "${PUSHOVER_USER:-}" ]; then
             echo "Missing required secrets"
             exit 1
           fi
 
-          recipients=("${PUSHOVER_USER_KEY}")
+          recipients=("${PUSHOVER_USER}")
 
           # טלפון נוסף – רק אם הוגדר
-          if [ -n "${PUSHOVER_USER_KEY_2:-}" ]; then
-            recipients+=("${PUSHOVER_USER_KEY_2}")
+          if [ -n "${PUSHOVER_USER_2:-}" ]; then
+            recipients+=("${PUSHOVER_USER_2}")
           fi
 
           for user_key in "${recipients[@]}"; do
             curl -sS --fail-with-body -X POST https://api.pushover.net/1/messages.json \
-              -d token="${PUSHOVER_APP_TOKEN}" \
+              -d token="${PUSHOVER_TOKEN}" \
               -d user="${user_key}" \
               -d title="GitHub Actions" \
               -d message="${MSG}" >/dev/null
