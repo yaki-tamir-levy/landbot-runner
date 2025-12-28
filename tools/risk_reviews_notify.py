@@ -2,10 +2,10 @@
 """
 tools/risk_reviews_notify.py
 
-Behavior:
-- Fetch ALL rows from Supabase table risk_reviews.
-- If >= 1 row exists -> send ONE Pushover notification (with count + short preview).
-- If 0 rows -> exit quietly (no notification).
+Behavior (UPDATED):
+- Fetch rows from Supabase table risk_reviews BUT ONLY those that are NOT reviewed.
+- If >= 1 non-reviewed row exists -> send ONE Pushover notification (with count + short preview).
+- If 0 non-reviewed rows -> exit quietly (no notification).
 
 Uses tools/pushover_send.py for sending, so PUSHOVER_URL and PUSHOVER_USER_2 work automatically.
 
@@ -17,9 +17,10 @@ Required env vars:
 
 Optional env vars:
   RISK_REVIEWS_TABLE   default: risk_reviews
-  SUPABASE_SCHEMA      default: public   (kept for future use; REST endpoint uses table directly)
   PAGE_SIZE            default: 500
   PREVIEW_ROWS         default: 5   (how many rows to include in preview)
+  STATUS_FIELD         default: status
+  REVIEWED_VALUE       default: reviewed
 """
 
 import os
@@ -55,12 +56,19 @@ def _pick(row: Dict[str, Any], keys: List[str]) -> Optional[str]:
     return None
 
 
-def fetch_all_rows() -> List[Dict[str, Any]]:
+def fetch_all_non_reviewed_rows() -> List[Dict[str, Any]]:
+    """
+    Fetch only rows that are NOT reviewed.
+    Implemented with PostgREST filter: <status_field>=neq.<reviewed_value>
+    """
     supabase_url = env_required("SUPABASE_URL").rstrip("/")
     service_key = env_required("SUPABASE_SERVICE_ROLE_KEY")
 
     table = os.environ.get("RISK_REVIEWS_TABLE", "risk_reviews").strip() or "risk_reviews"
     page_size = int(os.environ.get("PAGE_SIZE", "500"))
+
+    status_field = os.environ.get("STATUS_FIELD", "status").strip() or "status"
+    reviewed_value = os.environ.get("REVIEWED_VALUE", "reviewed").strip() or "reviewed"
 
     endpoint = f"{supabase_url}/rest/v1/{table}"
     headers = {
@@ -69,7 +77,9 @@ def fetch_all_rows() -> List[Dict[str, Any]]:
         "Accept": "application/json",
         "Prefer": "count=exact",
     }
-    params = {"select": "*"}
+
+    # PostgREST filter syntax: ?status=neq.reviewed
+    params = {"select": "*", status_field: f"neq.{reviewed_value}"}
 
     out: List[Dict[str, Any]] = []
     start = 0
@@ -95,10 +105,11 @@ def fetch_all_rows() -> List[Dict[str, Any]]:
 
 
 def format_one_line(row: Dict[str, Any]) -> str:
-    # Try to be schema-agnostic
+    # Try to be schema-agnostic + include status for clarity
     time_val = _pick(row, ["time", "created_at", "inserted_at", "ts", "time_key"])
     phone = _pick(row, ["phone", "user_phone", "patient_phone"])
     name = _pick(row, ["name", "patient_name", "db_name"])
+    status = _pick(row, ["status", "state"])
     snippet = _pick(row, ["snippet_text", "pattern", "pattern_key", "risk_text", "match_text"])
 
     parts: List[str] = []
@@ -108,6 +119,8 @@ def format_one_line(row: Dict[str, Any]) -> str:
         parts.append(phone)
     if name:
         parts.append(name)
+    if status:
+        parts.append(f"status={status}")
     if snippet:
         parts.append(snippet)
 
@@ -122,7 +135,7 @@ def send_one_notification(total: int, rows: List[Dict[str, Any]]) -> None:
     preview = rows[: max(0, preview_n)]
 
     lines: List[str] = []
-    lines.append(f"נמצאו {total} רשומות ב-risk_reviews")
+    lines.append(f"נמצאו {total} רשומות פתוחות (לא reviewed) ב-risk_reviews")
     if preview:
         lines.append("")
         lines.append("דוגמה:")
@@ -137,7 +150,7 @@ def send_one_notification(total: int, rows: List[Dict[str, Any]]) -> None:
         sys.executable,
         "tools/pushover_send.py",
         "--title",
-        "🔴 RISK נמצאו רשומות",
+        "🔴 RISK: רשומות פתוחות",
         "--message",
         msg,
     ]
@@ -151,15 +164,15 @@ def send_one_notification(total: int, rows: List[Dict[str, Any]]) -> None:
 
 
 def main() -> int:
-    rows = fetch_all_rows()
+    rows = fetch_all_non_reviewed_rows()
     total = len(rows)
 
     if total <= 0:
-        print("No rows in risk_reviews. No notification sent.")
+        print("No NON-reviewed rows in risk_reviews. No notification sent.")
         return 0
 
     send_one_notification(total, rows)
-    print(f"Sent ONE notification for {total} rows.")
+    print(f"Sent ONE notification for {total} non-reviewed rows.")
     return 0
 
 
