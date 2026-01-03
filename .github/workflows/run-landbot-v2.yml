@@ -130,6 +130,37 @@ jobs:
 
           echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') run finished" > artifacts/_runner_heartbeat.txt
 
+      - name: Show Landbot message in summary
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          echo "## 🤖 Landbot last message" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/bot_last_message.txt ]; then
+            cat artifacts/bot_last_message.txt >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "[artifacts/bot_last_message.txt not found]" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f artifacts/bot_messages_all.txt ]; then
+            echo "<details><summary>All bot messages (click)</summary>" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            # זה יכול להיות ארוך. עדיין נוח, אבל אם זה ענק – תראה בארטיפקט.
+            head -c 200000 artifacts/bot_messages_all.txt >> "$GITHUB_STEP_SUMMARY" || true
+            if [ "$(wc -c < artifacts/bot_messages_all.txt)" -gt 200000 ]; then
+              echo "" >> "$GITHUB_STEP_SUMMARY"
+              echo "[TRUNCATED in summary – full file in artifacts]" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -138,7 +169,6 @@ jobs:
           path: artifacts/**
           if-no-files-found: warn
 
-      # מטמיעים את צילום המסך האחרון ישירות ב-Summary (לא לייב, אבל נראה מיד)
       - name: Embed last screenshot in summary
         if: always()
         shell: bash
@@ -178,5 +208,11 @@ jobs:
             fi
             if [ -f artifacts/msg_payload.json ]; then
               echo "- payload: **msg_payload.json** (see Artifacts)"
+            fi
+            if [ -f artifacts/bot_last_message.txt ]; then
+              echo "- bot: **bot_last_message.txt** (see Artifacts)"
+            fi
+            if [ -f artifacts/bot_messages_all.txt ]; then
+              echo "- bot: **bot_messages_all.txt** (see Artifacts)"
             fi
           } >> "$GITHUB_STEP_SUMMARY" || true
