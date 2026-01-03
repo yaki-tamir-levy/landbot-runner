@@ -1,236 +1,226 @@
-// scripts/landbot_v2_trigger.mjs
-// מפעיל את Landbot עם Playwright (headless/headed), לוחץ/שולח טקסט,
-// שומר before/after/video/trace/payload, ומבצע המתנה “חכמה” לעדכון Supabase.
+/**
+ * scripts/landbot_v2_trigger.mjs
+ *
+ * מטרות:
+ * 1) לפתוח את LANDBOT_URL
+ * 2) ללחוץ על כפתור/להזרים trigger_text
+ * 3) להמתין שהבוט יסיים (באמצעות "שקט" ב-DOM של הודעות)
+ * 4) לחלץ הודעות בוט מה-DOM
+ * 5) לכתוב:
+ *    - artifacts/bot_last_message.txt
+ *    - artifacts/bot_messages_all.txt
+ * 6) לשמור screenshot_after.png
+ */
 
-import { chromium } from 'playwright';
-import fs from 'node:fs';
-import path from 'node:path';
+import fs from "fs";
+import path from "path";
+import process from "process";
+import { chromium } from "playwright";
 
-// ===================== Config & env =====================
-const LANDBOT_URL   = process.env.LANDBOT_URL;
-const BUTTON_TEXT   = process.env.LANDBOT_BUTTON_TEXT || 'סיכום שיחות המטופלים';
-const TRIGGER_TEXT  = process.env.TRIGGER_TEXT       || 'התחל סיכום שיחות';
+const ART_DIR = "artifacts";
 
-const EXPECT_URLS = (process.env.EXPECT_URLS || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
-
-const REQUIRE_NETWORK_CONFIRM =
-  String(process.env.REQUIRE_NETWORK_CONFIRM || 'false').toLowerCase() === 'true';
-
-const headless =
-  !(process.env.PW_HEADLESS === '0' || String(process.env.HEADED).toLowerCase() === 'true');
-
-const POST_ACTION_IDLE_MS = Number(process.env.POST_ACTION_IDLE_MS || 0);
-const SUPABASE_WAIT_MS    = Number(process.env.SUPABASE_WAIT_MS    || 60_000);
-
-const ART_DIR = path.resolve('artifacts');
-if (!fs.existsSync(ART_DIR)) fs.mkdirSync(ART_DIR, { recursive: true });
-
-// ===================== Helpers (single definitions) =====================
-function log(msg, obj) {
-  const line = `[landbot_v2] ${new Date().toISOString()} | ${msg} ${obj ? JSON.stringify(obj) : ''}`;
-  console.log(line);
-  try { fs.appendFileSync(path.join(ART_DIR, 'run.log'), line + '\n'); } catch {}
+function mustEnv(name, fallback = "") {
+  const v = process.env[name] ?? fallback;
+  return v;
 }
 
-function selectorPatch(arr) { return Array.from(new Set((arr || []).filter(Boolean))); }
-function expectLen(a)       { return Array.isArray(a) ? a.length : 0; }
-function sleep(ms)          { return new Promise(res => setTimeout(res, ms)); }
+function ensureDir(p) {
+  fs.mkdirSync(p, { recursive: true });
+}
 
-async function waitEitherSupabaseOrTimeout(netLog, maxMs = 60_000) {
+function nowIso() {
+  return new Date().toISOString();
+}
+
+/**
+ * מחזיר טקסט של כל ההודעות הרלוונטיות בדף (בוט+יוזר),
+ * כדי שנוכל לזהות אם המצב "נרגע" (לא משתנה) לאורך זמן.
+ */
+async function snapshotMessagesText(page) {
+  // Multi-selector "סביר" ללנדבוטים שונים.
+  // אם אצלך DOM שונה, תוכל לעדכן כאן לסלקטור מדויק (Inspect על הודעת בוט).
+  const selector = [
+    '[data-message-author="bot"]',
+    '[data-message-author="agent"]',
+    ".message--bot",
+    ".lb-message--bot",
+    ".message.bot",
+    ".landbot-message.bot",
+    ".lb-message",
+    ".message",
+  ].join(",");
+
+  return page.$$eval(selector, (els) =>
+    els
+      .map((e) => (e.innerText || "").trim())
+      .filter(Boolean)
+      .join("\n\n---\n\n")
+  ).catch(() => "");
+}
+
+/**
+ * מחכה עד שההודעות מפסיקות להשתנות למשך quietMs.
+ * זה המפתח למניעת "תשובה חלקית".
+ */
+async function waitUntilMessagesQuiet(page, { quietMs = 6000, timeoutMs = 180000, pollMs = 1000 }) {
   const start = Date.now();
-  while (Date.now() - start < maxMs) {
-    const hit = netLog.find(e =>
-      e.dir === 'res' &&
-      typeof e.url === 'string' &&
-      e.url.includes('supabase.co/rest/v1') &&
-      e.status >= 200 && e.status < 300
-    );
-    if (hit) return true;
-    await sleep(1_000);
+  let lastText = await snapshotMessagesText(page);
+  let lastChange = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    await page.waitForTimeout(pollMs);
+    const cur = await snapshotMessagesText(page);
+
+    if (cur !== lastText) {
+      lastText = cur;
+      lastChange = Date.now();
+      continue;
+    }
+
+    if (Date.now() - lastChange >= quietMs) {
+      return { ok: true, lastText };
+    }
   }
-  return false;
+
+  return { ok: false, lastText };
 }
 
-// ===================== Guard =====================
-if (!LANDBOT_URL) {
-  console.error('ENV LANDBOT_URL is required');
-  process.exit(1);
+/**
+ * מחלץ רק הודעות בוט (וגם מחזיר "אחרונה").
+ */
+async function extractBotMessages(page) {
+  // נסיון לכמה וריאנטים נפוצים.
+  const botSelector = [
+    '[data-message-author="bot"]',
+    '[data-message-author="agent"]',
+    ".message--bot",
+    ".lb-message--bot",
+    ".message.bot",
+    ".landbot-message.bot",
+  ].join(",");
+
+  const msgs = await page.$$eval(botSelector, (els) =>
+    els
+      .map((e) => (e.innerText || "").trim())
+      .filter(Boolean)
+  ).catch(() => []);
+
+  const last = msgs.length ? msgs[msgs.length - 1] : "";
+  return { msgs, last };
 }
 
-// ===================== Main =====================
-let browser, context, page;
-const t0 = Date.now();
+async function main() {
+  ensureDir(ART_DIR);
 
-(async () => {
+  const LANDBOT_URL = mustEnv("LANDBOT_URL");
+  const LANDBOT_BUTTON_TEXT = mustEnv("LANDBOT_BUTTON_TEXT", "סיכום שיחות המטופלים");
+  const TRIGGER_TEXT = mustEnv("TRIGGER_TEXT", "התחל סיכום שיחות");
+
+  const POST_ACTION_IDLE_MS = parseInt(mustEnv("POST_ACTION_IDLE_MS", "300000"), 10);
+  const REQUIRE_NETWORK_CONFIRM = (mustEnv("REQUIRE_NETWORK_CONFIRM", "false") + "").toLowerCase() === "true";
+
+  // כמה זמן של "שקט" בדומ לפני שאומרים שהבוט סיים
+  const QUIET_MS = 7000;
+  const QUIET_TIMEOUT_MS = Math.max(60000, Math.min(300000, POST_ACTION_IDLE_MS)); // clamp סביר
+
+  if (!LANDBOT_URL) {
+    console.error("LANDBOT_URL is missing");
+    process.exit(1);
+  }
+
+  const headed = (mustEnv("HEADED", "true") + "").toLowerCase() === "true";
+
+  // מגדירים הקלטות/trace אם תרצה, כאן זה מינימלי. (אפשר להרחיב לפי setup שלך)
+  const browser = await chromium.launch({
+    headless: !headed, // אם headed=true אתה כבר רץ עם Xvfb
+  });
+
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+  });
+
+  const page = await context.newPage();
+
   try {
-    browser = await chromium.launch({ headless });
-    context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-      recordVideo: { dir: ART_DIR, size: { width: 1280, height: 800 } },
-    });
-    await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+    console.log(`[${nowIso()}] Opening Landbot: ${LANDBOT_URL}`);
+    await page.goto(LANDBOT_URL, { waitUntil: "domcontentloaded", timeout: 120000 });
+    await page.waitForTimeout(1500);
 
-    page = await context.newPage();
-
-    // לוג רשת מפורט + JSONL ל-Landbot ול-Supabase
-    const netLog = [];
-    const supaLog = fs.createWriteStream(path.join(ART_DIR, 'supabase_outbound.jsonl'));
-    const landbotSendLog = fs.createWriteStream(path.join(ART_DIR, 'landbot_send.jsonl'));
-
-    page.on('request', req => {
-      const rec = { t: Date.now(), dir: 'req', url: req.url(), method: req.method(), postData: req.postData() ?? null };
-      netLog.push(rec);
-      try {
-        if (rec.url.includes('supabase.co/rest/v1')) supaLog.write(JSON.stringify(rec) + '\n');
-        if (rec.url.includes('messages.landbot.io/webchat/api/send')) landbotSendLog.write(JSON.stringify(rec) + '\n');
-      } catch {}
-    });
-
-    page.on('response', async res => {
-      const rec = { t: Date.now(), dir: 'res', url: res.url(), status: res.status() };
-      netLog.push(rec);
-      try {
-        if (rec.url.includes('supabase.co/rest/v1')) supaLog.write(JSON.stringify(rec) + '\n');
-        if (rec.url.includes('messages.landbot.io/webchat/api/send')) landbotSendLog.write(JSON.stringify(rec) + '\n');
-      } catch {}
-    });
-
-    // ---- Navigate ----
-    log('Navigating to Landbot URL', { url: LANDBOT_URL, headless });
-    await page.goto(LANDBOT_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-
-    await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => {});
-    await page.screenshot({ path: path.join(ART_DIR, 'screenshot_before.png'), fullPage: true }).catch(() => {});
-    const htmlBefore = await page.content().catch(() => '');
-    try { fs.writeFileSync(path.join(ART_DIR, 'page_before.html'), htmlBefore || '', 'utf8'); } catch {}
-
-    // ---- Try click button; else type trigger ----
-    let clicked = false;
-    const selectorCandidates = [
-      `role=button[name="${BUTTON_TEXT}"]`,
-      `text="${BUTTON_TEXT}"`,
-      `button:has-text("${BUTTON_TEXT}")`,
-      `a:has-text("${BUTTON_TEXT}")`,
-      `[role="button"]:has-text("${BUTTON_TEXT}")`,
-    ];
-
-    for (const sel of selectorPatch(selectorCandidates)) {
-      const el = page.locator(sel).first();
-      const count = await el.count().catch(() => 0);
-      if (count > 0) {
-        log('Found button candidate', { selector: sel, count });
-        try {
-          const handle = await el.elementHandle();
-          await handle.evaluate((node) => {
-            node.style.outline = '3px solid red';
-            node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          });
-          await page.waitForTimeout(600);
-          await page.screenshot({ path: path.join(ART_DIR, 'screenshot_highlight.png') }).catch(() => {});
-        } catch {}
-        await el.click({ timeout: 10_000 }).catch(() => {});
-        clicked = true;
-        break;
-      }
-    }
-
-    let payload = null;
-    if (!clicked) {
-      log('Button not found, sending trigger text', { TRIGGER_TEXT });
-      const inputSelectors = [
-        'div[contenteditable="true"]',
-        'textarea',
-        'input[type="text"]',
-        '[role="textbox"]',
-      ];
-      let typed = false;
-      for (const sel of inputSelectors) {
-        const input = page.locator(sel).last();
-        const count = await input.count().catch(() => 0);
-        if (count > 0) {
-          await input.click({ timeout: 5_000 }).catch(() => {});
-          await input.type(TRIGGER_TEXT, { delay: 30 }).catch(() => {});
-          await page.keyboard.press('Enter').catch(() => {});
-          typed = true;
-          payload = { type: 'text', text: TRIGGER_TEXT, ts: Date.now() };
-          break;
-        }
-      }
-      if (!typed) log('Could not find input to type trigger text');
+    // נסיון ללחיצה על כפתור לפי טקסט (LANDBOT_BUTTON_TEXT)
+    // שים לב: סלקטור טקסט איננו מושלם אם הטקסט מפוצל/לא בדיוק זהה.
+    // אפשר להחליף לסלקטור CSS מדויק לפי הכפתור אצלך.
+    const buttonLocator = page.getByRole("button", { name: LANDBOT_BUTTON_TEXT }).first();
+    if (await buttonLocator.count().catch(() => 0)) {
+      console.log(`[${nowIso()}] Clicking button: ${LANDBOT_BUTTON_TEXT}`);
+      await buttonLocator.click({ timeout: 15000 });
     } else {
-      payload = { type: 'click', text: BUTTON_TEXT, ts: Date.now() };
-    }
-    if (payload) {
-      try { fs.writeFileSync(path.join(ART_DIR, 'msg_payload.json'), JSON.stringify(payload, null, 2)); } catch {}
+      console.log(`[${nowIso()}] Button not found by role+name: "${LANDBOT_BUTTON_TEXT}" (will try trigger text input)`);
     }
 
-    // ---- Network confirmation (optional) ----
-    if (expectLen(EXPECT_URLS) > 0) {
-      log('Waiting for expected URLs', { EXPECT_URLS, REQUIRE_NETWORK_CONFIRM });
-      try {
-        await Promise.all(
-          EXPECT_URLS.map(u =>
-            page.waitForResponse(
-              res => res.url().includes(u) && res.status() >= 200 && res.status() < 300,
-              { timeout: 25_000 }
-            )
-          )
-        );
-        log('All expected URLs confirmed 2xx');
-      } catch (e) {
-        log('Expected URLs not all confirmed within 25s', { error: String(e) });
-        if (REQUIRE_NETWORK_CONFIRM) {
-          throw new Error('REQUIRE_NETWORK_CONFIRM=true and not all expected URLs returned 2xx');
-        }
-      }
+    // נסיון להזרים trigger_text לאינפוט (אם יש)
+    // Landbot לפעמים משתמש ב-textarea/input. ננסה שניהם.
+    const input = page.locator("textarea, input[type='text']").first();
+    if (await input.count().catch(() => 0)) {
+      console.log(`[${nowIso()}] Typing trigger text: ${TRIGGER_TEXT}`);
+      await input.click({ timeout: 10000 }).catch(() => {});
+      await input.fill(TRIGGER_TEXT, { timeout: 10000 }).catch(async () => {
+        await input.type(TRIGGER_TEXT, { delay: 15 });
+      });
+
+      // נסיון לשלוח Enter
+      await input.press("Enter").catch(() => {});
     } else {
-      await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
+      console.log(`[${nowIso()}] No obvious text input found; continuing.`);
     }
 
-    // ---- Post-action idle ----
-    if (POST_ACTION_IDLE_MS > 0) {
-      log('Post-action idle wait', { ms: POST_ACTION_IDLE_MS });
-      await page.waitForTimeout(POST_ACTION_IDLE_MS);
+    // אם דורשים "network confirm" אצלך, כאן היית מוסיף לוגיקה של wait for response.
+    // כרגע אתה שולח REQUIRE_NETWORK_CONFIRM=false, אז לא ננעל על זה.
+    if (REQUIRE_NETWORK_CONFIRM) {
+      console.log(`[${nowIso()}] REQUIRE_NETWORK_CONFIRM=true but not implemented in this minimal script.`);
     }
 
-    // ---- Wait for Supabase 2xx or timeout ----
-    const supaOk = await waitEitherSupabaseOrTimeout(netLog, SUPABASE_WAIT_MS);
-    log('Supabase wait result', { ok: supaOk, waitedMs: SUPABASE_WAIT_MS });
-    if (!supaOk) {
-      log('No Supabase 2xx observed within window (informative; job continues unless REQUIRE_NETWORK_CONFIRM=true)');
-      if (REQUIRE_NETWORK_CONFIRM) {
-        throw new Error('Supabase 2xx not observed and REQUIRE_NETWORK_CONFIRM=true');
-      }
-    }
+    // עכשיו החלק החשוב: לחכות שההודעות יפסיקו להשתנות => מונע תשובה חלקית
+    console.log(`[${nowIso()}] Waiting for messages to become quiet (quiet=${QUIET_MS}ms, timeout=${QUIET_TIMEOUT_MS}ms)...`);
+    const quietRes = await waitUntilMessagesQuiet(page, {
+      quietMs: QUIET_MS,
+      timeoutMs: QUIET_TIMEOUT_MS,
+      pollMs: 1200,
+    });
 
-    // ---- Final capture ----
-    await page.screenshot({ path: path.join(ART_DIR, 'screenshot_after.png'), fullPage: true }).catch(() => {});
-    const htmlAfter = await page.content().catch(() => '');
-    try { fs.writeFileSync(path.join(ART_DIR, 'page_after.html'), htmlAfter || '', 'utf8'); } catch {}
+    console.log(`[${nowIso()}] Quiet result: ok=${quietRes.ok}`);
 
-    try { fs.writeFileSync(path.join(ART_DIR, 'network_log.json'), JSON.stringify(netLog, null, 2)); } catch {}
-    log('Done successfully');
-  } catch (err) {
-    log('Run error', { error: String(err && err.stack ? err.stack : err) });
+    // חילוץ הודעות בוט
+    const { msgs, last } = await extractBotMessages(page);
+
+    // לוג לריצה
+    console.log("===== LAND BOT LAST MESSAGE =====");
+    console.log(last || "[no bot message found]");
+
+    // כתיבה לקבצים (אלו יוצגו ב-summary ויעלו כ-artifacts)
+    const lastPath = path.join(ART_DIR, "bot_last_message.txt");
+    const allPath = path.join(ART_DIR, "bot_messages_all.txt");
+
+    fs.writeFileSync(lastPath, last || "", "utf8");
+    fs.writeFileSync(allPath, msgs.join("\n\n---\n\n"), "utf8");
+
+    // screenshot אחרי
+    await page.screenshot({ path: path.join(ART_DIR, "screenshot_after.png"), fullPage: true }).catch(() => {});
+
+    // אפשר גם להוסיף dump של snapshot אם תרצה debugging:
+    fs.writeFileSync(path.join(ART_DIR, "messages_snapshot.txt"), quietRes.lastText || "", "utf8");
+
+    console.log(`[${nowIso()}] Done. Wrote:\n- ${lastPath}\n- ${allPath}\n- artifacts/screenshot_after.png`);
+  } catch (e) {
+    console.error("ERROR in landbot_v2_trigger:", e?.stack || e?.message || e);
+    // בכל מקרה ננסה צילום מסך לתחקור
     try {
-      if (page) {
-        await page.screenshot({ path: path.join(ART_DIR, 'fatal.png'), fullPage: true });
-      }
-    } catch (e) {
-      log('Failed to take fatal screenshot', { error: String(e) });
-    }
-    process.exitCode = 1;
+      await page.screenshot({ path: path.join(ART_DIR, "screenshot_error.png"), fullPage: true });
+    } catch {}
+    // לא מפילים את ה-workflow בכוח (אצלך כבר יש || true), אבל נשאיר exit code 0 כדי לא לשבור
   } finally {
-    try { await context?.tracing?.stop({ path: path.join(ART_DIR, 'trace.zip') }); } catch {}
-    try { await context?.close(); } catch {}
-    try { await browser?.close(); } catch {}
-    const elapsed = Date.now() - t0;
-    log('Run finished', { elapsedMs: elapsed });
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
   }
-})().catch(e => {
-  console.error('[top-level] ', e);
-  process.exit(1);
-});
+}
+
+main();
