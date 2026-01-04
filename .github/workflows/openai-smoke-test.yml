@@ -40,15 +40,18 @@ jobs:
           echo
           echo "-------------------------------------"
 
-          # Prefer the convenience field if present
-          output_text="$(echo "$resp_json" | jq -r '.output_text // empty')"
+          # חילוץ טקסט בצורה שתומכת גם ב-.output_text וגם במבנה output[].content[].text
+          output_text="$(echo "$resp_json" | jq -r '
+            (.output_text // empty)
+            // ([ .output[]?.content[]? | select(.type=="output_text") | .text ] | join("\n"))
+          ')"
 
           if [ -n "$output_text" ]; then
             echo "---- output_text ----"
             echo "$output_text"
             echo "---------------------"
           else
-            echo "No .output_text field found; printing full JSON:"
+            echo "לא נמצא טקסט תשובה. מדפיס JSON מלא לצורך דיבאג:"
             echo "$resp_json"
             exit 1
           fi
