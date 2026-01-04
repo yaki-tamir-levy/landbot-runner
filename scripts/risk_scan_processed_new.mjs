@@ -9,7 +9,7 @@
 // אופציונלי:
 //   OPENAI_MODEL   (ברירת מחדל: gpt-5.2)
 //   BATCH_SIZE     (ברירת מחדל: 50)
-//   MAX_ITEMS      (ברירת מחדל: 1 אם לא הוגדר; מומלץ ל-smoke)
+//   MAX_ITEMS      (ברירת מחדל: 1)  <-- SMOKE
 //   ORDER_BY       (ברירת מחדל: created_at.asc)
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -98,9 +98,10 @@ const INSTRUCTIONS = `אתה כלי סריקה טקסטואלי לאיתור ס�
 function buildSupabaseListNewUrl({ supabaseUrl, limit, offset, orderBy }) {
   const base = supabaseUrl.replace(/\/$/, "");
   const params = new URLSearchParams();
+  // קלט = summarized_linked_talk_num
   params.set(
     "select",
-    "id,phone,processed,summarized_linked_talk_risk"
+    "id,phone,processed,summarized_linked_talk_num"
   );
   params.set("processed", "eq.NEW");
   if (orderBy) params.set("order", orderBy);
@@ -166,6 +167,12 @@ function extractAssistantTextFromResponsesApi(rawJson) {
 }
 
 async function runOpenAIResponses({ apiKey, model, instructions, inputText, maxOutputTokens }) {
+  // הגנה: Responses API דורש input לא-ריק
+  const safeInput = typeof inputText === "string" ? inputText.trim() : "";
+  if (!safeInput) {
+    return { output_text: "" };
+  }
+
   const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -175,7 +182,7 @@ async function runOpenAIResponses({ apiKey, model, instructions, inputText, maxO
     body: JSON.stringify({
       model,
       instructions,
-      input: inputText ?? "",
+      input: safeInput,
       max_output_tokens: maxOutputTokens,
     }),
   });
@@ -217,16 +224,25 @@ async function main() {
       const id = row?.id ?? null;
       const phone = row?.phone ?? null;
 
-      const inputText =
-        typeof row?.summarized_linked_talk_risk === "string"
-          ? row.summarized_linked_talk_risk
+      // ✅ זה שדה הקלט
+      const rawInput =
+        typeof row?.summarized_linked_talk_num === "string"
+          ? row.summarized_linked_talk_num
           : "";
+
+      const trimmed = rawInput.trim();
+
+      // אם ריק — דלג כדי לא לקבל 400
+      if (!trimmed) {
+        console.log(`SKIP id=${id} phone=${phone} (empty summarized_linked_talk_num)`);
+        continue;
+      }
 
       const openaiRaw = await runOpenAIResponses({
         apiKey: OPENAI_API_KEY,
         model: OPENAI_MODEL,
         instructions: INSTRUCTIONS,
-        inputText,
+        inputText: trimmed,
         maxOutputTokens: 4000,
       });
 
