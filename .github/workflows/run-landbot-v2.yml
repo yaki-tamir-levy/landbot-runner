@@ -101,7 +101,7 @@ jobs:
             echo "FORCE_MIN_RUN_SECONDS=${FORCE_MIN_RUN_SECONDS}"
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Run Landbot trigger (headed via Xvfb) + enforce min runtime
+      - name: Run Landbot trigger (headed via Xvfb) + enforce min runtime (with heartbeat)
         shell: bash
         run: |
           set -u
@@ -125,7 +125,20 @@ jobs:
           if [ "$DELTA" -lt "$MIN_SECS" ]; then
             PAD=$(( MIN_SECS - DELTA ))
             echo "Padding runtime by ${PAD}s to reach at least ${MIN_SECS}s total..."
-            sleep "$PAD"
+
+            # Heartbeat בלוגים כדי שלא יהיה שקט בזמן ה-padding
+            STEP=30
+            while [ "$PAD" -gt 0 ]; do
+              if [ "$PAD" -lt "$STEP" ]; then
+                STEP_NOW="$PAD"
+              else
+                STEP_NOW="$STEP"
+              fi
+
+              echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') padding... remaining=${PAD}s"
+              sleep "$STEP_NOW"
+              PAD=$(( PAD - STEP_NOW ))
+            done
           fi
 
           echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') run finished" > artifacts/_runner_heartbeat.txt
@@ -150,7 +163,6 @@ jobs:
             echo "<details><summary>All bot messages (click)</summary>" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
-            # זה יכול להיות ארוך. עדיין נוח, אבל אם זה ענק – תראה בארטיפקט.
             head -c 200000 artifacts/bot_messages_all.txt >> "$GITHUB_STEP_SUMMARY" || true
             if [ "$(wc -c < artifacts/bot_messages_all.txt)" -gt 200000 ]; then
               echo "" >> "$GITHUB_STEP_SUMMARY"
