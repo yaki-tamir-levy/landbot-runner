@@ -1,230 +1,25 @@
-// risk_scan_phone_12121212.mjs
-// Node 18+ (fetch מובנה)
-//
-// ENV נדרש:
-//   SUPABASE_URL                  למשל: https://qcwimczsiuxkarwfiyai.supabase.co
-//   SUPABASE_SERVICE_ROLE_KEY     (מומלץ) או מפתח עם הרשאות SELECT לטבלת users_total
-//   OPENAI_API_KEY
-//
-// אופציונלי:
-//   OPENAI_MODEL                  ברירת מחדל: gpt-5.2
-//   PHONE                          ברירת מחדל: 12121212
+name: OpenAI smoke test
 
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+on:
+  workflow_dispatch:
 
-const PHONE = process.env.PHONE || "12121212";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
+jobs:
+  run:
+    runs-on: ubuntu-latest
 
-if (!SUPABASE_URL) throw new Error("Missing env: SUPABASE_URL");
-if (!SUPABASE_KEY) throw new Error("Missing env: SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_KEY)");
-if (!OPENAI_API_KEY) throw new Error("Missing env: OPENAI_API_KEY");
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-const INSTRUCTIONS = `אתה כלי סריקה טקסטואלי לאיתור סימני RISK בשיחה.
-אינך מטפל, אינך מגיב רגשית, ואינך מציע פתרונות.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
 
-
-קלט:
-תמלול שיחה בפורמט שורות ממוספרות.
-כל שורה מתחילה במספר שורה בצורה:
--N- ואז רווח ואז "שאלה:" (מטופל) או "תשובה:" (מטפל).
-
-
-מטרה:
-להחזיר מחרוזת אחת שמכילה:
-(1) רק שורות מטופל ("שאלה:") שבהן נמצא RISK, בדיוק כפי בקלט
-(2) שורת הפרדה קבועה (Split sign)
-(3) הסבר קצר לכל שורת סיכון באותו מספר שורה
-
-
-חובה מוחלטת – חלק 1 (שורות סיכון):
-- החזר אך ורק שורות מטופל שבהן נמצא RISK.
-- כל שורה חייבת להופיע במלואה ובדיוק מוחלט כפי שהופיעה בקלט:
-כולל מספר השורה (-N-), רווחים, סימני פיסוק, ושגיאות כתיב אם קיימות.
-- אסור לשנות, לקצר, לערוך או להזיז טקסט.
-- אסור להחזיר שורות "תשובה:".
-
-
-חובה מוחלטת – Split sign:
-- אחרי שורות הסיכון, הדפס בדיוק את השורה הבאה לבדה:
-===SPLIT_RISK_REASONS===
-
-
-חובה מוחלטת – חלק 2 (סיבות סיכון):
-- עבור כל שורה שהוחזרה בחלק 1, החזר שורה מקבילה של סיבה קצרה.
-- פורמט מחייב לכל שורה:
--N- | <סיבה קצרה>
-- מספר השורה (-N-) חייב להיות זהה בדיוק למספר השורה של שורת הסיכון.
-- הסיבה:
-- אורך: 2–6 מילים בלבד
-- תיאורית וקטגוריאלית בלבד, ללא הסבר
-- דוגמאות תקינות:
-נטייה אובדנית
-איום התאבדותי מפורש
-אמירה על מוות
-יאוש עמוק
-חוסר תקווה קיצוני
-בדידות קיומית
-- אם קיימים כמה סוגי סיכון באותה שורה – בחר רק את המרכזי והחמור ביותר.
-
-
-מקרה קצה:
-אם לא נמצאה אף שורת מטופל עם RISK:
-- החזר רק את Split sign בשורה אחת:
-<<<SPLIT_RISK_REASONS>>>
-(ולאחריו כלום)
-
-
-איסורים מוחלטים:
-- לא JSON
-- לא Markdown
-- לא כותרות נוספות
-- לא הסברים
-- לא שינוי סדר שורות
-- לא סימוני RISK בתוך הטקסט
-`;
-
-function buildSupabaseSelectUrl({ supabaseUrl, phone }) {
-  const base = supabaseUrl.replace(/\/$/, "");
-  const params = new URLSearchParams();
-  params.set("select", "summarized_linked_talk_risk");
-  params.set("phone", `eq.${phone}`);
-  params.set("limit", "1");
-  return `${base}/rest/v1/users_total?${params.toString()}`;
-}
-
-async function supabaseGetSummarizedLinkedTalkRisk({ supabaseUrl, supabaseKey, phone }) {
-  const url = buildSupabaseSelectUrl({ supabaseUrl, phone });
-
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      apikey: supabaseKey,
-      Authorization: `Bearer ${supabaseKey}`,
-      Accept: "application/json",
-    },
-  });
-
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`Supabase error ${res.status}: ${text}`);
-  }
-
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error(`Supabase returned non-JSON: ${text}`);
-  }
-
-  if (!Array.isArray(data) || data.length === 0) {
-    throw new Error(`No row found in users_total for phone=${phone}`);
-  }
-
-  const value = data[0]?.summarized_linked_talk_risk;
-  if (typeof value !== "string") {
-    // אם השדה NULL/ריק/לא מחרוזת — נחזיר מחרוזת ריקה כדי לא להפיל את כל הזרימה
-    return "";
-  }
-  return value;
-}
-
-function extractAssistantTextFromResponsesApi(rawJson) {
-  // Responses API מחזיר output שהוא מערך items.
-  // אנחנו מחפשים הודעות מסוג "message" ומוציאים מהם טקסט.
-  // fallback: אם יש output_text (לעיתים קיים) נשתמש בו.
-  if (rawJson && typeof rawJson.output_text === "string" && rawJson.output_text.length) {
-    return rawJson.output_text;
-  }
-
-  const out = rawJson?.output;
-  if (!Array.isArray(out)) return "";
-
-  const chunks = [];
-
-  for (const item of out) {
-    // בדרך כלל item.type === "message"
-    if (item?.type === "message") {
-      const content = item?.content;
-      if (Array.isArray(content)) {
-        for (const part of content) {
-          // בדרך כלל part.type === "output_text" עם part.text
-          if (typeof part?.text === "string") chunks.push(part.text);
-          else if (typeof part?.content === "string") chunks.push(part.content);
-        }
-      }
-    }
-
-    // fallback נוסף: אם יש item.text
-    if (typeof item?.text === "string") chunks.push(item.text);
-  }
-
-  return chunks.join("").trim();
-}
-
-async function runOpenAIResponses({ apiKey, model, instructions, inputText, maxOutputTokens }) {
-  const res = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      instructions,
-      input: inputText ?? "",
-      max_output_tokens: maxOutputTokens,
-    }),
-  });
-
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`OpenAI error ${res.status}: ${text}`);
-  }
-
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error(`OpenAI returned non-JSON: ${text}`);
-  }
-
-  return data;
-}
-
-async function main() {
-  const inputText = await supabaseGetSummarizedLinkedTalkRisk({
-    supabaseUrl: SUPABASE_URL,
-    supabaseKey: SUPABASE_KEY,
-    phone: PHONE,
-  });
-
-  const openaiRaw = await runOpenAIResponses({
-    apiKey: OPENAI_API_KEY,
-    model: OPENAI_MODEL,
-    instructions: INSTRUCTIONS,
-    inputText,
-    maxOutputTokens: 4000,
-  });
-
-  const assistantText = extractAssistantTextFromResponsesApi(openaiRaw);
-
-  // "תוצאה בשדה: response" — מודפס כ-JSON, נוח ל-Zapier/runner
-  const result = { response: assistantText };
-
-  process.stdout.write(JSON.stringify(result, null, 2));
-}
-
-main().catch((err) => {
-  // שגיאה "נקייה" לסטנדרט ארור + יציאה בקוד 1
-  process.stderr.write(String(err?.stack || err?.message || err) + "\n");
-  process.exit(1);
-});
-
-
-// --- RUN (כמו שביקשת שאסיים תמיד) ---
-/*
-cd C:\Users\User\bot-poc
-node .\script_link.mjs
-*/
+      - name: Run risk scan
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          node scripts/risk_scan_phone_12121212.mjs
