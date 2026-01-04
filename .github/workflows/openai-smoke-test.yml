@@ -1,11 +1,23 @@
-name: OpenAI smoke test
+name: OpenAI smoke test (risk scan)
 
 on:
   workflow_dispatch:
+    inputs:
+      phone:
+        description: "Phone number to scan (default 12121212)"
+        required: false
+        default: "12121212"
+        type: string
+      openai_model:
+        description: "OpenAI model (default gpt-5.2)"
+        required: false
+        default: "gpt-5.2"
+        type: string
 
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repo
@@ -21,5 +33,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PHONE: ${{ inputs.phone }}
+          OPENAI_MODEL: ${{ inputs.openai_model }}
         run: |
           node scripts/risk_scan_phone_12121212.mjs
