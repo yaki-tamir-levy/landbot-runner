@@ -19,7 +19,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.2";
 const BATCH_SIZE = Number(process.env.BATCH_SIZE || "50");
-const MAX_ITEMS = Number(process.env.MAX_ITEMS || "1"); // SMOKE: ברירת מחדל 1
+const MAX_ITEMS = Number(process.env.MAX_ITEMS || "0"); // SMOKE: ברירת מחדל 1
 const ORDER_BY = process.env.ORDER_BY || "created_at.asc";
 
 if (!SUPABASE_URL) throw new Error("Missing env: SUPABASE_URL");
