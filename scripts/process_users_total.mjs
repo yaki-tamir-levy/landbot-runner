@@ -1,17 +1,15 @@
 /**
  * scripts/process_users_total.mjs
  *
- * Adds 2nd OpenAI call for risk:
- * - Fetch prompt10 from users_information where phone=77777777 (column user_text)
- * - Call OpenAI with:
- *   model: gpt-4o
- *   instructions: "הנחיות מחייבות:\n" + prompt10
- *   input: "שיחות קודמות:\n" + summarized_linked_talk_num
- *   max_output_tokens: 4000
- *   temperature: 0.4
- * - Save output to users_total.summarized_linked_talk_risk
+ * Change: split OpenAI risk output (X) by delimiter:
+ *   ===SPLIT_RISK_REASONS===
+ * - Before delimiter -> users_total.summarized_linked_talk_risk
+ * - After delimiter  -> users_total.risk_reasons
  *
- * Keeps previous behavior:
+ * Prompt10 source:
+ * - users_information where phone=77777777, column user_text
+ *
+ * Other behavior:
  * - numbering based on talkSource (linked_talk if present else last_talk_tzvira)
  * - separator "========" between blocks in summarized_linked_talk
  * - last_summary_at Israel clock with +00 suffix
@@ -27,6 +25,8 @@ const USERS_TOTAL_TABLE = "users_total";
 const USERS_INFORMATION_TABLE = "users_information";
 const PROMPT10_PHONE = "77777777";
 const PROMPT10_COLUMN = "user_text";
+
+const RISK_SPLIT_DELIM = "===SPLIT_RISK_REASONS===";
 
 // ---------- helpers ----------
 function mustEnv(name) {
@@ -106,6 +106,15 @@ function concatSummaries(existing, header, summaryText) {
   return (existing ?? "") + block;
 }
 
+function splitRiskText(x) {
+  const s = String(x ?? "");
+  const idx = s.indexOf(RISK_SPLIT_DELIM);
+  if (idx === -1) return { risk: s.trim(), reasons: "" };
+  const before = s.slice(0, idx).trim();
+  const after = s.slice(idx + RISK_SPLIT_DELIM.length).trim();
+  return { risk: before, reasons: after };
+}
+
 // ---------- OpenAI ----------
 function extractResponseText(respJson) {
   if (!respJson) return "";
@@ -174,7 +183,7 @@ async function supaGetNewRows(limit) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
   url.searchParams.set(
     "select",
-    "phone,processed,linked_talk,last_talk_tzvira,last_summary_at,summarized_linked_talk,summarized_linked_talk_num,summarized_linked_talk_risk"
+    "phone,processed,linked_talk,last_talk_tzvira,last_summary_at,summarized_linked_talk,summarized_linked_talk_num,summarized_linked_talk_risk,risk_reasons"
   );
   url.searchParams.set("processed", "eq.NEW");
   url.searchParams.set("order", "phone.asc");
@@ -246,17 +255,19 @@ async function processOneRow(row, prompt10Text) {
   const header = summaryHeaderIsrael();
   const summarized = concatSummaries(row.summarized_linked_talk, header, summaryText);
 
-  const riskText = await callOpenAIRisk(prompt10Text, numberedText);
+  const x = await callOpenAIRisk(prompt10Text, numberedText);
+  const { risk, reasons } = splitRiskText(x);
 
   await supaPatch(phone, {
     last_summary_at: lastSummaryAtIsraelWithPlus00(),
     summarized_linked_talk: summarized,
     summarized_linked_talk_num: numberedText,
-    summarized_linked_talk_risk: riskText,
+    summarized_linked_talk_risk: risk,
+    risk_reasons: reasons,
     processed: "DONE",
   }, "processing");
 
-  console.log(`[DONE] phone=${phone} (summary_len=${summaryText.length}, risk_len=${riskText.length})`);
+  console.log(`[DONE] phone=${phone} (summary_len=${summaryText.length}, risk_len=${risk.length}, reasons_len=${reasons.length})`);
 }
 
 async function markError(phone, err) {
