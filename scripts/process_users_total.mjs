@@ -1,4 +1,3 @@
-\
 /**
  * scripts/process_users_total.mjs
  *
