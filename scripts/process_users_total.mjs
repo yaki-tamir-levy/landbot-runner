@@ -93,7 +93,7 @@ function summaryHeaderIsrael() {
   return `${ddmmyyyy} - ${compact}`;
 }
 
-// Build numbered lines only for lines containing "שאלה:"/"תשובה:" OR starting with Q:/A:
+// Build numbered lines only for lines containing "×©××œ×”:"/"×ª×©×•×‘×”:" OR starting with Q:/A:
 function buildNumberedTalk(talkText) {
   if (!talkText || typeof talkText !== "string") return "";
   const lines = talkText.split(/\r?\n/);
@@ -103,7 +103,7 @@ function buildNumberedTalk(talkText) {
   for (const line of lines) {
     const s = line ?? "";
     // Match either Hebrew markers anywhere, or Q/A at start (with optional spaces)
-    if (/\b(שאלה:|תשובה:)\b/.test(s) || /^\s*(Q:|A:)\b/.test(s)) {
+    if (/\b(×©××œ×”:|×ª×©×•×‘×”:)\b/.test(s) || /^\s*(Q:|A:)\b/.test(s)) {
       out.push(`-${n}- ${s}`);
       n++;
     }
@@ -144,8 +144,8 @@ async function callOpenAIToSummarize(talk) {
   const body = {
     model: "gpt-4o",
     store: true,
-    instructions: "נא סכם את השיחה",
-    input: `שיחות קודמות:\n${talk ?? ""}`,
+    instructions: "× × ×¡×›× ××ª ×”×©×™×—×”",
+    input: `×©×™×—×•×ª ×§×•×“×ž×•×ª:\n${talk ?? ""}`,
     max_output_tokens: 1000,
     temperature: 0.4,
   };
