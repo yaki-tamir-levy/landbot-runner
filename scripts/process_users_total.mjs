@@ -1,12 +1,21 @@
 /**
  * scripts/process_users_total.mjs
  *
- * Fixes:
- * 1) If linked_talk is empty but last_talk_tzvira already has content, use last_talk_tzvira
- *    as the source for numbering + OpenAI summary (so summarized_linked_talk_num won't be empty).
- * 2) Do NOT rely on \b word-boundary for Hebrew. Use simple contains/startsWith checks.
- * 3) Before appending to summarized_linked_talk, insert a blank line + '=========' separator (between blocks).
- * 4) Does NOT use a summary1 column.
+ * Adds 2nd OpenAI call for risk:
+ * - Fetch prompt10 from users_information where phone=77777777 (column user_text)
+ * - Call OpenAI with:
+ *   model: gpt-4o
+ *   instructions: "הנחיות מחייבות:\n" + prompt10
+ *   input: "שיחות קודמות:\n" + summarized_linked_talk_num
+ *   max_output_tokens: 4000
+ *   temperature: 0.4
+ * - Save output to users_total.summarized_linked_talk_risk
+ *
+ * Keeps previous behavior:
+ * - numbering based on talkSource (linked_talk if present else last_talk_tzvira)
+ * - separator "========" between blocks in summarized_linked_talk
+ * - last_summary_at Israel clock with +00 suffix
+ * - processed NEW -> processing -> DONE / ERROR
  */
 
 const SUPABASE_URL = mustEnv("SUPABASE_URL");
@@ -15,6 +24,9 @@ const OPENAI_API_KEY = mustEnv("OPENAI_API_KEY");
 const MAX_ITEMS = parseInt(process.env.MAX_ITEMS ?? "20", 10);
 
 const USERS_TOTAL_TABLE = "users_total";
+const USERS_INFORMATION_TABLE = "users_information";
+const PROMPT10_PHONE = "77777777";
+const PROMPT10_COLUMN = "user_text";
 
 // ---------- helpers ----------
 function mustEnv(name) {
@@ -70,11 +82,9 @@ function summaryHeaderIsrael() {
 // Number only lines that contain "שאלה:" / "תשובה:" anywhere, or start with Q:/A:
 function buildNumberedTalk(talkText) {
   if (!talkText || typeof talkText !== "string") return { numberedText: "", count: 0 };
-
   const lines = talkText.split(/\r?\n/);
   const out = [];
   let n = 1;
-
   for (const rawLine of lines) {
     const line = rawLine ?? "";
     const t = line.trimStart();
@@ -85,17 +95,18 @@ function buildNumberedTalk(talkText) {
       n++;
     }
   }
-
   return { numberedText: out.join("\n"), count: out.length };
 }
 
 // Insert separator between blocks (not at very beginning)
 function concatSummaries(existing, header, summaryText) {
-  const sep = existing && String(existing).length > 0 ? "\n\n========\n" : "";
+  const hasExisting = existing && String(existing).length > 0;
+  const sep = hasExisting ? "\n\n========\n" : "";
   const block = `${sep}${header}\n${summaryText ?? ""}\n`;
   return (existing ?? "") + block;
 }
 
+// ---------- OpenAI ----------
 function extractResponseText(respJson) {
   if (!respJson) return "";
   if (Array.isArray(respJson.output)) {
@@ -113,16 +124,7 @@ function extractResponseText(respJson) {
   return "";
 }
 
-async function callOpenAIToSummarize(talk) {
-  const body = {
-    model: "gpt-4o",
-    store: true,
-    instructions: "נא סכם את השיחה",
-    input: `שיחות קודמות:\n${talk ?? ""}`,
-    max_output_tokens: 1000,
-    temperature: 0.4,
-  };
-
+async function callOpenAI(body) {
   const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -142,8 +144,29 @@ async function callOpenAIToSummarize(talk) {
   }
 
   const out = extractResponseText(json);
-  if (!out) throw new Error("OpenAI returned empty summary text");
+  if (!out) throw new Error("OpenAI returned empty text");
   return out;
+}
+
+async function callOpenAISummary(talk) {
+  return await callOpenAI({
+    model: "gpt-4o",
+    store: true,
+    instructions: "נא סכם את השיחה",
+    input: `שיחות קודמות:\n${talk ?? ""}`,
+    max_output_tokens: 1000,
+    temperature: 0.4,
+  });
+}
+
+async function callOpenAIRisk(prompt10, numberedTalk) {
+  return await callOpenAI({
+    model: "gpt-4o",
+    instructions: `הנחיות מחייבות:\n${prompt10 ?? ""}`,
+    input: `שיחות קודמות:\n${numberedTalk ?? ""}`,
+    max_output_tokens: 4000,
+    temperature: 0.4,
+  });
 }
 
 // ---------- Supabase ----------
@@ -151,7 +174,7 @@ async function supaGetNewRows(limit) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
   url.searchParams.set(
     "select",
-    "phone,processed,linked_talk,last_talk_tzvira,last_summary_at,summarized_linked_talk,summarized_linked_talk_num"
+    "phone,processed,linked_talk,last_talk_tzvira,last_summary_at,summarized_linked_talk,summarized_linked_talk_num,summarized_linked_talk_risk"
   );
   url.searchParams.set("processed", "eq.NEW");
   url.searchParams.set("order", "phone.asc");
@@ -177,11 +200,30 @@ async function supaPatch(phone, patchObj, expectedProcessed = null) {
   if (!res.ok) throw new Error(bodyText || `Supabase PATCH failed (${res.status})`);
 }
 
-async function processOneRow(row) {
+async function supaFetchPrompt10() {
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_INFORMATION_TABLE}`);
+  url.searchParams.set("select", PROMPT10_COLUMN);
+  url.searchParams.set("phone", `eq.${PROMPT10_PHONE}`);
+  url.searchParams.set("limit", "1");
+
+  const res = await fetch(url, { headers: supaHeaders() });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Supabase GET prompt10 failed: ${res.status} ${text}`);
+
+  let rows = [];
+  try { rows = JSON.parse(text); } catch { rows = []; }
+  const prompt10 = Array.isArray(rows) && rows.length ? rows[0]?.[PROMPT10_COLUMN] : null;
+
+  if (!prompt10 || !String(prompt10).trim()) {
+    throw new Error(`Prompt10 is empty/missing in ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} for phone=${PROMPT10_PHONE}`);
+  }
+  return String(prompt10);
+}
+
+async function processOneRow(row, prompt10Text) {
   const phone = row.phone;
   if (!phone) throw new Error("Row missing phone");
 
-  // Decide the talk source:
   const linkedTalk = (row.linked_talk ?? "");
   const existingLast = (row.last_talk_tzvira ?? "");
   const talkSource = linkedTalk && linkedTalk.trim() ? linkedTalk : existingLast;
@@ -190,8 +232,7 @@ async function processOneRow(row) {
     throw new Error("No talk text found in linked_talk or last_talk_tzvira");
   }
 
-  // Claim + move: only overwrite last_talk_tzvira if linkedTalk has content
-  // Always clear linked_talk (per spec).
+  // Claim + move: only overwrite last_talk_tzvira if linkedTalk has content; always clear linked_talk
   const movePatch = linkedTalk && linkedTalk.trim()
     ? { processed: "processing", last_talk_tzvira: linkedTalk, linked_talk: null }
     : { processed: "processing", linked_talk: null };
@@ -201,19 +242,21 @@ async function processOneRow(row) {
   const { numberedText, count } = buildNumberedTalk(talkSource);
   console.log(`[INFO] phone=${phone} numbered_lines=${count}`);
 
-  const summaryText = await callOpenAIToSummarize(talkSource);
-
+  const summaryText = await callOpenAISummary(talkSource);
   const header = summaryHeaderIsrael();
   const summarized = concatSummaries(row.summarized_linked_talk, header, summaryText);
+
+  const riskText = await callOpenAIRisk(prompt10Text, numberedText);
 
   await supaPatch(phone, {
     last_summary_at: lastSummaryAtIsraelWithPlus00(),
     summarized_linked_talk: summarized,
     summarized_linked_talk_num: numberedText,
+    summarized_linked_talk_risk: riskText,
     processed: "DONE",
   }, "processing");
 
-  console.log(`[DONE] phone=${phone} (summary length=${summaryText.length})`);
+  console.log(`[DONE] phone=${phone} (summary_len=${summaryText.length}, risk_len=${riskText.length})`);
 }
 
 async function markError(phone, err) {
@@ -228,13 +271,17 @@ async function markError(phone, err) {
 
 async function main() {
   console.log(`Scanning ${USERS_TOTAL_TABLE} for processed=NEW (limit=${MAX_ITEMS})...`);
+
+  const prompt10Text = await supaFetchPrompt10();
+  console.log(`[INFO] Loaded prompt10 from ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} phone=${PROMPT10_PHONE} (len=${prompt10Text.length})`);
+
   const rows = await supaGetNewRows(MAX_ITEMS);
   console.log(`Found ${rows.length} NEW rows.`);
 
   for (const row of rows) {
     const phone = row.phone ?? "(unknown)";
     try {
-      await processOneRow(row);
+      await processOneRow(row, prompt10Text);
       await sleep(200);
     } catch (err) {
       await markError(phone, err);
