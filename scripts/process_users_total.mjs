@@ -1,22 +1,12 @@
 /**
  * scripts/process_users_total.mjs
  *
- * Scans users_total where processed='NEW' (up to MAX_ITEMS) and for each row:
- * - sets processed='processing'
- * - moves linked_talk -> last_talk_tzvira and clears linked_talk
- * - calls OpenAI (Responses API) to summarize last_talk_tzvira
- * - updates last_summary_at with Israel local time but suffix +00 (as requested)
- * - appends the summary into summarized_linked_talk with a date header + blank line
- * - writes a numbered version of the talk into summarized_linked_talk_num
- * - sets processed='DONE' or 'ERROR'
- *
- * NOTE: Does NOT read/write a users_total.summary1 column (it may not exist).
- *
- * Env:
- *  SUPABASE_URL
- *  SUPABASE_SERVICE_ROLE_KEY
- *  OPENAI_API_KEY
- *  MAX_ITEMS (default 20)
+ * Fixes:
+ * 1) If linked_talk is empty but last_talk_tzvira already has content, use last_talk_tzvira
+ *    as the source for numbering + OpenAI summary (so summarized_linked_talk_num won't be empty).
+ * 2) Do NOT rely on \b word-boundary for Hebrew. Use simple contains/startsWith checks.
+ * 3) Before appending to summarized_linked_talk, insert a blank line + '=========' separator (between blocks).
+ * 4) Does NOT use a summary1 column.
  */
 
 const SUPABASE_URL = mustEnv("SUPABASE_URL");
@@ -46,7 +36,6 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Returns Israel time components for "now" using Intl (Asia/Jerusalem)
 function israelNowParts() {
   const dt = new Date();
   const fmt = new Intl.DateTimeFormat("en-GB", {
@@ -59,29 +48,18 @@ function israelNowParts() {
     second: "2-digit",
     hour12: false,
   });
-
   const parts = fmt.formatToParts(dt);
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
-  const ms = dt.getMilliseconds(); // ms precision only
-  const micro = String(ms).padStart(3, "0") + "000"; // 6 digits
-  return {
-    year: map.year,
-    month: map.month,
-    day: map.day,
-    hour: map.hour,
-    minute: map.minute,
-    second: map.second,
-    micro,
-  };
+  const ms = dt.getMilliseconds();
+  const micro = String(ms).padStart(3, "0") + "000";
+  return { ...map, micro };
 }
 
-// last_summary_at format requested: "YYYY-MM-DD HH:mm:ss.ffffff+00" with Israel clock but +00 suffix
 function lastSummaryAtIsraelWithPlus00() {
   const p = israelNowParts();
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}.${p.micro}+00`;
 }
 
-// Header format requested: "DD/MM/YYYY - YYYYMMDDTHHMMSSZ" (Israel clock)
 function summaryHeaderIsrael() {
   const p = israelNowParts();
   const ddmmyyyy = `${p.day}/${p.month}/${p.year}`;
@@ -89,40 +67,44 @@ function summaryHeaderIsrael() {
   return `${ddmmyyyy} - ${compact}`;
 }
 
-// Build numbered lines only for lines containing "שאלה:"/"תשובה:" OR starting with Q:/A:
+// Number only lines that contain "שאלה:" / "תשובה:" anywhere, or start with Q:/A:
 function buildNumberedTalk(talkText) {
-  if (!talkText || typeof talkText !== "string") return "";
+  if (!talkText || typeof talkText !== "string") return { numberedText: "", count: 0 };
+
   const lines = talkText.split(/\r?\n/);
   const out = [];
   let n = 1;
 
-  for (const line of lines) {
-    const s = line ?? "";
-    if (/\b(שאלה:|תשובה:)\b/.test(s) || /^\s*(Q:|A:)\b/.test(s)) {
-      out.push(`-${n}- ${s}`);
+  for (const rawLine of lines) {
+    const line = rawLine ?? "";
+    const t = line.trimStart();
+    const isHeb = line.includes("שאלה:") || line.includes("תשובה:");
+    const isQA = t.startsWith("Q:") || t.startsWith("A:");
+    if (isHeb || isQA) {
+      out.push(`-${n}- ${line}`);
       n++;
     }
   }
-  return out.join("\n");
+
+  return { numberedText: out.join("\n"), count: out.length };
 }
 
+// Insert separator between blocks (not at very beginning)
 function concatSummaries(existing, header, summaryText) {
-  const block = `${header}\n${summaryText ?? ""}\n\n`;
-  if (!existing) return block;
-  return String(existing) + block;
+  const sep = existing && String(existing).length > 0 ? "\n\n========\n" : "";
+  const block = `${sep}${header}\n${summaryText ?? ""}\n`;
+  return (existing ?? "") + block;
 }
 
-// Extract text from OpenAI Responses API response
 function extractResponseText(respJson) {
   if (!respJson) return "";
   if (Array.isArray(respJson.output)) {
     const chunks = [];
     for (const item of respJson.output) {
-      if (!item || !Array.isArray(item.content)) continue;
+      if (!item?.content) continue;
       for (const c of item.content) {
-        if (!c) continue;
-        if (c.type === "output_text" && typeof c.text === "string") chunks.push(c.text);
-        if ((c.type === "text" || c.type === "output") && typeof c.text === "string") chunks.push(c.text);
+        if (c?.type === "output_text" && typeof c.text === "string") chunks.push(c.text);
+        else if (typeof c?.text === "string") chunks.push(c.text);
       }
     }
     if (chunks.length) return chunks.join("\n").trim();
@@ -131,7 +113,6 @@ function extractResponseText(respJson) {
   return "";
 }
 
-// ---------- OpenAI ----------
 async function callOpenAIToSummarize(talk) {
   const body = {
     model: "gpt-4o",
@@ -153,24 +134,21 @@ async function callOpenAIToSummarize(talk) {
 
   const text = await res.text();
   let json;
-  try {
-    json = JSON.parse(text);
-  } catch {}
+  try { json = JSON.parse(text); } catch {}
 
   if (!res.ok) {
     const msg = json?.error?.message || text || `OpenAI error status ${res.status}`;
     throw new Error(msg);
   }
 
-  const outText = extractResponseText(json);
-  if (!outText) throw new Error("OpenAI returned empty summary text");
-  return outText;
+  const out = extractResponseText(json);
+  if (!out) throw new Error("OpenAI returned empty summary text");
+  return out;
 }
 
 // ---------- Supabase ----------
 async function supaGetNewRows(limit) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
-  // IMPORTANT: no summary1 column here
   url.searchParams.set(
     "select",
     "phone,processed,linked_talk,last_talk_tzvira,last_summary_at,summarized_linked_talk,summarized_linked_talk_num"
@@ -184,65 +162,56 @@ async function supaGetNewRows(limit) {
   return await res.json();
 }
 
-async function supaPatchByPhoneAndProcessed(phone, expectedProcessed, patchObj) {
+async function supaPatch(phone, patchObj, expectedProcessed = null) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
   url.searchParams.set("phone", `eq.${phone}`);
   if (expectedProcessed) url.searchParams.set("processed", `eq.${expectedProcessed}`);
 
   const res = await fetch(url, {
     method: "PATCH",
-    headers: {
-      ...supaHeaders(),
-      Prefer: "return=representation",
-    },
+    headers: { ...supaHeaders(), Prefer: "return=representation" },
     body: JSON.stringify(patchObj),
   });
 
   const bodyText = await res.text();
-  if (!res.ok) throw new Error(`Supabase PATCH failed (${phone}): ${res.status} ${bodyText}`);
-
-  let json = [];
-  try {
-    json = JSON.parse(bodyText || "[]");
-  } catch {}
-  return Array.isArray(json) ? json.length : 0;
+  if (!res.ok) throw new Error(bodyText || `Supabase PATCH failed (${res.status})`);
 }
 
 async function processOneRow(row) {
   const phone = row.phone;
   if (!phone) throw new Error("Row missing phone");
 
-  // 1) claim: NEW -> processing + move linked_talk
-  const linkedTalk = row.linked_talk ?? "";
-  const claimed = await supaPatchByPhoneAndProcessed(phone, "NEW", {
-    processed: "processing",
-    last_talk_tzvira: linkedTalk,
-    linked_talk: null,
-  });
+  // Decide the talk source:
+  const linkedTalk = (row.linked_talk ?? "");
+  const existingLast = (row.last_talk_tzvira ?? "");
+  const talkSource = linkedTalk && linkedTalk.trim() ? linkedTalk : existingLast;
 
-  if (claimed === 0) {
-    console.log(`[SKIP] phone=${phone} was not NEW (already claimed).`);
-    return;
+  if (!talkSource || !talkSource.trim()) {
+    throw new Error("No talk text found in linked_talk or last_talk_tzvira");
   }
 
-  // 2) create numbered talk
-  const numbered = buildNumberedTalk(linkedTalk);
+  // Claim + move: only overwrite last_talk_tzvira if linkedTalk has content
+  // Always clear linked_talk (per spec).
+  const movePatch = linkedTalk && linkedTalk.trim()
+    ? { processed: "processing", last_talk_tzvira: linkedTalk, linked_talk: null }
+    : { processed: "processing", linked_talk: null };
 
-  // 3) OpenAI summary (kept in-memory only)
-  const summaryText = await callOpenAIToSummarize(linkedTalk);
+  await supaPatch(phone, movePatch, "NEW");
 
-  // 4) timestamps & append
-  const last_summary_at = lastSummaryAtIsraelWithPlus00();
+  const { numberedText, count } = buildNumberedTalk(talkSource);
+  console.log(`[INFO] phone=${phone} numbered_lines=${count}`);
+
+  const summaryText = await callOpenAIToSummarize(talkSource);
+
   const header = summaryHeaderIsrael();
-  const summarized_linked_talk = concatSummaries(row.summarized_linked_talk, header, summaryText);
+  const summarized = concatSummaries(row.summarized_linked_talk, header, summaryText);
 
-  // 5) final update + DONE (no summary1 field)
-  await supaPatchByPhoneAndProcessed(phone, "processing", {
-    last_summary_at,
-    summarized_linked_talk,
-    summarized_linked_talk_num: numbered,
+  await supaPatch(phone, {
+    last_summary_at: lastSummaryAtIsraelWithPlus00(),
+    summarized_linked_talk: summarized,
+    summarized_linked_talk_num: numberedText,
     processed: "DONE",
-  });
+  }, "processing");
 
   console.log(`[DONE] phone=${phone} (summary length=${summaryText.length})`);
 }
@@ -251,7 +220,7 @@ async function markError(phone, err) {
   const msg = err?.message ? err.message : String(err);
   console.error(`[ERROR] phone=${phone}: ${msg}`);
   try {
-    await supaPatchByPhoneAndProcessed(phone, null, { processed: "ERROR" });
+    await supaPatch(phone, { processed: "ERROR" });
   } catch (e) {
     console.error(`[ERROR] Failed to mark ERROR for phone=${phone}: ${e?.message ?? e}`);
   }
