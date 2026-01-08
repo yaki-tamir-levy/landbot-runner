@@ -17,8 +17,7 @@
  *   2) If summarized_linked_talk_risk not empty:
  *      - For each numbered line "-N- ..." in summarized_linked_talk_risk
  *        match "-N- | ..." in risk_reasons and insert into risk_reviews:
- *        - id, time_key, phone, name
- *        - line_no = N
+ *        - id, time_key, phone, line_num  (PK uses line_num)
  *        - short_risk = text from risk line
  *        - risk_reasons = text after "|" from reason line
  *
@@ -321,7 +320,6 @@ async function supaInsert(table, payload) {
 }
 
 async function insertUsersTzviraRow({ id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk }) {
-  // users_tzvira columns (verified): id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk
   await supaInsert(USERS_TZVIRA_TABLE, {
     id,
     time_key,
@@ -334,7 +332,6 @@ async function insertUsersTzviraRow({ id, time_key, phone, name, last_talk_tzvir
 
 async function insertRiskReviewsRows(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return;
-  // risk_reviews: we insert only the process fields for this stage
   await supaInsert(RISK_REVIEWS_TABLE, rows);
 }
 
@@ -355,7 +352,6 @@ async function processOneRow(row, prompt10Text) {
     throw new Error("No talk text found in linked_talk or last_talk_tzvira");
   }
 
-  // Claim + move: only overwrite last_talk_tzvira if linkedTalk has content; always clear linked_talk
   const movePatch =
     linkedTalk && linkedTalk.trim()
       ? { processed: "processing", last_talk_tzvira: linkedTalk, linked_talk: null }
@@ -373,10 +369,9 @@ async function processOneRow(row, prompt10Text) {
   const x = await callOpenAIRisk(prompt10Text, numberedText);
   const { risk, reasons } = splitRiskText(x);
 
-  // Use one timestamp value consistently for TOTAL + TZVIRA + RISK_REVIEWS
   const lastSummaryAt = lastSummaryAtIsraelWithPlus00();
 
-  // 1) Update TOTAL (DONE)
+  // Update TOTAL (DONE)
   await supaPatch(
     phone,
     {
@@ -390,7 +385,7 @@ async function processOneRow(row, prompt10Text) {
     "processing"
   );
 
-  // 2) Insert into users_tzvira (snapshot)
+  // Insert snapshot to users_tzvira
   await insertUsersTzviraRow({
     id,
     time_key: lastSummaryAt,
@@ -400,18 +395,18 @@ async function processOneRow(row, prompt10Text) {
     summarized_linked_talk: summarized,
   });
 
-  // 3) If risk exists -> insert into risk_reviews
+  // Insert risks to risk_reviews (PK: id,time_key,phone,line_num)
   const riskTrim = String(risk ?? "").trim();
   if (riskTrim) {
     const riskLines = parseNumberedLines(riskTrim); // [{line_no, text}]
     const reasonsMap = parseReasonsMap(reasons); // Map(line_no -> reason)
 
     const reviewRows = riskLines.map((rl) => ({
-      id, // per your instruction: id = users_total.id
+      id, // users_total.id
       time_key: lastSummaryAt,
       phone,
       name,
-      line_no: rl.line_no,
+      line_num: rl.line_no,          // <-- IMPORTANT: line_num (PK)
       short_risk: rl.text,
       risk_reasons: reasonsMap.get(rl.line_no) ?? "",
     }));
