@@ -256,6 +256,7 @@ async function supaGetNewRows(limit) {
       "summarized_linked_talk_num",
       "summarized_linked_talk_risk",
       "risk_reasons",
+      "talk_id",
     ].join(",")
   );
   url.searchParams.set("processed", "eq.NEW");
@@ -320,6 +321,7 @@ async function supaInsert(table, payload) {
 }
 
 async function insertUsersTzviraRow({ id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk }) {
+  // users_tzvira columns (verified): id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk
   await supaInsert(USERS_TZVIRA_TABLE, {
     id,
     time_key,
@@ -332,6 +334,7 @@ async function insertUsersTzviraRow({ id, time_key, phone, name, last_talk_tzvir
 
 async function insertRiskReviewsRows(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return;
+  // risk_reviews: we insert only the process fields for this stage
   await supaInsert(RISK_REVIEWS_TABLE, rows);
 }
 
@@ -340,7 +343,7 @@ async function processOneRow(row, prompt10Text) {
   if (!phone) throw new Error("Row missing phone");
 
   const id = row.id;
-  if (!id) throw new Error(`Row missing id for phone=${phone} (needed for users_tzvira / risk_reviews)`);
+  if (!id) throw new Error(`Row missing id for phone=${phone}`);
 
   const name = row.name ?? null;
 
@@ -387,7 +390,7 @@ async function processOneRow(row, prompt10Text) {
     "processing"
   );
 
-  // 2) Insert into users_tzvira
+  // 2) Insert into users_tzvira (snapshot)
   await insertUsersTzviraRow({
     id,
     time_key: lastSummaryAt,
@@ -404,7 +407,7 @@ async function processOneRow(row, prompt10Text) {
     const reasonsMap = parseReasonsMap(reasons); // Map(line_no -> reason)
 
     const reviewRows = riskLines.map((rl) => ({
-      id,
+      id, // per your instruction: id = users_total.id
       time_key: lastSummaryAt,
       phone,
       name,
