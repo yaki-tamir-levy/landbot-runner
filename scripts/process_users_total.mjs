@@ -6,6 +6,22 @@
  * - Before delimiter -> users_total.summarized_linked_talk_risk
  * - After delimiter  -> users_total.risk_reasons
  *
+ * New behavior (requested):
+ * - After updating users_total to DONE:
+ *   1) Insert a new row into users_tzvira:
+ *      - id = users_total.id
+ *      - time_key = users_total.last_summary_at (same value written)
+ *      - phone, name from users_total
+ *      - last_talk_tzvira = users_total.summarized_linked_talk_num (here: numberedText)
+ *      - summarized_linked_talk = users_total.summarized_linked_talk (here: summarized)
+ *   2) If summarized_linked_talk_risk not empty:
+ *      - For each numbered line "-N- ..." in summarized_linked_talk_risk
+ *        match "-N- | ..." in risk_reasons and insert into risk_reviews:
+ *        - id, time_key, phone, name
+ *        - line_no = N
+ *        - short_risk = text from risk line
+ *        - risk_reasons = text after "|" from reason line
+ *
  * Prompt10 source:
  * - users_information where phone=77777777, column user_text
  *
@@ -22,6 +38,9 @@ const OPENAI_API_KEY = mustEnv("OPENAI_API_KEY");
 const MAX_ITEMS = parseInt(process.env.MAX_ITEMS ?? "20", 10);
 
 const USERS_TOTAL_TABLE = "users_total";
+const USERS_TZVIRA_TABLE = "users_tzvira";
+const RISK_REVIEWS_TABLE = "risk_reviews";
+
 const USERS_INFORMATION_TABLE = "users_information";
 const PROMPT10_PHONE = "77777777";
 const PROMPT10_COLUMN = "user_text";
@@ -115,6 +134,46 @@ function splitRiskText(x) {
   return { risk: before, reasons: after };
 }
 
+/**
+ * Parse lines like:
+ *   -3- שאלה: ....
+ * Returns array of { line_no: number, text: string }
+ */
+function parseNumberedLines(text) {
+  const s = String(text ?? "").trim();
+  if (!s) return [];
+  const lines = s.split(/\r?\n/);
+  const out = [];
+  for (const raw of lines) {
+    const line = String(raw ?? "").trim();
+    if (!line) continue;
+    const m = line.match(/^\s*-(\d+)-\s*(.*)\s*$/);
+    if (!m) continue;
+    const lineNo = parseInt(m[1], 10);
+    if (!Number.isFinite(lineNo)) continue;
+    const body = String(m[2] ?? "").trim();
+    out.push({ line_no: lineNo, text: body });
+  }
+  return out;
+}
+
+/**
+ * Parse reason lines like:
+ *   -3- | יאוש עמוק
+ * Returns Map(line_no -> reasonText)
+ */
+function parseReasonsMap(text) {
+  const items = parseNumberedLines(text);
+  const map = new Map();
+  for (const it of items) {
+    const body = String(it.text ?? "");
+    const idx = body.indexOf("|");
+    const reason = idx >= 0 ? body.slice(idx + 1).trim() : body.trim();
+    map.set(it.line_no, reason);
+  }
+  return map;
+}
+
 // ---------- OpenAI ----------
 function extractResponseText(respJson) {
   if (!respJson) return "";
@@ -145,7 +204,9 @@ async function callOpenAI(body) {
 
   const text = await res.text();
   let json;
-  try { json = JSON.parse(text); } catch {}
+  try {
+    json = JSON.parse(text);
+  } catch {}
 
   if (!res.ok) {
     const msg = json?.error?.message || text || `OpenAI error status ${res.status}`;
@@ -183,7 +244,19 @@ async function supaGetNewRows(limit) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
   url.searchParams.set(
     "select",
-    "phone,processed,linked_talk,last_talk_tzvira,last_summary_at,summarized_linked_talk,summarized_linked_talk_num,summarized_linked_talk_risk,risk_reasons"
+    [
+      "id",
+      "phone",
+      "name",
+      "processed",
+      "linked_talk",
+      "last_talk_tzvira",
+      "last_summary_at",
+      "summarized_linked_talk",
+      "summarized_linked_talk_num",
+      "summarized_linked_talk_risk",
+      "risk_reasons",
+    ].join(",")
   );
   url.searchParams.set("processed", "eq.NEW");
   url.searchParams.set("order", "phone.asc");
@@ -220,21 +293,59 @@ async function supaFetchPrompt10() {
   if (!res.ok) throw new Error(`Supabase GET prompt10 failed: ${res.status} ${text}`);
 
   let rows = [];
-  try { rows = JSON.parse(text); } catch { rows = []; }
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    rows = [];
+  }
   const prompt10 = Array.isArray(rows) && rows.length ? rows[0]?.[PROMPT10_COLUMN] : null;
 
   if (!prompt10 || !String(prompt10).trim()) {
-    throw new Error(`Prompt10 is empty/missing in ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} for phone=${PROMPT10_PHONE}`);
+    throw new Error(
+      `Prompt10 is empty/missing in ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} for phone=${PROMPT10_PHONE}`
+    );
   }
   return String(prompt10);
+}
+
+async function supaInsert(table, payload) {
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${table}`);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...supaHeaders(), Prefer: "return=minimal" },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Supabase INSERT into ${table} failed: ${res.status} ${text}`);
+}
+
+async function insertUsersTzviraRow({ id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk }) {
+  await supaInsert(USERS_TZVIRA_TABLE, {
+    id,
+    time_key,
+    phone,
+    name,
+    last_talk_tzvira,
+    summarized_linked_talk,
+  });
+}
+
+async function insertRiskReviewsRows(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+  await supaInsert(RISK_REVIEWS_TABLE, rows);
 }
 
 async function processOneRow(row, prompt10Text) {
   const phone = row.phone;
   if (!phone) throw new Error("Row missing phone");
 
-  const linkedTalk = (row.linked_talk ?? "");
-  const existingLast = (row.last_talk_tzvira ?? "");
+  const id = row.id;
+  if (!id) throw new Error(`Row missing id for phone=${phone} (needed for users_tzvira / risk_reviews)`);
+
+  const name = row.name ?? null;
+
+  const linkedTalk = row.linked_talk ?? "";
+  const existingLast = row.last_talk_tzvira ?? "";
   const talkSource = linkedTalk && linkedTalk.trim() ? linkedTalk : existingLast;
 
   if (!talkSource || !talkSource.trim()) {
@@ -242,9 +353,10 @@ async function processOneRow(row, prompt10Text) {
   }
 
   // Claim + move: only overwrite last_talk_tzvira if linkedTalk has content; always clear linked_talk
-  const movePatch = linkedTalk && linkedTalk.trim()
-    ? { processed: "processing", last_talk_tzvira: linkedTalk, linked_talk: null }
-    : { processed: "processing", linked_talk: null };
+  const movePatch =
+    linkedTalk && linkedTalk.trim()
+      ? { processed: "processing", last_talk_tzvira: linkedTalk, linked_talk: null }
+      : { processed: "processing", linked_talk: null };
 
   await supaPatch(phone, movePatch, "NEW");
 
@@ -258,16 +370,58 @@ async function processOneRow(row, prompt10Text) {
   const x = await callOpenAIRisk(prompt10Text, numberedText);
   const { risk, reasons } = splitRiskText(x);
 
-  await supaPatch(phone, {
-    last_summary_at: lastSummaryAtIsraelWithPlus00(),
-    summarized_linked_talk: summarized,
-    summarized_linked_talk_num: numberedText,
-    summarized_linked_talk_risk: risk,
-    risk_reasons: reasons,
-    processed: "DONE",
-  }, "processing");
+  // Use one timestamp value consistently for TOTAL + TZVIRA + RISK_REVIEWS
+  const lastSummaryAt = lastSummaryAtIsraelWithPlus00();
 
-  console.log(`[DONE] phone=${phone} (summary_len=${summaryText.length}, risk_len=${risk.length}, reasons_len=${reasons.length})`);
+  // 1) Update TOTAL (DONE)
+  await supaPatch(
+    phone,
+    {
+      last_summary_at: lastSummaryAt,
+      summarized_linked_talk: summarized,
+      summarized_linked_talk_num: numberedText,
+      summarized_linked_talk_risk: risk,
+      risk_reasons: reasons,
+      processed: "DONE",
+    },
+    "processing"
+  );
+
+  // 2) Insert into users_tzvira
+  await insertUsersTzviraRow({
+    id,
+    time_key: lastSummaryAt,
+    phone,
+    name,
+    last_talk_tzvira: numberedText,
+    summarized_linked_talk: summarized,
+  });
+
+  // 3) If risk exists -> insert into risk_reviews
+  const riskTrim = String(risk ?? "").trim();
+  if (riskTrim) {
+    const riskLines = parseNumberedLines(riskTrim); // [{line_no, text}]
+    const reasonsMap = parseReasonsMap(reasons); // Map(line_no -> reason)
+
+    const reviewRows = riskLines.map((rl) => ({
+      id,
+      time_key: lastSummaryAt,
+      phone,
+      name,
+      line_no: rl.line_no,
+      short_risk: rl.text,
+      risk_reasons: reasonsMap.get(rl.line_no) ?? "",
+    }));
+
+    await insertRiskReviewsRows(reviewRows);
+    console.log(`[INFO] phone=${phone} inserted risk_reviews rows=${reviewRows.length}`);
+  }
+
+  console.log(
+    `[DONE] phone=${phone} (summary_len=${summaryText.length}, risk_len=${String(risk ?? "").length}, reasons_len=${String(
+      reasons ?? ""
+    ).length})`
+  );
 }
 
 async function markError(phone, err) {
@@ -284,7 +438,9 @@ async function main() {
   console.log(`Scanning ${USERS_TOTAL_TABLE} for processed=NEW (limit=${MAX_ITEMS})...`);
 
   const prompt10Text = await supaFetchPrompt10();
-  console.log(`[INFO] Loaded prompt10 from ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} phone=${PROMPT10_PHONE} (len=${prompt10Text.length})`);
+  console.log(
+    `[INFO] Loaded prompt10 from ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} phone=${PROMPT10_PHONE} (len=${prompt10Text.length})`
+  );
 
   const rows = await supaGetNewRows(MAX_ITEMS);
   console.log(`Found ${rows.length} NEW rows.`);
