@@ -2,8 +2,8 @@ name: SUPA precheck (users_total.processed)
 
 on:
   # אוטומטי: כל 15 דקות עגולות (UTC)
-  schedule:
-    - cron: "*/15 * * * *"
+  #schedule:
+  #  - cron: "*/15 * * * *"
   # ידני:
   workflow_dispatch:
     inputs:
