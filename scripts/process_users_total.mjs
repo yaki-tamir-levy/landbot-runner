@@ -14,7 +14,7 @@
  *      - phone, name from users_total
  *      - last_talk_tzvira = users_total.summarized_linked_talk_num (here: numberedText)
  *      - summarized_linked_talk = users_total.summarized_linked_talk (here: summarized)
- *   2) If summarized_linked_talk_risk not empty:
+ *   2) If risk_reasons is NOT empty:
  *      - For each numbered line "-N- ..." in summarized_linked_talk_risk
  *        match "-N- | ..." in risk_reasons and insert into risk_reviews:
  *        - id, time_key, phone, line_num  (PK uses line_num)
@@ -395,24 +395,33 @@ async function processOneRow(row, prompt10Text) {
     summarized_linked_talk: summarized,
   });
 
-  // Insert risks to risk_reviews (PK: id,time_key,phone,line_num)
-  const riskTrim = String(risk ?? "").trim();
-  if (riskTrim) {
-    const riskLines = parseNumberedLines(riskTrim); // [{line_no, text}]
-    const reasonsMap = parseReasonsMap(reasons); // Map(line_no -> reason)
+  // Insert risks to risk_reviews ONLY if risk_reasons is not empty
+  const reasonsTrim = String(reasons ?? "").trim();
+  if (reasonsTrim) {
+    const riskLines = parseNumberedLines(String(risk ?? "").trim());
+    const reasonsMap = parseReasonsMap(reasonsTrim);
 
-    const reviewRows = riskLines.map((rl) => ({
-      id, // users_total.id
-      time_key: lastSummaryAt,
-      phone,
-      name,
-      line_num: rl.line_no,          // <-- IMPORTANT: line_num (PK)
-      short_risk: rl.text,
-      risk_reasons: reasonsMap.get(rl.line_no) ?? "",
-    }));
+    // Create rows only for risk line numbers that exist in BOTH places
+    const reviewRows = riskLines
+      .filter((rl) => reasonsMap.has(rl.line_no))
+      .map((rl) => ({
+        id,
+        time_key: lastSummaryAt,
+        phone,
+        name,
+        line_num: rl.line_no,
+        short_risk: rl.text,
+        risk_reasons: reasonsMap.get(rl.line_no) ?? "",
+      }));
 
-    await insertRiskReviewsRows(reviewRows);
-    console.log(`[INFO] phone=${phone} inserted risk_reviews rows=${reviewRows.length}`);
+    if (reviewRows.length) {
+      await insertRiskReviewsRows(reviewRows);
+      console.log(`[INFO] phone=${phone} inserted risk_reviews rows=${reviewRows.length}`);
+    } else {
+      console.log(
+        `[INFO] phone=${phone} risk_reasons present but no matched numbered lines; skipping risk_reviews insert.`
+      );
+    }
   }
 
   console.log(
