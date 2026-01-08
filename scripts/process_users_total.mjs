@@ -1,34 +1,16 @@
 /**
  * scripts/process_users_total.mjs
  *
- * Change: split OpenAI risk output (X) by delimiter:
- *   ===SPLIT_RISK_REASONS===
- * - Before delimiter -> users_total.summarized_linked_talk_risk
- * - After delimiter  -> users_total.risk_reasons
- *
- * New behavior (requested):
- * - After updating users_total to DONE:
- *   1) Insert a new row into users_tzvira:
- *      - id = users_total.id
- *      - time_key = users_total.last_summary_at (same value written)
- *      - phone, name from users_total
- *      - last_talk_tzvira = users_total.summarized_linked_talk_num (here: numberedText)
- *      - summarized_linked_talk = users_total.summarized_linked_talk (here: summarized)
- *   2) If risk_reasons is NOT empty:
- *      - For each numbered line "-N- ..." in summarized_linked_talk_risk
- *        match "-N- | ..." in risk_reasons and insert into risk_reviews:
- *        - id, time_key, phone, line_num  (PK uses line_num)
- *        - short_risk = text from risk line
- *        - risk_reasons = text after "|" from reason line
- *
- * Prompt10 source:
- * - users_information where phone=77777777, column user_text
- *
- * Other behavior:
- * - numbering based on talkSource (linked_talk if present else last_talk_tzvira)
- * - separator "========" between blocks in summarized_linked_talk
- * - last_summary_at Israel clock with +00 suffix
- * - processed NEW -> processing -> DONE / ERROR
+ * Behaviors:
+ * - Process rows where users_total.processed is NEW OR in_progress
+ * - Claim row: NEW/in_progress -> processing -> DONE/ERROR
+ * - Split OpenAI risk output by delimiter:
+ *     ===SPLIT_RISK_REASONS===
+ *   Before -> users_total.summarized_linked_talk_risk
+ *   After  -> users_total.risk_reasons
+ * - Insert snapshot into users_tzvira (id,time_key,phone,name,last_talk_tzvira,summarized_linked_talk)
+ * - Insert into risk_reviews ONLY if risk_reasons is not empty
+ *   PK in risk_reviews: (id, time_key, phone, line_num)
  */
 
 const SUPABASE_URL = mustEnv("SUPABASE_URL");
@@ -45,6 +27,9 @@ const PROMPT10_PHONE = "77777777";
 const PROMPT10_COLUMN = "user_text";
 
 const RISK_SPLIT_DELIM = "===SPLIT_RISK_REASONS===";
+
+// Treat these as "new work"
+const ELIGIBLE_PROCESSED_STATES = ["NEW", "in_progress"];
 
 // ---------- helpers ----------
 function mustEnv(name) {
@@ -97,7 +82,6 @@ function summaryHeaderIsrael() {
   return `${ddmmyyyy} - ${compact}`;
 }
 
-// Number only lines that contain "שאלה:" / "תשובה:" anywhere, or start with Q:/A:
 function buildNumberedTalk(talkText) {
   if (!talkText || typeof talkText !== "string") return { numberedText: "", count: 0 };
   const lines = talkText.split(/\r?\n/);
@@ -116,7 +100,6 @@ function buildNumberedTalk(talkText) {
   return { numberedText: out.join("\n"), count: out.length };
 }
 
-// Insert separator between blocks (not at very beginning)
 function concatSummaries(existing, header, summaryText) {
   const hasExisting = existing && String(existing).length > 0;
   const sep = hasExisting ? "\n\n========\n" : "";
@@ -133,11 +116,6 @@ function splitRiskText(x) {
   return { risk: before, reasons: after };
 }
 
-/**
- * Parse lines like:
- *   -3- שאלה: ....
- * Returns array of { line_no: number, text: string }
- */
 function parseNumberedLines(text) {
   const s = String(text ?? "").trim();
   if (!s) return [];
@@ -156,11 +134,6 @@ function parseNumberedLines(text) {
   return out;
 }
 
-/**
- * Parse reason lines like:
- *   -3- | יאוש עמוק
- * Returns Map(line_no -> reasonText)
- */
 function parseReasonsMap(text) {
   const items = parseNumberedLines(text);
   const map = new Map();
@@ -239,7 +212,7 @@ async function callOpenAIRisk(prompt10, numberedTalk) {
 }
 
 // ---------- Supabase ----------
-async function supaGetNewRows(limit) {
+async function supaGetEligibleRows(limit) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
   url.searchParams.set(
     "select",
@@ -258,7 +231,10 @@ async function supaGetNewRows(limit) {
       "talk_id",
     ].join(",")
   );
-  url.searchParams.set("processed", "eq.NEW");
+
+  // processed IN (NEW, in_progress)
+  // PostgREST syntax: or=(processed.eq.NEW,processed.eq.in_progress)
+  url.searchParams.set("or", `(processed.eq.NEW,processed.eq.in_progress)`);
   url.searchParams.set("order", "phone.asc");
   url.searchParams.set("limit", String(limit));
 
@@ -267,10 +243,15 @@ async function supaGetNewRows(limit) {
   return await res.json();
 }
 
-async function supaPatch(phone, patchObj, expectedProcessed = null) {
+async function supaPatch(phone, patchObj, expectedProcessedStates = null) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
   url.searchParams.set("phone", `eq.${phone}`);
-  if (expectedProcessed) url.searchParams.set("processed", `eq.${expectedProcessed}`);
+
+  if (Array.isArray(expectedProcessedStates) && expectedProcessedStates.length > 0) {
+    // processed IN (...)
+    const parts = expectedProcessedStates.map((v) => `processed.eq.${v}`).join(",");
+    url.searchParams.set("or", `(${parts})`);
+  }
 
   const res = await fetch(url, {
     method: "PATCH",
@@ -352,12 +333,13 @@ async function processOneRow(row, prompt10Text) {
     throw new Error("No talk text found in linked_talk or last_talk_tzvira");
   }
 
+  // Claim + move: allow claiming both NEW and in_progress
   const movePatch =
     linkedTalk && linkedTalk.trim()
       ? { processed: "processing", last_talk_tzvira: linkedTalk, linked_talk: null }
       : { processed: "processing", linked_talk: null };
 
-  await supaPatch(phone, movePatch, "NEW");
+  await supaPatch(phone, movePatch, ELIGIBLE_PROCESSED_STATES);
 
   const { numberedText, count } = buildNumberedTalk(talkSource);
   console.log(`[INFO] phone=${phone} numbered_lines=${count}`);
@@ -371,7 +353,6 @@ async function processOneRow(row, prompt10Text) {
 
   const lastSummaryAt = lastSummaryAtIsraelWithPlus00();
 
-  // Update TOTAL (DONE)
   await supaPatch(
     phone,
     {
@@ -382,10 +363,9 @@ async function processOneRow(row, prompt10Text) {
       risk_reasons: reasons,
       processed: "DONE",
     },
-    "processing"
+    ["processing"]
   );
 
-  // Insert snapshot to users_tzvira
   await insertUsersTzviraRow({
     id,
     time_key: lastSummaryAt,
@@ -395,13 +375,12 @@ async function processOneRow(row, prompt10Text) {
     summarized_linked_talk: summarized,
   });
 
-  // Insert risks to risk_reviews ONLY if risk_reasons is not empty
+  // Insert risks ONLY if risk_reasons is not empty
   const reasonsTrim = String(reasons ?? "").trim();
   if (reasonsTrim) {
     const riskLines = parseNumberedLines(String(risk ?? "").trim());
     const reasonsMap = parseReasonsMap(reasonsTrim);
 
-    // Create rows only for risk line numbers that exist in BOTH places
     const reviewRows = riskLines
       .filter((rl) => reasonsMap.has(rl.line_no))
       .map((rl) => ({
@@ -418,9 +397,7 @@ async function processOneRow(row, prompt10Text) {
       await insertRiskReviewsRows(reviewRows);
       console.log(`[INFO] phone=${phone} inserted risk_reviews rows=${reviewRows.length}`);
     } else {
-      console.log(
-        `[INFO] phone=${phone} risk_reasons present but no matched numbered lines; skipping risk_reviews insert.`
-      );
+      console.log(`[INFO] phone=${phone} risk_reasons present but no matched numbered lines; skipping risk_reviews insert.`);
     }
   }
 
@@ -442,15 +419,13 @@ async function markError(phone, err) {
 }
 
 async function main() {
-  console.log(`Scanning ${USERS_TOTAL_TABLE} for processed=NEW (limit=${MAX_ITEMS})...`);
+  console.log(`Scanning ${USERS_TOTAL_TABLE} for processed in (NEW,in_progress) (limit=${MAX_ITEMS})...`);
 
   const prompt10Text = await supaFetchPrompt10();
-  console.log(
-    `[INFO] Loaded prompt10 from ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} phone=${PROMPT10_PHONE} (len=${prompt10Text.length})`
-  );
+  console.log(`[INFO] Loaded prompt10 from ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} phone=${PROMPT10_PHONE} (len=${prompt10Text.length})`);
 
-  const rows = await supaGetNewRows(MAX_ITEMS);
-  console.log(`Found ${rows.length} NEW rows.`);
+  const rows = await supaGetEligibleRows(MAX_ITEMS);
+  console.log(`Found ${rows.length} eligible rows.`);
 
   for (const row of rows) {
     const phone = row.phone ?? "(unknown)";
