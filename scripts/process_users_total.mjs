@@ -2,8 +2,9 @@
  * scripts/process_users_total.mjs
  *
  * Behaviors:
- * - Process rows where users_total.processed is NEW OR in_progress
- * - Claim row: NEW/in_progress -> processing -> DONE/ERROR
+ * - Process rows where users_total.processed is NEW
+ * - Optional: if ONLY_ID is set, process ONLY that users_total.id (and only if processed=NEW)
+ * - Claim row: NEW -> processing -> DONE/ERROR
  * - Split OpenAI risk output by delimiter:
  *     ===SPLIT_RISK_REASONS===
  *   Before -> users_total.summarized_linked_talk_risk
@@ -16,7 +17,10 @@
 const SUPABASE_URL = mustEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = mustEnv("SUPABASE_SERVICE_ROLE_KEY");
 const OPENAI_API_KEY = mustEnv("OPENAI_API_KEY");
+
 const MAX_ITEMS = parseInt(process.env.MAX_ITEMS ?? "20", 10);
+// If set: process a single users_total row by ID (and only if processed=NEW)
+const ONLY_ID = process.env.ONLY_ID ?? null;
 
 const USERS_TOTAL_TABLE = "users_total";
 const USERS_TZVIRA_TABLE = "users_tzvira";
@@ -28,8 +32,8 @@ const PROMPT10_COLUMN = "user_text";
 
 const RISK_SPLIT_DELIM = "===SPLIT_RISK_REASONS===";
 
-// Treat these as "new work"
-const ELIGIBLE_PROCESSED_STATES = ["NEW", "in_progress"];
+// Treat these as "new work" (final rule: ONLY NEW)
+const ELIGIBLE_PROCESSED_STATES = ["NEW"];
 
 // ---------- helpers ----------
 function mustEnv(name) {
@@ -232,11 +236,15 @@ async function supaGetEligibleRows(limit) {
     ].join(",")
   );
 
-  // processed IN (NEW, in_progress)
-  // PostgREST syntax: or=(processed.eq.NEW,processed.eq.in_progress)
-  url.searchParams.set("or", `(processed.eq.NEW,processed.eq.in_progress)`);
-  url.searchParams.set("order", "phone.asc");
-  url.searchParams.set("limit", String(limit));
+  // Only NEW, optionally only a specific ID
+  if (ONLY_ID) {
+    url.searchParams.set("id", `eq.${ONLY_ID}`);
+    url.searchParams.set("processed", "eq.NEW");
+  } else {
+    url.searchParams.set("processed", "eq.NEW");
+    url.searchParams.set("order", "phone.asc");
+    url.searchParams.set("limit", String(limit));
+  }
 
   const res = await fetch(url, { headers: supaHeaders() });
   if (!res.ok) throw new Error(`Supabase GET failed: ${res.status} ${await res.text()}`);
@@ -333,7 +341,7 @@ async function processOneRow(row, prompt10Text) {
     throw new Error("No talk text found in linked_talk or last_talk_tzvira");
   }
 
-  // Claim + move: allow claiming both NEW and in_progress
+  // Claim + move: allow claiming only NEW
   const movePatch =
     linkedTalk && linkedTalk.trim()
       ? { processed: "processing", last_talk_tzvira: linkedTalk, linked_talk: null }
@@ -419,10 +427,13 @@ async function markError(phone, err) {
 }
 
 async function main() {
-  console.log(`Scanning ${USERS_TOTAL_TABLE} for processed in (NEW,in_progress) (limit=${MAX_ITEMS})...`);
+  const mode = ONLY_ID ? `ONLY_ID=${ONLY_ID}` : `limit=${MAX_ITEMS}`;
+  console.log(`Scanning ${USERS_TOTAL_TABLE} for processed=NEW (${mode})...`);
 
   const prompt10Text = await supaFetchPrompt10();
-  console.log(`[INFO] Loaded prompt10 from ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} phone=${PROMPT10_PHONE} (len=${prompt10Text.length})`);
+  console.log(
+    `[INFO] Loaded prompt10 from ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} phone=${PROMPT10_PHONE} (len=${prompt10Text.length})`
+  );
 
   const rows = await supaGetEligibleRows(MAX_ITEMS);
   console.log(`Found ${rows.length} eligible rows.`);
