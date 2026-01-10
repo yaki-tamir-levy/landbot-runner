@@ -34,22 +34,24 @@ async function main() {
   if (error) throw new Error(`users_total select failed: ${error.message}`);
 
   let inserted = 0;
-  for (const r of rows || []) {
-    const { error: insErr } = await supabase
-      .from("process_queue")
-      .insert({ users_total_id: r.id, status: "NEW" }, { returning: "minimal" })
-      // rely on the partial unique index to prevent duplicates
-      .throwOnError()
-      .catch((e) => e);
+  let skipped = 0;
 
-    if (!insErr || insErr === true) {
-      // supabase-js returns different shapes depending on version;
-      // we only count "likely inserted" if no error was thrown.
+  for (const r of rows || []) {
+    try {
+      // Use the DB partial unique index to avoid duplicates (active NEW/PROCESSING)
+      await supabase
+        .from("process_queue")
+        .insert({ users_total_id: r.id, status: "NEW" })
+        .throwOnError();
+
       inserted += 1;
+    } catch (e) {
+      // Most common: duplicate due to unique partial index -> treat as "skipped"
+      skipped += 1;
     }
   }
 
-  console.log(JSON.stringify({ foundNew: (rows || []).length, inserted }));
+  console.log(JSON.stringify({ foundNew: (rows || []).length, inserted, skipped }));
 }
 
 main().catch((e) => {
