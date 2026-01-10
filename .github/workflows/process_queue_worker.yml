@@ -1,0 +1,34 @@
+name: Process Queue Worker (event-ish)
+
+on:
+  # "Near real-time" runner (polls queue frequently)
+  schedule:
+    - cron: "*/1 * * * *"   # every minute (UTC)
+  workflow_dispatch: {}
+
+concurrency:
+  group: process-queue-worker
+  cancel-in-progress: false
+
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run worker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MAX_JOBS_PER_RUN: "50"
+        run: node scripts/process_queue_worker.mjs
