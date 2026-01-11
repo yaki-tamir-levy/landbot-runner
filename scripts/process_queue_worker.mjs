@@ -1,14 +1,11 @@
 /**
  * scripts/process_queue_worker.mjs
  *
- * Uniform worker that ONLY processes work via process_queue.
- * It claims ONE queue job at a time via DB RPC (FOR UPDATE SKIP LOCKED),
- * then runs the existing business logic script process_users_total.mjs
- * for exactly ONE users_total row using ONLY_ID.
- *
- * IMPORTANT:
- * - This worker DOES NOT update users_total.processed directly.
- *   process_users_total.mjs owns the transition: NEW -> processing -> DONE/ERROR.
+ * Queue worker that:
+ *  - claims ONE queue job at a time (FOR UPDATE SKIP LOCKED via RPC)
+ *  - prints the claimed job details (queue_id, users_total_id, phone, name)
+ *  - runs process_users_total.mjs for EXACTLY ONE row via ONLY_ID
+ *  - marks queue DONE/ERROR (with last_error)
  *
  * Required env:
  *   SUPABASE_URL
@@ -53,23 +50,36 @@ async function claimOne() {
   return data; // null if none
 }
 
+async function fetchUsersTotalMeta(usersTotalId) {
+  const { data, error } = await supabase
+    .from("users_total")
+    .select("id,phone,name,processed")
+    .eq("id", usersTotalId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    return { id: usersTotalId, phone: null, name: null, processed: null, meta_error: error.message };
+  }
+  if (!data) {
+    return { id: usersTotalId, phone: null, name: null, processed: null, meta_error: "not_found" };
+  }
+  return { ...data, meta_error: null };
+}
+
 function runProcessUsersTotalOnlyId(usersTotalId) {
   return new Promise((resolve, reject) => {
-    const child = spawn(
-      "node",
-      ["scripts/process_users_total.mjs"],
-      {
-        stdio: "inherit",
-        env: {
-          ...process.env,
-          SUPABASE_URL,
-          SUPABASE_SERVICE_ROLE_KEY,
-          OPENAI_API_KEY,
-          ONLY_ID: String(usersTotalId),
-          MAX_ITEMS: "1",
-        },
-      }
-    );
+    const child = spawn("node", ["scripts/process_users_total.mjs"], {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY,
+        OPENAI_API_KEY,
+        ONLY_ID: String(usersTotalId),
+        MAX_ITEMS: "1",
+      },
+    });
 
     child.on("error", (err) => reject(err));
     child.on("exit", (code) => {
@@ -85,10 +95,19 @@ async function main() {
   for (let i = 0; i < MAX_JOBS_PER_RUN; i++) {
     const job = await claimOne();
 
-    if (!job || !job.id) break;
+    if (!job || !job.id) {
+      console.log(`[QUEUE] no NEW jobs found (iteration=${i + 1}/${MAX_JOBS_PER_RUN})`);
+      break;
+    }
 
     const queueId = job.id;
     const usersTotalId = job.users_total_id;
+
+    const meta = await fetchUsersTotalMeta(usersTotalId);
+
+    console.log(
+      `[QUEUE] CLAIM queue_id=${queueId} users_total_id=${usersTotalId} phone=${meta.phone ?? ""} name=${meta.name ?? ""} processed=${meta.processed ?? ""} meta_error=${meta.meta_error ?? ""}`
+    );
 
     try {
       await runProcessUsersTotalOnlyId(usersTotalId);
@@ -96,11 +115,21 @@ async function main() {
       await finishQueue(queueId, "DONE", null);
       processedCount += 1;
 
-      console.log(`QUEUE DONE users_total.id=${usersTotalId} (queue.id=${queueId})`);
+      console.log(
+        `[QUEUE] DONE queue_id=${queueId} users_total_id=${usersTotalId} phone=${meta.phone ?? ""} name=${meta.name ?? ""}`
+      );
     } catch (err) {
-      const msg = (err && err.message) ? err.message : String(err);
-      await finishQueue(queueId, "ERROR", msg.slice(0, 2000));
-      console.error(`QUEUE ERROR users_total.id=${usersTotalId} (queue.id=${queueId}): ${msg}`);
+      const msg = err?.message ? err.message : String(err);
+
+      try {
+        await finishQueue(queueId, "ERROR", msg.slice(0, 2000));
+      } catch (e2) {
+        console.error(`[QUEUE] ERROR finishing queue job queue_id=${queueId}: ${e2?.message ?? e2}`);
+      }
+
+      console.error(
+        `[QUEUE] ERROR queue_id=${queueId} users_total_id=${usersTotalId} phone=${meta.phone ?? ""} name=${meta.name ?? ""} msg=${msg}`
+      );
     }
   }
 
