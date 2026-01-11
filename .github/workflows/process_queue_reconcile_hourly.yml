@@ -2,7 +2,7 @@ name: Process Queue Reconciler (hourly)
 
 on:
   schedule:
-    - cron: "0 * * * *"   # hourly on the hour (UTC)
+    - cron: "0 */2 * * *"   # every 2 hours on the hour (UTC)
   workflow_dispatch: {}
 
 concurrency:
