@@ -102,8 +102,9 @@
 <div style="position:fixed;top:6px;left:6px;z-index:9999;
 background:#111827;color:#fff;font-size:11px;
 padding:3px 8px;border-radius:8px;opacity:0.7;">
-users_viewer_risk_prod · V01
+v02
 </div>
+
 
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
@@ -372,7 +373,7 @@ users_viewer_risk_prod · V01
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
-        return fetchAllPaged(REVIEWS_TABLE, 'time_key, phone, snippet_hash, snippet_text, pattern_key, status, reviewed_at, reviewed_by', 'time_key');
+        return fetchAllPaged(REVIEWS_TABLE, 'id, time_key, phone, line_num, snippet_text, pattern_key, status, reviewed_at, reviewed_by', 'time_key');
       })
       .then(function(allRisk){
         buildRiskCache(allRisk || []);
@@ -662,7 +663,7 @@ users_viewer_risk_prod · V01
     }
     // fallback (לא אמור לקרות אחרי טעינה ראשונית)
     return supa.from(REVIEWS_TABLE)
-      .select('snippet_hash, snippet_text, pattern_key, status, reviewed_at, reviewed_by')
+      .select('line_num, id, snippet_text, pattern_key, status, reviewed_at, reviewed_by')
       .eq('time_key', time_key)
       .eq('phone', phone)
       .then(function(res){
@@ -693,7 +694,7 @@ users_viewer_risk_prod · V01
         if (!needle) continue;
 
         // אם כבר שיבצנו את אותו hash בעוגן – דלג
-        var sh = rr.snippet_hash || (hashStr(needle + '|' + (rr.pattern_key||'')));
+        var sh = rr.risk_id || (hashStr(needle + '|' + (rr.pattern_key||'')));
         if (used.has(sh)) continue;
 
         if (txt.indexOf(needle) !== -1){
@@ -719,7 +720,7 @@ users_viewer_risk_prod · V01
       var rr2 = riskRows[r2];
       var needle2 = String(rr2.snippet_text || '').trim();
       if (!needle2) continue;
-      var sh2 = rr2.snippet_hash || (hashStr(needle2 + '|' + (rr2.pattern_key||'')));
+      var sh2 = rr2.risk_id || (hashStr(needle2 + '|' + (rr2.pattern_key||'')));
       if (used.has(sh2)) continue;
       hits.push({
         hash: sh2,
