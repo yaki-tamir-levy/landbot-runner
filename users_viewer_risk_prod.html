@@ -65,6 +65,12 @@
     .btn-summarized_linked_talk[disabled]{opacity:.55; cursor:not-allowed}
     .btn-toggle:hover,.btn-summarized_linked_talk:hover,.btn-raw-summary:hover{box-shadow:0 0 0 2px #e5e7eb inset}
     .meta{color:var(--muted);font-weight:600}
+
+    .meta.riskhead{margin-top:8px}
+    .riskhead-item{margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .riskhead-line{display:inline-block;max-width:640px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:#fff7ed;border:1px solid #fed7aa;padding:2px 6px;border-radius:10px}
+    .pill.danger{background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d}
+    .pill.ok{background:#dcfce7;border:1px solid #bbf7d0;color:#065f46}
     .body{padding:12px;white-space:pre-wrap;line-height:1.55}
     .summarized_linked_talk{padding:12px; white-space:pre-wrap; line-height:1.6; background:#fffaf0; border-top:1px dashed #f1d29b; display:none}
     .summarized_linked_talk .empty{color:#9ca3af}
@@ -105,7 +111,7 @@
 <div style="position:fixed;top:6px;left:6px;z-index:9999;
 background:#111827;color:#fff;font-size:11px;
 padding:3px 8px;border-radius:8px;opacity:0.7;">
-v03
+v04
 </div>
 
 
@@ -189,6 +195,52 @@ v03
   // Goal: never show "לא ידוע" if the status exists in users_information.
   // ------------------------------------------------------------
   var UI_STATUS_FETCH = new Map(); // normPhone(phone) -> Promise<any|null>
+
+  function extractTalkLine(rawText, lineNum){
+    try{
+      var n = parseInt(lineNum, 10);
+      if (!isFinite(n)) return '';
+      var lines = String(rawText||'').split(/\n/);
+      var needle = '-' + String(n) + '-';
+      for (var i=0;i<lines.length;i++){
+        var s = String(lines[i]||'').trim();
+        if (!s) continue;
+        // Match exact prefix: -N-
+        if (s.indexOf(needle) === 0){
+          return s;
+        }
+        // Allow whitespace before prefix
+        if (s.indexOf('-' + String(n) + '-') > -1){
+          var m = s.match(new RegExp('^\\s*-' + String(n) + '-\\s*(.*)$'));
+          if (m){
+            return '-' + String(n) + '- ' + (m[1] || '').trim();
+          }
+        }
+      }
+    } catch(e){}
+    return '';
+  }
+
+
+  function bindGotoButtons(root){
+    try{
+      if (!root) return;
+      root.querySelectorAll('button[data-act="goto"]').forEach(function(btn){
+        // avoid double-binding
+        if (btn._gotoBound) return;
+        btn._gotoBound = true;
+        btn.addEventListener('click', function(){
+          var id = btn.getAttribute('data-target');
+          var node = id ? document.getElementById(id) : null;
+          if (!node) return;
+          node.scrollIntoView({behavior:'smooth', block:'center'});
+          node.classList.add('target-blink');
+          setTimeout(function(){ node.classList.remove('target-blink'); }, 1400);
+        });
+      });
+    } catch(e){}
+  }
+
 
   function uiPhoneVariants(rawPhone){
     var s = String(rawPhone == null ? '' : rawPhone).trim();
@@ -375,7 +427,7 @@ v03
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
-        return fetchAllPaged(REVIEWS_TABLE, 'id, line_num, risk_reasons, status, reviewed_at, reviewed_by', 'id');
+        return fetchAllPaged(REVIEWS_TABLE, 'id, line_num, short_risk, risk_reasons, status, reviewed_at, reviewed_by', 'id');
       })
       .then(function(allRisk){
         buildRiskCache(allRisk || []);
@@ -627,7 +679,7 @@ v03
   function toDialogLines(name, rawText){
     var patient = (name && String(name).trim()) ? String(name).trim() : 'מטופל/ת';
 
-    var tsPrefix = '\\s*(?:\\[[^\\]]*\\]\\s*)?';
+    var tsPrefix = '\\s*(?:-(\\d+)-\\s*)?(?:\\[[^\\]]*\\]\\s*)?';
     var rxPatientName = new RegExp('^' + tsPrefix + escapeRegExp(patient) + ':\\s*');
     var rxTher = new RegExp('^' + tsPrefix + 'המטפל:\\s*');
     var rxQ = new RegExp('^' + tsPrefix + 'Q:\\s*', 'i');
@@ -640,18 +692,26 @@ v03
 
     for (var i=0;i<lines.length;i++){
       var s = String(lines[i]||'');
+      // Extract optional talk line number prefix like: -12- Q: ...
+      var talkLineNum = null;
+      var mNum = s.match(/^\s*-(\d+)-\s*(.*)$/);
+      if (mNum){
+        talkLineNum = parseInt(mNum[1], 10);
+        s = mNum[2] || '';
+      }
 
-      if (rxPatientName.test(s)){ out.push({ srcLineNum: i+1,  speaker:'patient', body:s.replace(rxPatientName,'') }); continue; }
-      if (rxTher.test(s)){ out.push({ srcLineNum: i+1,  speaker:'therapist', body:s.replace(rxTher,'') }); out.push({ speaker:'spacer' }); continue; }
-      if (rxQ.test(s)){ out.push({ srcLineNum: i+1,  speaker:'patient', body:s.replace(rxQ,'') }); continue; }
-      if (rxA.test(s)){ out.push({ srcLineNum: i+1,  speaker:'therapist', body:s.replace(rxA,'') }); out.push({ speaker:'spacer' }); continue; }
-      if (rxGenericPatient.test(s)){ out.push({ srcLineNum: i+1,  speaker:'patient', body:s.replace(rxGenericPatient,'') }); continue; }
-      if (rxGenericTher.test(s)){ out.push({ srcLineNum: i+1,  speaker:'therapist', body:s.replace(rxGenericTher,'') }); out.push({ speaker:'spacer' }); continue; }
 
-      if (/^\s*שאלה:\s*/.test(s)){ out.push({ srcLineNum: i+1,  speaker:'patient', body:s.replace(/^\s*שאלה:\s*/,'') }); continue; }
-      if (/^\s*תשובה:\s*/.test(s)){ out.push({ srcLineNum: i+1,  speaker:'therapist', body:s.replace(/^\s*תשובה:\s*/,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (rxPatientName.test(s)){ out.push({ srcLineNum: i+1, talkLineNum: talkLineNum,  speaker:'patient', body:s.replace(rxPatientName,'') }); continue; }
+      if (rxTher.test(s)){ out.push({ srcLineNum: i+1, talkLineNum: talkLineNum,  speaker:'therapist', body:s.replace(rxTher,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (rxQ.test(s)){ out.push({ srcLineNum: i+1, talkLineNum: talkLineNum,  speaker:'patient', body:s.replace(rxQ,'') }); continue; }
+      if (rxA.test(s)){ out.push({ srcLineNum: i+1, talkLineNum: talkLineNum,  speaker:'therapist', body:s.replace(rxA,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (rxGenericPatient.test(s)){ out.push({ srcLineNum: i+1, talkLineNum: talkLineNum,  speaker:'patient', body:s.replace(rxGenericPatient,'') }); continue; }
+      if (rxGenericTher.test(s)){ out.push({ srcLineNum: i+1, talkLineNum: talkLineNum,  speaker:'therapist', body:s.replace(rxGenericTher,'') }); out.push({ speaker:'spacer' }); continue; }
 
-      out.push({ srcLineNum: i+1,  speaker:'text', body:s });
+      if (/^\s*שאלה:\s*/.test(s)){ out.push({ srcLineNum: i+1, talkLineNum: talkLineNum,  speaker:'patient', body:s.replace(/^\s*שאלה:\s*/,'') }); continue; }
+      if (/^\s*תשובה:\s*/.test(s)){ out.push({ srcLineNum: i+1, talkLineNum: talkLineNum,  speaker:'therapist', body:s.replace(/^\s*תשובה:\s*/,'') }); out.push({ speaker:'spacer' }); continue; }
+
+      out.push({ srcLineNum: i+1, talkLineNum: talkLineNum,  speaker:'text', body:s });
     }
     return { patient: patient, lines: out };
   }
@@ -685,12 +745,13 @@ v03
     var hits = [];
     var used = new Set();
 
-    // קישור לפי line_num -> index ב-dialogLines (על בסיס srcLineNum)
-    var indexBySrc = new Map();
+    // קישור לפי line_num -> index ב-dialogLines (על בסיס talkLineNum אם קיים, אחרת srcLineNum)
+    var indexByTalk = new Map();
     for (var i=0;i<dialogLines.length;i++){
       var ln = dialogLines[i];
       if (ln && ln.srcLineNum != null){
-        indexBySrc.set(parseInt(ln.srcLineNum,10), i);
+        var kk = (ln && ln.talkLineNum != null) ? ln.talkLineNum : ln.srcLineNum;
+        if (kk != null) indexByTalk.set(parseInt(kk,10), i);
       }
     }
 
@@ -706,7 +767,7 @@ v03
       var sh = rr.risk_id || (hashStr(String(rr.id||'') + '|' + String(lineNum) + '|' + reasons));
       if (used.has(sh)) continue;
 
-      var idx = indexBySrc.has(lineNum) ? indexBySrc.get(lineNum) : -1;
+      var idx = indexByTalk.has(lineNum) ? indexByTalk.get(lineNum) : -1;
       var targetId = '';
       if (idx >= 0){
         targetId = 'line-' + talkDomId + '-' + idx + '-' + String(sh).slice(0,6);
@@ -717,6 +778,7 @@ v03
         hash: sh,
         risk_id: rr.id || '',
         line_num: lineNum,
+        short_risk: (rr.short_risk||''),
         risk_reasons: reasons,
         targetId: targetId,
         lineIndex: idx,
@@ -763,7 +825,8 @@ v03
           var cls = 'risk';
           var note = '';
           var btn = '';
-          var badge = ' <span class="risk-badge">' + escapeHtml(h.risk_reasons || '') + '</span>';
+          var badgeText = (h.short_risk ? (String(h.short_risk) + ': ') : '') + (h.risk_reasons || '');
+          var badge = ' <span class="risk-badge">' + escapeHtml(badgeText) + '</span>';
 
           if (String(h.status||'') === 'reviewed'){
             cls += ' reviewed';
@@ -781,7 +844,8 @@ v03
       } else if (ln.speaker === 'therapist'){
         var tBody = escapeHtml(ln.body || '');
         if (h){
-          var tBadge = ' <span class="risk-badge">' + escapeHtml(h.risk_reasons || '') + '</span>';
+          var tBadgeText = (h.short_risk ? (String(h.short_risk) + ': ') : '') + (h.risk_reasons || '');
+          var tBadge = ' <span class="risk-badge">' + escapeHtml(tBadgeText) + '</span>';
           tBody = '<span class="risk">' + tBody + '</span>' + tBadge;
         }
         html.push('<div class="line speaker' + riskLineCls + '"><span class="speaker speaker-therapist">המטפל:</span> ' + tBody + '</div>');
@@ -840,7 +904,11 @@ v03
               top.push('<div class="when">' + escapeHtml(AA.time) + '</div><div>');
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
-                top.push('<span class="pill mono" title="' + escapeHtml(it.text) +'">'+ escapeHtml(it.text) +'</span> ');
+                var pTitle = (it.short_risk ? (it.short_risk + ' · ') : '') + (it.text||'');
+                top.push('<span class="pill mono" title="' + escapeHtml(pTitle) +'">'+ escapeHtml(it.short_risk || it.text || 'RISK') +'</span> ');
+                if (it.full_line){
+                  top.push('<span class="riskhead-line mono" title="' + escapeHtml(it.full_line) + '">' + escapeHtml(it.full_line) + '</span> ');
+                }
                 if (it.targetId){
                   top.push('<button class="btn-open-risk" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">פתח את הסיכון</button> ');
                 } else {
@@ -851,17 +919,9 @@ v03
             }
             top.push('</div>');
             el.alertHost.innerHTML = top.join('');
-            el.alertHost.querySelectorAll('button[data-act="goto"]').forEach(function(btn){
-              btn.addEventListener('click', function(){
-                var id = btn.getAttribute('data-target');
-                var node = id ? document.getElementById(id) : null;
-                if (!node) return;
-                node.scrollIntoView({behavior:'smooth', block:'center'});
-                node.classList.add('target-blink');
-                setTimeout(function(){ node.classList.remove('target-blink'); }, 1300);
-              });
-            });
-          } else {
+            bindGotoButtons(el.alertHost);
+            bindGotoButtons(el.out);
+} else {
             el.alertHost.innerHTML = '';
           }
 
@@ -895,6 +955,8 @@ v03
               var hh2 = notRev[nn];
               items.push({
                 text: hh2.risk_reasons || '',
+                short_risk: hh2.short_risk || '',
+                full_line: extractTalkLine(r.last_talk_tzvira, hh2.line_num) || '',
                 line_num: hh2.line_num || null,
                 targetId: hh2.targetId || ''
               });
@@ -934,6 +996,37 @@ v03
             kindTxt = 'RISK override · ' + kindTxt;
           }
           headParts.push('<div class="meta why">', escapeHtml(kindTxt), '</div>');
+
+          // RISK summary in header: short_risk + full line (by talk line number)
+          if (hits && hits.length){
+            headParts.push('<div class="meta riskhead">');
+            for (var rh=0; rh<hits.length; rh++){
+              var hh = hits[rh];
+              var sr = hh.short_risk || '';
+              var lnNum = hh.line_num;
+              var fullLine = extractTalkLine(r.last_talk_tzvira, lnNum) || '';
+              var pillCls = (String(hh.status||'') === 'reviewed') ? 'pill ok' : 'pill danger';
+              headParts.push('<div class="riskhead-item">');
+              if (sr){
+                headParts.push('<span class="' + pillCls + ' mono" title="short_risk">' + escapeHtml(sr) + '</span> ');
+              } else {
+                headParts.push('<span class="' + pillCls + ' mono" title="short_risk">RISK</span> ');
+              }
+              if (fullLine){
+                headParts.push('<span class="riskhead-line mono" title="' + escapeHtml(fullLine) + '">' + escapeHtml(fullLine) + '</span> ');
+              } else if (lnNum != null){
+                headParts.push('<span class="riskhead-line mono" title="לא נמצאה שורה בטקסט">line ' + escapeHtml(String(lnNum)) + '</span> ');
+              }
+              if (hh.targetId){
+                headParts.push('<button class="btn-open-risk" data-act="goto" data-target="' + escapeHtml(hh.targetId) + '">פתח</button>');
+              } else {
+                headParts.push('<button class="btn-open-risk" disabled title="לא נמצא עוגן בטקסט">פתח</button>');
+              }
+              headParts.push('</div>');
+            }
+            headParts.push('</div>');
+          }
+
 
           if (r && r._forceRisk){
             headParts.push('<div class="meta"><span class="pill">RISK override</span></div>');
