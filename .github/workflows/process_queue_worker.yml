@@ -32,4 +32,6 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           MAX_JOBS_PER_RUN: "50"
+          # NEW: token for triggering workflow_dispatch of pushover_notify.yml
+          GH_WORKFLOW_TOKEN: ${{ secrets.GH_WORKFLOW_TOKEN }}
         run: node scripts/process_queue_worker.mjs
