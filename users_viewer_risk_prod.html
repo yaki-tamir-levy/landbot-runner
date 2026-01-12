@@ -72,6 +72,9 @@
     .counts{margin-top:6px}
     mark.risk{ background:#ffe4e6; color:#000; padding:0 3px; border-radius:4px; font-weight:900; font-size:1.08em; }
     mark.risk.reviewed{ background:#d1fae5; color:#065f46; }
+    .riskline{ background:#fff7ed; border-right:4px solid #fb7185; padding-right:6px; }
+    .risk-badge{ display:inline-block; margin-right:6px; background:#fef3c7; border:1px solid #fde68a; color:#92400e; padding:2px 6px; border-radius:999px; font-size:12px; }
+
     .alertbar{border:1px solid #fecaca;background:#fee2e2;border-radius:12px;padding:10px 12px;margin:0 0 10px}
     .alertbar h3{margin:0 0 6px 0;color:#7f1d1d;font-size:14px}
     .alertitem{margin:6px 0;padding:8px 10px;border-radius:8px;background:#fff;border:1px dashed #fecaca}
@@ -102,7 +105,7 @@
 <div style="position:fixed;top:6px;left:6px;z-index:9999;
 background:#111827;color:#fff;font-size:11px;
 padding:3px 8px;border-radius:8px;opacity:0.7;">
-v02
+v03
 </div>
 
 
@@ -341,10 +344,9 @@ v02
     CACHE.riskMap = new Map();
     CACHE.riskKeySet = new Set();
     (allRisk || []).forEach(function(rr){
-      var tk = rr.time_key;
-      var ph = rr.phone;
-      if (!tk || !ph) return;
-      var k = keyOf(tk, ph);
+      var id = rr.id;
+      if (!id) return;
+      var k = keyOfId(id);
       CACHE.riskKeySet.add(k);
       var arr = CACHE.riskMap.get(k);
       if (!arr){ arr = []; CACHE.riskMap.set(k, arr); }
@@ -354,7 +356,7 @@ v02
 
   function markRowsWithRisk(){
     (CACHE.allRows || []).forEach(function(r){
-      r._forceRisk = CACHE.riskKeySet.has(keyOf(r.time_key, r.phone));
+      r._forceRisk = CACHE.riskKeySet.has(keyOfId(r.id));
     });
   }
 
@@ -369,11 +371,11 @@ v02
     CACHE.riskMap = new Map();
     CACHE.riskKeySet = new Set();
 
-    return fetchAllPaged(TABLE, 'time_key, phone, name, last_talk_tzvira, summarized_linked_talk', 'time_key')
+    return fetchAllPaged(TABLE, 'id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk', 'time_key')
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
-        return fetchAllPaged(REVIEWS_TABLE, 'id, time_key, phone, line_num, snippet_text, pattern_key, status, reviewed_at, reviewed_by', 'time_key');
+        return fetchAllPaged(REVIEWS_TABLE, 'id, line_num, risk_reasons, status, reviewed_at, reviewed_by', 'id');
       })
       .then(function(allRisk){
         buildRiskCache(allRisk || []);
@@ -604,6 +606,7 @@ v02
   }
 
   function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(phone); }
+  function keyOfId(id){ return String(id||''); }
 
   function showInlineMsg(talkElem, msg){
     if (!talkElem) return;
@@ -638,17 +641,17 @@ v02
     for (var i=0;i<lines.length;i++){
       var s = String(lines[i]||'');
 
-      if (rxPatientName.test(s)){ out.push({ speaker:'patient', body:s.replace(rxPatientName,'') }); continue; }
-      if (rxTher.test(s)){ out.push({ speaker:'therapist', body:s.replace(rxTher,'') }); out.push({ speaker:'spacer' }); continue; }
-      if (rxQ.test(s)){ out.push({ speaker:'patient', body:s.replace(rxQ,'') }); continue; }
-      if (rxA.test(s)){ out.push({ speaker:'therapist', body:s.replace(rxA,'') }); out.push({ speaker:'spacer' }); continue; }
-      if (rxGenericPatient.test(s)){ out.push({ speaker:'patient', body:s.replace(rxGenericPatient,'') }); continue; }
-      if (rxGenericTher.test(s)){ out.push({ speaker:'therapist', body:s.replace(rxGenericTher,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (rxPatientName.test(s)){ out.push({ srcLineNum: i+1,  speaker:'patient', body:s.replace(rxPatientName,'') }); continue; }
+      if (rxTher.test(s)){ out.push({ srcLineNum: i+1,  speaker:'therapist', body:s.replace(rxTher,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (rxQ.test(s)){ out.push({ srcLineNum: i+1,  speaker:'patient', body:s.replace(rxQ,'') }); continue; }
+      if (rxA.test(s)){ out.push({ srcLineNum: i+1,  speaker:'therapist', body:s.replace(rxA,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (rxGenericPatient.test(s)){ out.push({ srcLineNum: i+1,  speaker:'patient', body:s.replace(rxGenericPatient,'') }); continue; }
+      if (rxGenericTher.test(s)){ out.push({ srcLineNum: i+1,  speaker:'therapist', body:s.replace(rxGenericTher,'') }); out.push({ speaker:'spacer' }); continue; }
 
-      if (/^\s*שאלה:\s*/.test(s)){ out.push({ speaker:'patient', body:s.replace(/^\s*שאלה:\s*/,'') }); continue; }
-      if (/^\s*תשובה:\s*/.test(s)){ out.push({ speaker:'therapist', body:s.replace(/^\s*תשובה:\s*/,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (/^\s*שאלה:\s*/.test(s)){ out.push({ srcLineNum: i+1,  speaker:'patient', body:s.replace(/^\s*שאלה:\s*/,'') }); continue; }
+      if (/^\s*תשובה:\s*/.test(s)){ out.push({ srcLineNum: i+1,  speaker:'therapist', body:s.replace(/^\s*תשובה:\s*/,'') }); out.push({ speaker:'spacer' }); continue; }
 
-      out.push({ speaker:'text', body:s });
+      out.push({ srcLineNum: i+1,  speaker:'text', body:s });
     }
     return { patient: patient, lines: out };
   }
@@ -656,16 +659,15 @@ v02
   // -------------------------------
   // RISK: מגיע רק מ-risk_reviews (בלי Regex)
   // -------------------------------
-  function loadRiskRows(time_key, phone){
-    if (!time_key || !phone) return Promise.resolve([]);
+  function loadRiskRows(id){
+    if (!id) return Promise.resolve([]);
     if (CACHE && CACHE.loaded){
-      return Promise.resolve(CACHE.riskMap.get(keyOf(time_key, phone)) || []);
+      return Promise.resolve(CACHE.riskMap.get(keyOfId(id)) || []);
     }
     // fallback (לא אמור לקרות אחרי טעינה ראשונית)
     return supa.from(REVIEWS_TABLE)
-      .select('line_num, id, snippet_text, pattern_key, status, reviewed_at, reviewed_by')
-      .eq('time_key', time_key)
-      .eq('phone', phone)
+      .select('id, line_num, risk_reasons, status, reviewed_at, reviewed_by')
+      .eq('id', id)
       .then(function(res){
         if (res.error) return [];
         return res.data || [];
@@ -683,57 +685,57 @@ v02
     var hits = [];
     var used = new Set();
 
-    for (var idx=0; idx<dialogLines.length; idx++){
-      var ln = dialogLines[idx];
-      if (ln.speaker !== 'patient') continue;
-
-      var txt = String(ln.body || '');
-      for (var r=0; r<riskRows.length; r++){
-        var rr = riskRows[r];
-        var needle = String(rr.snippet_text || '').trim();
-        if (!needle) continue;
-
-        // אם כבר שיבצנו את אותו hash בעוגן – דלג
-        var sh = rr.risk_id || (hashStr(needle + '|' + (rr.pattern_key||'')));
-        if (used.has(sh)) continue;
-
-        if (txt.indexOf(needle) !== -1){
-          var targetId = 'line-' + talkDomId + '-' + idx + '-' + String(sh).slice(0,6);
-          ln._anchorId = targetId;
-          hits.push({
-            hash: sh,
-            pattern_key: rr.pattern_key || '',
-            targetId: targetId,
-            lineIndex: idx,
-            matchText: needle,
-            status: rr.status || 'pending',
-            reviewed_at: rr.reviewed_at || null,
-            reviewed_by: rr.reviewed_by || ''
-          });
-          used.add(sh);
-        }
+    // קישור לפי line_num -> index ב-dialogLines (על בסיס srcLineNum)
+    var indexBySrc = new Map();
+    for (var i=0;i<dialogLines.length;i++){
+      var ln = dialogLines[i];
+      if (ln && ln.srcLineNum != null){
+        indexBySrc.set(parseInt(ln.srcLineNum,10), i);
       }
     }
 
-    // RISK שלא נמצא בטקסט (למשל חוסר התאמה) – עדיין יחושבו להתרעות למעלה
-    for (var r2=0; r2<riskRows.length; r2++){
-      var rr2 = riskRows[r2];
-      var needle2 = String(rr2.snippet_text || '').trim();
-      if (!needle2) continue;
-      var sh2 = rr2.risk_id || (hashStr(needle2 + '|' + (rr2.pattern_key||'')));
-      if (used.has(sh2)) continue;
+    for (var r=0; r<(riskRows||[]).length; r++){
+      var rr = riskRows[r] || {};
+      var lineNum = (rr.line_num == null || String(rr.line_num).trim()==='') ? null : parseInt(rr.line_num, 10);
+      if (lineNum == null || !isFinite(lineNum)) continue;
+
+      var reasons = String(rr.risk_reasons || '').trim();
+      if (!reasons) continue;
+
+      // ייחודיות: id+line_num+reasons
+      var sh = rr.risk_id || (hashStr(String(rr.id||'') + '|' + String(lineNum) + '|' + reasons));
+      if (used.has(sh)) continue;
+
+      var idx = indexBySrc.has(lineNum) ? indexBySrc.get(lineNum) : -1;
+      var targetId = '';
+      if (idx >= 0){
+        targetId = 'line-' + talkDomId + '-' + idx + '-' + String(sh).slice(0,6);
+        dialogLines[idx]._anchorId = targetId;
+      }
+
       hits.push({
-        hash: sh2,
-        pattern_key: rr2.pattern_key || '',
-        targetId: '',
-        lineIndex: -1,
-        matchText: needle2,
-        status: rr2.status || 'pending',
-        reviewed_at: rr2.reviewed_at || null,
-        reviewed_by: rr2.reviewed_by || ''
+        hash: sh,
+        risk_id: rr.id || '',
+        line_num: lineNum,
+        risk_reasons: reasons,
+        targetId: targetId,
+        lineIndex: idx,
+        status: rr.status || 'pending',
+        reviewed_at: rr.reviewed_at || null,
+        reviewed_by: rr.reviewed_by || ''
       });
-      used.add(sh2);
+      used.add(sh);
     }
+
+    // מיון: קודם כאלה שנמצאו בשורות, לפי lineIndex, ואז לפי line_num
+    hits.sort(function(a,b){
+      var ai = (a.lineIndex==null?-1:a.lineIndex);
+      var bi = (b.lineIndex==null?-1:b.lineIndex);
+      if (ai === -1 && bi !== -1) return 1;
+      if (ai !== -1 && bi === -1) return -1;
+      if (ai !== bi) return ai - bi;
+      return (a.line_num||0) - (b.line_num||0);
+    });
 
     return hits;
   }
@@ -750,36 +752,43 @@ v02
 
     for (var i=0;i<dialogLines.length;i++){
       var ln = dialogLines[i];
+      var h = hitForLine(i);
+      var anchor = escapeHtml(ln._anchorId||'');
+      var riskLineCls = h ? ' riskline' : '';
 
       if (ln.speaker === 'patient'){
         var body = escapeHtml(ln.body || '');
-        var h = hitForLine(i);
 
-        if (h && h.matchText){
-          var rxm = new RegExp(escapeRegExp(h.matchText), 'u');
+        if (h){
           var cls = 'risk';
           var note = '';
           var btn = '';
+          var badge = ' <span class="risk-badge">' + escapeHtml(h.risk_reasons || '') + '</span>';
 
           if (String(h.status||'') === 'reviewed'){
             cls += ' reviewed';
             var stamp = h.reviewed_at ? ilStamp(h.reviewed_at) : '';
-            note = ' <span class="note-yellow">(המטפל בדק' + (stamp?(' בתאריך ' + escapeHtml(stamp)):'') + (h.reviewed_by?(', ' + escapeHtml(h.reviewed_by)):'') + ')</span>';
-            btn = ' <button class="btn-unreview-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" title="בטל סימון">בטל סימון</button>';
+            note = ' <span class="note-yellow">(המטפל בדק' + (stamp?(', ' + escapeHtml(stamp)):'') + (h.reviewed_by?(', ' + escapeHtml(h.reviewed_by)):'') + ')</span>';
+            btn = ' <button class="btn-unreview-inline" data-risk-id="' + escapeHtml(h.risk_id) + '" data-line-num="' + escapeHtml(String(h.line_num||'')) + '" title="בטל סימון">בטל סימון</button>';
           } else {
-            btn = ' <button class="btn-review-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" data-snippet="'+escapeHtml(h.matchText)+'" title="סמן כטופל">סמן כטופל</button>';
+            btn = ' <button class="btn-review-inline" data-risk-id="' + escapeHtml(h.risk_id) + '" data-line-num="' + escapeHtml(String(h.line_num||'')) + '" title="סמן כטופל">סמן כטופל</button>';
           }
 
-          body = body.replace(rxm, '<mark class="' + cls + '" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'">$&</mark>' + note + btn);
+          body = '<span class="' + cls + '">' + body + '</span>' + badge + note + btn;
         }
 
-        html.push('<div class="line speaker"><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> <span id="' + escapeHtml(ln._anchorId||'') + '">' + body + '</span></div>');
+        html.push('<div class="line speaker' + riskLineCls + '"><span class="speaker speaker-patient">' + escapeHtml(patientName || 'המטופל') + ':</span> <span class="text" id="' + anchor + '">' + body + '</span></div>');
       } else if (ln.speaker === 'therapist'){
-        html.push('<div class="line speaker"><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + '</div>');
+        var tBody = escapeHtml(ln.body || '');
+        if (h){
+          var tBadge = ' <span class="risk-badge">' + escapeHtml(h.risk_reasons || '') + '</span>';
+          tBody = '<span class="risk">' + tBody + '</span>' + tBadge;
+        }
+        html.push('<div class="line speaker' + riskLineCls + '"><span class="speaker speaker-therapist">המטפל:</span> ' + tBody + '</div>');
       } else if (ln.speaker === 'spacer'){
         html.push('<div class="line-spacer"></div>');
       } else {
-        html.push('<div class="line">' + escapeHtml(ln.body || '') + '</div>');
+        html.push('<div class="line' + riskLineCls + '">' + escapeHtml(ln.body || '') + '</div>');
       }
     }
 
@@ -867,7 +876,7 @@ v02
         var parsed = toDialogLines(r.name, talkClean);
         var talkDomId = (r.time_key || '').replace(/[^0-9]/g,'') || Math.random().toString(36).slice(2);
 
-        loadRiskRows(r.time_key, r.phone).then(function(riskRows){
+        loadRiskRows(r.id).then(function(riskRows){
           var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
           // open risks for alerts (status != reviewed)
@@ -885,9 +894,8 @@ v02
             for (var nn=0; nn<notRev.length; nn++){
               var hh2 = notRev[nn];
               items.push({
-                text: hh2.matchText,
-                hash: hh2.hash,
-                pattern_key: hh2.pattern_key,
+                text: hh2.risk_reasons || '',
+                line_num: hh2.line_num || null,
                 targetId: hh2.targetId || ''
               });
             }
@@ -963,7 +971,7 @@ v02
           headParts.push('<button class="btn-home" title="חזרה למסך הראשון">חזרה למסך הראשון</button>');
           headParts.push('</div>');
 
-          parts.push('<div class="talk" data-time="' + escapeHtml(r.time_key) + '" data-phone="' + escapeHtml(r.phone||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
+          parts.push('<div class="talk" data-id="' + escapeHtml(r.id||'') + '" data-time="' + escapeHtml(r.time_key) + '" data-phone="' + escapeHtml(r.phone||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
           parts.push(headParts.join(''));
 
           if (isHidden){
@@ -1089,23 +1097,20 @@ v02
     var btnReview = ev.target.closest('.btn-review-inline');
     if (btnReview){
       var talkElem2 = btnReview.closest('.talk');
-      var time_key2 = talkElem2 ? talkElem2.getAttribute('data-time') : null;
-      var phone2    = talkElem2 ? talkElem2.getAttribute('data-phone') : null;
+      var talkId2   = talkElem2 ? talkElem2.getAttribute('data-id') : null;
 
       var riskId   = btnReview.getAttribute('data-risk-id') || '';
       var lineNumS = btnReview.getAttribute('data-line-num');
       var lineNum  = (lineNumS == null || String(lineNumS).trim()==='') ? null : parseInt(lineNumS, 10);
 
-      if (!riskId || !time_key2 || !phone2 || lineNum == null || !isFinite(lineNum)){
-        showInlineMsg(talkElem2, 'שגיאה: חסרים מזהים לסימון (id/time_key/phone/line_num).');
+      if (!riskId || !talkId2 || lineNum == null || !isFinite(lineNum)){
+        showInlineMsg(talkElem2, 'שגיאה: חסרים מזהים לסימון (id/line_num).');
         return;
       }
 
       supa.from(REVIEWS_TABLE)
           .update({ status:'reviewed', reviewed_at: nowISO(), reviewed_by: null })
           .eq('id', riskId)
-          .eq('time_key', time_key2)
-          .eq('phone', phone2)
           .eq('line_num', lineNum)
           .then(function(res3){
             if (res3.error){
@@ -1115,7 +1120,7 @@ v02
             // Update cache if present
             try{
               if (CACHE && CACHE.loaded){
-                var kk = keyOf(time_key2, phone2);
+                var kk = keyOfId(talkId2);
                 var arr = CACHE.riskMap.get(kk) || [];
                 for (var i=0;i<arr.length;i++){
                   if (String(arr[i].id||'')===String(riskId) && parseInt(arr[i].line_num,10)===lineNum){
@@ -1126,10 +1131,9 @@ v02
                 }
                 CACHE.riskMap.set(kk, arr);
                 rerenderFromCache();
-                return;
               }
             } catch(e){}
-            queryPage(true);
+            showInlineMsg(talkElem2, 'סומן כטופל.');
           });
       return;
     }
@@ -1137,45 +1141,43 @@ v02
     var btnUnreview = ev.target.closest('.btn-unreview-inline');
     if (btnUnreview){
       var talkElem3 = btnUnreview.closest('.talk');
-      var time_key3 = talkElem3 ? talkElem3.getAttribute('data-time') : null;
-      var phone3    = talkElem3 ? talkElem3.getAttribute('data-phone') : null;
+      var talkId3   = talkElem3 ? talkElem3.getAttribute('data-id') : null;
 
       var riskId3   = btnUnreview.getAttribute('data-risk-id') || '';
       var lineNumS3 = btnUnreview.getAttribute('data-line-num');
       var lineNum3  = (lineNumS3 == null || String(lineNumS3).trim()==='') ? null : parseInt(lineNumS3, 10);
 
-      if (!riskId3 || !time_key3 || !phone3 || lineNum3 == null || !isFinite(lineNum3)){
-        showInlineMsg(talkElem3, 'שגיאה: חסרים מזהים לביטול סימון (id/time_key/phone/line_num).');
+      if (!riskId3 || !talkId3 || lineNum3 == null || !isFinite(lineNum3)){
+        showInlineMsg(talkElem3, 'שגיאה: חסרים מזהים לביטול (id/line_num).');
         return;
       }
 
       supa.from(REVIEWS_TABLE)
-          .update({ status:'pending' })
+          .update({ status:'pending', reviewed_at: null, reviewed_by: null })
           .eq('id', riskId3)
-          .eq('time_key', time_key3)
-          .eq('phone', phone3)
           .eq('line_num', lineNum3)
           .then(function(res4){
             if (res4.error){
-              showInlineMsg(talkElem3, 'שגיאה בביטול סימון: ' + (res4.error.message || 'unknown'));
+              showInlineMsg(talkElem3, 'שגיאה בביטול: ' + (res4.error.message || 'unknown'));
               return;
             }
             // Update cache if present
             try{
               if (CACHE && CACHE.loaded){
-                var kk3 = keyOf(time_key3, phone3);
+                var kk3 = keyOfId(talkId3);
                 var arr3 = CACHE.riskMap.get(kk3) || [];
                 for (var j=0;j<arr3.length;j++){
                   if (String(arr3[j].id||'')===String(riskId3) && parseInt(arr3[j].line_num,10)===lineNum3){
                     arr3[j].status = 'pending';
+                    arr3[j].reviewed_at = null;
+                    arr3[j].reviewed_by = null;
                   }
                 }
                 CACHE.riskMap.set(kk3, arr3);
                 rerenderFromCache();
-                return;
               }
             } catch(e){}
-            queryPage(true);
+            showInlineMsg(talkElem3, 'בוטל סימון.');
           });
       return;
     }
