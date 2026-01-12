@@ -1,11 +1,7 @@
 name: List users_total pending names
 
-on:
-  # ריצה כל 10 דק׳ בין 08:00–22:00 בישראל (UTC 6–20)
-  schedule:
-    - cron: "*/10 6-20 * * *"
-  workflow_dispatch: {}
-
+on: {}
+ 
 permissions:
   contents: read
 
