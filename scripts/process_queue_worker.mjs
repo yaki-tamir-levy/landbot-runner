@@ -24,7 +24,7 @@ function requireEnv(name) {
 const SUPABASE_URL = requireEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const OPENAI_API_KEY = requireEnv("OPENAI_API_KEY");
-const GITHUB_WORKFLOW_TOKEN = requireEnv("GITHUB_WORKFLOW_TOKEN");
+const GITHUB_WORKFLOW_TOKEN = requireEnv("GH_WORKFLOW_TOKEN");
 
 const MAX_JOBS_PER_RUN = Number(process.env.MAX_JOBS_PER_RUN || "50");
 
