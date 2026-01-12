@@ -364,7 +364,7 @@
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
-        return fetchAllPaged(REVIEWS_TABLE, 'id, time_key, phone, line_num, snippet_text, pattern_key, status, reviewed_at, reviewed_by', 'time_key');
+        return fetchAllPaged(REVIEWS_TABLE, 'time_key, phone, snippet_hash, snippet_text, pattern_key, status, reviewed_at, reviewed_by', 'time_key');
       })
       .then(function(allRisk){
         buildRiskCache(allRisk || []);
@@ -654,7 +654,7 @@
     }
     // fallback (לא אמור לקרות אחרי טעינה ראשונית)
     return supa.from(REVIEWS_TABLE)
-      .select('id, line_num, snippet_text, pattern_key, status, reviewed_at, reviewed_by')
+      .select('snippet_hash, snippet_text, pattern_key, status, reviewed_at, reviewed_by')
       .eq('time_key', time_key)
       .eq('phone', phone)
       .then(function(res){
@@ -674,84 +674,60 @@
     var hits = [];
     var used = new Set();
 
-    function riskKey(rr){
-      var rid = rr && rr.id != null ? String(rr.id) : '';
-      if (rid) return 'id:' + rid;
-      var ln  = rr && rr.line_num != null ? String(rr.line_num) : '';
-      var pk  = rr && rr.pattern_key != null ? String(rr.pattern_key) : '';
-      var tx  = rr && rr.snippet_text != null ? String(rr.snippet_text) : '';
-      return 'ln:' + ln + '|pk:' + pk + '|tx:' + tx;
-    }
-
-    function makeTargetId(rr, lineIndex){
-      var rid = rr && rr.id != null ? String(rr.id) : '';
-      var ln  = rr && rr.line_num != null ? String(rr.line_num) : '';
-      var sfx = (rid ? rid.replace(/[^a-f0-9]/gi,'').slice(0,6) : ('l' + ln));
-      return 'line-' + talkDomId + '-' + lineIndex + '-' + sfx;
-    }
-
-    // First pass: try to anchor each risk to a patient line that contains snippet_text
     for (var idx=0; idx<dialogLines.length; idx++){
-      var lnObj = dialogLines[idx];
-      if (!lnObj || lnObj.speaker !== 'patient') continue;
+      var ln = dialogLines[idx];
+      if (ln.speaker !== 'patient') continue;
 
-      var txt = String(lnObj.body || '');
-      for (var r=0; r<(riskRows||[]).length; r++){
+      var txt = String(ln.body || '');
+      for (var r=0; r<riskRows.length; r++){
         var rr = riskRows[r];
-        var key = riskKey(rr);
-        if (used.has(key)) continue;
-
-        var needle = String(rr && rr.snippet_text != null ? rr.snippet_text : '').trim();
+        var needle = String(rr.snippet_text || '').trim();
         if (!needle) continue;
 
-        if (txt.indexOf(needle) !== -1){
-          var targetId = makeTargetId(rr, idx);
-          lnObj._anchorId = targetId;
+        // אם כבר שיבצנו את אותו hash בעוגן – דלג
+        var sh = rr.snippet_hash || (hashStr(needle + '|' + (rr.pattern_key||'')));
+        if (used.has(sh)) continue;
 
+        if (txt.indexOf(needle) !== -1){
+          var targetId = 'line-' + talkDomId + '-' + idx + '-' + String(sh).slice(0,6);
+          ln._anchorId = targetId;
           hits.push({
-            risk_id: (rr && rr.id != null) ? String(rr.id) : '',
-            line_num: (rr && rr.line_num != null) ? rr.line_num : null,
-            pattern_key: (rr && rr.pattern_key != null) ? String(rr.pattern_key) : '',
+            hash: sh,
+            pattern_key: rr.pattern_key || '',
             targetId: targetId,
             lineIndex: idx,
             matchText: needle,
-            status: (rr && rr.status != null) ? String(rr.status) : 'pending',
-            reviewed_at: rr ? rr.reviewed_at : null,
-            reviewed_by: rr ? (rr.reviewed_by || rr.reviewer || '') : ''
+            status: rr.status || 'pending',
+            reviewed_at: rr.reviewed_at || null,
+            reviewed_by: rr.reviewed_by || ''
           });
-
-          used.add(key);
+          used.add(sh);
         }
       }
     }
 
-    // Second pass: include risks that weren't anchored
-    for (var r2=0; r2<(riskRows||[]).length; r2++){
+    // RISK שלא נמצא בטקסט (למשל חוסר התאמה) – עדיין יחושבו להתרעות למעלה
+    for (var r2=0; r2<riskRows.length; r2++){
       var rr2 = riskRows[r2];
-      var key2 = riskKey(rr2);
-      if (used.has(key2)) continue;
-
-      var needle2 = String(rr2 && rr2.snippet_text != null ? rr2.snippet_text : '').trim();
+      var needle2 = String(rr2.snippet_text || '').trim();
       if (!needle2) continue;
-
+      var sh2 = rr2.snippet_hash || (hashStr(needle2 + '|' + (rr2.pattern_key||'')));
+      if (used.has(sh2)) continue;
       hits.push({
-        risk_id: (rr2 && rr2.id != null) ? String(rr2.id) : '',
-        line_num: (rr2 && rr2.line_num != null) ? rr2.line_num : null,
-        pattern_key: (rr2 && rr2.pattern_key != null) ? String(rr2.pattern_key) : '',
+        hash: sh2,
+        pattern_key: rr2.pattern_key || '',
         targetId: '',
         lineIndex: -1,
         matchText: needle2,
-        status: (rr2 && rr2.status != null) ? String(rr2.status) : 'pending',
-        reviewed_at: rr2 ? rr2.reviewed_at : null,
-        reviewed_by: rr2 ? (rr2.reviewed_by || rr2.reviewer || '') : ''
+        status: rr2.status || 'pending',
+        reviewed_at: rr2.reviewed_at || null,
+        reviewed_by: rr2.reviewed_by || ''
       });
-
-      used.add(key2);
+      used.add(sh2);
     }
 
     return hits;
   }
-
 
   function renderDialogHtml(patientName, dialogLines, hits){
     var html = [];
@@ -780,12 +756,12 @@
             cls += ' reviewed';
             var stamp = h.reviewed_at ? ilStamp(h.reviewed_at) : '';
             note = ' <span class="note-yellow">(המטפל בדק' + (stamp?(' בתאריך ' + escapeHtml(stamp)):'') + (h.reviewed_by?(', ' + escapeHtml(h.reviewed_by)):'') + ')</span>';
-            btn = ' <button class="btn-unreview-inline" data-risk-id="'+escapeHtml(h.risk_id)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" title="בטל סימון">בטל סימון</button>';
+            btn = ' <button class="btn-unreview-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" title="בטל סימון">בטל סימון</button>';
           } else {
-            btn = ' <button class="btn-review-inline" data-risk-id="'+escapeHtml(h.risk_id)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" data-snippet="'+escapeHtml(h.matchText)+'" title="סמן כטופל">סמן כטופל</button>';
+            btn = ' <button class="btn-review-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" data-snippet="'+escapeHtml(h.matchText)+'" title="סמן כטופל">סמן כטופל</button>';
           }
 
-          body = body.replace(rxm, '<mark class="' + cls + '" data-risk-id="'+escapeHtml(h.risk_id)+'" data-pattern="'+escapeHtml(h.pattern_key)+'">$&</mark>' + note + btn);
+          body = body.replace(rxm, '<mark class="' + cls + '" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'">$&</mark>' + note + btn);
         }
 
         html.push('<div class="line speaker"><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> <span id="' + escapeHtml(ln._anchorId||'') + '">' + body + '</span></div>');
@@ -1100,7 +1076,7 @@
       return;
     }
 
-    
+    // --- RISK actions: mark reviewed / unreviewed (UPDATE by PK: id,time_key,phone,line_num)
     var btnReview = ev.target.closest('.btn-review-inline');
     if (btnReview){
       var talkElem2 = btnReview.closest('.talk');
@@ -1117,7 +1093,7 @@
       }
 
       supa.from(REVIEWS_TABLE)
-          .update({ status:'reviewed', reviewed_at: nowISO(), reviewed_by:null })
+          .update({ status:'reviewed', reviewed_at: nowISO(), reviewed_by: null })
           .eq('id', riskId)
           .eq('time_key', time_key2)
           .eq('phone', phone2)
@@ -1148,38 +1124,51 @@
           });
       return;
     }
-            if (CACHE && CACHE.loaded){
-              rerenderFromCache();
-            } else {
-              queryPage(true);
-            }
-          });
-      return;
-    }
 
     var btnUnreview = ev.target.closest('.btn-unreview-inline');
     if (btnUnreview){
       var talkElem3 = btnUnreview.closest('.talk');
       var time_key3 = talkElem3 ? talkElem3.getAttribute('data-time') : null;
       var phone3    = talkElem3 ? talkElem3.getAttribute('data-phone') : null;
-      var hash3     = btnUnreview.getAttribute('data-risk-id');
+
+      var riskId3   = btnUnreview.getAttribute('data-risk-id') || '';
+      var lineNumS3 = btnUnreview.getAttribute('data-line-num');
+      var lineNum3  = (lineNumS3 == null || String(lineNumS3).trim()==='') ? null : parseInt(lineNumS3, 10);
+
+      if (!riskId3 || !time_key3 || !phone3 || lineNum3 == null || !isFinite(lineNum3)){
+        showInlineMsg(talkElem3, 'שגיאה: חסרים מזהים לביטול סימון (id/time_key/phone/line_num).');
+        return;
+      }
 
       supa.from(REVIEWS_TABLE)
           .update({ status:'pending' })
+          .eq('id', riskId3)
           .eq('time_key', time_key3)
           .eq('phone', phone3)
-          .eq('risk_id', hash3)
+          .eq('line_num', lineNum3)
           .then(function(res4){
             if (res4.error){
               showInlineMsg(talkElem3, 'שגיאה בביטול סימון: ' + (res4.error.message || 'unknown'));
               return;
             }
-            if (CACHE && CACHE.loaded){
-              rerenderFromCache();
-            } else {
-              queryPage(true);
-            }
+            // Update cache if present
+            try{
+              if (CACHE && CACHE.loaded){
+                var kk3 = keyOf(time_key3, phone3);
+                var arr3 = CACHE.riskMap.get(kk3) || [];
+                for (var j=0;j<arr3.length;j++){
+                  if (String(arr3[j].id||'')===String(riskId3) && parseInt(arr3[j].line_num,10)===lineNum3){
+                    arr3[j].status = 'pending';
+                  }
+                }
+                CACHE.riskMap.set(kk3, arr3);
+                rerenderFromCache();
+                return;
+              }
+            } catch(e){}
+            queryPage(true);
           });
+      return;
     }
   });
 
