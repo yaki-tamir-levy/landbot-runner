@@ -300,10 +300,10 @@
   var CACHE = {
     loaded: false,
     allRows: [],
-    flagsMap: new Map(),   // key(time,phone) -> {is_hidden}
+    flagsMap: new Map(),   // key(time_key,phone) -> {is_hidden}
     infoMap:  new Map(),   // phone -> {status}
-    riskMap:  new Map(),   // key(time,phone) -> [riskRows]
-    riskKeySet: new Set()  // key(time,phone)
+    riskMap:  new Map(),   // key(time_key,phone) -> [riskRows]
+    riskKeySet: new Set()  // key(time_key,phone)
   };
 
   function fetchAllPaged(tableName, selectCols, orderCol){
@@ -345,7 +345,7 @@
 
   function markRowsWithRisk(){
     (CACHE.allRows || []).forEach(function(r){
-      r._forceRisk = CACHE.riskKeySet.has(keyOf(r.time, r.phone));
+      r._forceRisk = CACHE.riskKeySet.has(keyOf(r.time_key, r.phone));
     });
   }
 
@@ -360,7 +360,7 @@
     CACHE.riskMap = new Map();
     CACHE.riskKeySet = new Set();
 
-    return fetchAllPaged(TABLE, 'time, phone, name, last_talk_tzvira, summarized_linked_talk', 'time')
+    return fetchAllPaged(TABLE, 'time_key, phone, name, last_talk_tzvira, summarized_linked_talk', 'time_key')
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
@@ -410,14 +410,14 @@
 
       if (pnLow && String(r.phone || '').toLowerCase().indexOf(pnLow) === -1) return;
       if (nnLow && String(r.name  || '').toLowerCase().indexOf(nnLow) === -1) return;
-      if (fromTime && String(r.time||'') < fromTime) return;
-      if (toTime   && String(r.time||'') > toTime)   return;
+      if (fromTime && String(r.time_key||'') < fromTime) return;
+      if (toTime   && String(r.time_key||'') > toTime)   return;
 
       out.push(r);
     });
 
     out.sort(function(a,b){
-      var ta = String(a.time||''), tb = String(b.time||'');
+      var ta = String(a.time_key||''), tb = String(b.time_key||'');
       if (ta < tb) return -1;
       if (ta > tb) return 1;
       var pa = String(a.phone||''), pb = String(b.phone||'');
@@ -855,9 +855,9 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
 
         var talkClean = cleanTalk(r.last_talk_tzvira || '');
         var parsed = toDialogLines(r.name, talkClean);
-        var talkDomId = (r.time || '').replace(/[^0-9]/g,'') || Math.random().toString(36).slice(2);
+        var talkDomId = (r.time_key || '').replace(/[^0-9]/g,'') || Math.random().toString(36).slice(2);
 
-        loadRiskRows(r.time, r.phone).then(function(riskRows){
+        loadRiskRows(r.time_key, r.phone).then(function(riskRows){
           var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
           // open risks for alerts (status != reviewed)
@@ -866,7 +866,7 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
             if (String(hits[h].status||'') !== 'reviewed') notRev.push(hits[h]);
           }
 
-          var k = keyOf(r.time, r.phone);
+          var k = keyOf(r.time_key, r.phone);
           var flag = flagsMap.get(k);
           var isHidden = !!(flag && flag.is_hidden);
 
@@ -884,7 +884,7 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
             alerts.push({
               name: r.name || 'מטופל/ת',
               phone: r.phone || '',
-              time: timeKeyToHuman(r.time),
+              time: timeKeyToHuman(r.time_key),
               items: items
             });
           }
@@ -918,7 +918,7 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
           }
           headParts.push('<div class="meta why">', escapeHtml(kindTxt), '</div>');
 
-          if (r._forceRisk){
+          if (r && r._forceRisk){
             headParts.push('<div class="meta"><span class="pill">RISK override</span></div>');
           }
 
@@ -928,7 +928,7 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
 
           if (canToggle) {
             headParts.push(
-              '<button class="btn-toggle btn-state-active" data-time="', escapeHtml(r.time),
+              '<button class="btn-toggle btn-state-active" data-time="', escapeHtml(r.time_key),
               '" data-phone="', escapeHtml(r.phone||''),
               '" data-name="', escapeHtml(r.name||''),
               '" data-hidden="', (isHidden?'1':'0'),
@@ -950,11 +950,11 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
             headParts.push('<button class="btn-placeholder">הצג שיחות קודמות</button>');
           }
 
-          headParts.push('<span class="meta mono">', escapeHtml(timeKeyToHuman(r.time)), '</span>');
+          headParts.push('<span class="meta mono">', escapeHtml(timeKeyToHuman(r.time_key)), '</span>');
           headParts.push('<button class="btn-home" title="חזרה למסך הראשון">חזרה למסך הראשון</button>');
           headParts.push('</div>');
 
-          parts.push('<div class="talk" data-time="' + escapeHtml(r.time) + '" data-phone="' + escapeHtml(r.phone||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
+          parts.push('<div class="talk" data-time="' + escapeHtml(r.time_key) + '" data-phone="' + escapeHtml(r.phone||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
           parts.push(headParts.join(''));
 
           if (isHidden){
@@ -1101,7 +1101,7 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
               return;
             }
             if (CACHE && CACHE.loaded){
-              CACHE.flagsMap.set(keyOf(time_key, phone), { is_hidden: !isHidden });
+              // אין צורך לעדכן flags כאן; פשוט לרנדר מחדש (המידע יגיע מה-cache).
               rerenderFromCache();
             } else {
               queryPage(true);
@@ -1128,20 +1128,9 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
               return;
             }
             if (CACHE && CACHE.loaded){
-              CACHE.flagsMap.set(keyOf(time_key, phone), { is_hidden: !isHidden });
-              rerenderFromCache();
-            } else {
-              if (CACHE && CACHE.loaded){
-              var kk3 = keyOf(time_key3, phone3);
-              var arr3 = CACHE.riskMap.get(kk3) || [];
-              for (var jj=0; jj<arr3.length; jj++){
-                if (String(arr3[jj].snippet_hash||'') === String(hash3||'')) arr3[jj].status = 'pending';
-              }
-              CACHE.riskMap.set(kk3, arr3);
               rerenderFromCache();
             } else {
               queryPage(true);
-            }
             }
           });
     }
