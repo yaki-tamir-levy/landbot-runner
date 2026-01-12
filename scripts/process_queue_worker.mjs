@@ -1,23 +1,19 @@
 /**
- * scripts/process_queue_worker.mjs
+ * scripts/process_queue_worker.mjs  (v02)
  *
- * Queue worker that:
- *  - claims ONE queue job at a time (FOR UPDATE SKIP LOCKED via RPC)
- *  - prints the claimed job details (queue_id, users_total_id, phone, name)
- *  - runs process_users_total.mjs for EXACTLY ONE row via ONLY_ID
- *  - marks queue DONE/ERROR (with last_error)
+ * Trigger GitHub Actions workflow immediately after successful processing
+ * that may insert RISK rows into RISK_REVIEWS.
  *
- * Required env:
- *   SUPABASE_URL
- *   SUPABASE_SERVICE_ROLE_KEY
- *   OPENAI_API_KEY
+ * Repo: yaki-tamir-levy/landbot-runner
+ * Workflow: .github/workflows/pushover_notify.yml
  *
- * Optional:
- *   MAX_JOBS_PER_RUN (default 50)
+ * Required additional env:
+ *   GITHUB_WORKFLOW_TOKEN (repo-scoped, actions:write)
  */
 
 import { createClient } from "@supabase/supabase-js";
 import { spawn } from "node:child_process";
+import https from "node:https";
 
 function requireEnv(name) {
   const v = process.env[name];
@@ -28,6 +24,7 @@ function requireEnv(name) {
 const SUPABASE_URL = requireEnv("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const OPENAI_API_KEY = requireEnv("OPENAI_API_KEY");
+const GITHUB_WORKFLOW_TOKEN = requireEnv("GITHUB_WORKFLOW_TOKEN");
 
 const MAX_JOBS_PER_RUN = Number(process.env.MAX_JOBS_PER_RUN || "50");
 
@@ -47,41 +44,28 @@ async function finishQueue(queueId, status, lastError = null) {
 async function claimOne() {
   const { data, error } = await supabase.rpc("fn_process_queue_claim_one");
   if (error) throw new Error(`fn_process_queue_claim_one failed: ${error.message}`);
-  return data; // null if none
-}
-
-async function fetchUsersTotalMeta(usersTotalId) {
-  const { data, error } = await supabase
-    .from("users_total")
-    .select("id,phone,name,processed")
-    .eq("id", usersTotalId)
-    .limit(1)
-    .maybeSingle();
-
-  if (error) {
-    return { id: usersTotalId, phone: null, name: null, processed: null, meta_error: error.message };
-  }
-  if (!data) {
-    return { id: usersTotalId, phone: null, name: null, processed: null, meta_error: "not_found" };
-  }
-  return { ...data, meta_error: null };
+  return data;
 }
 
 function runProcessUsersTotalOnlyId(usersTotalId) {
   return new Promise((resolve, reject) => {
-    const child = spawn("node", ["scripts/process_users_total.mjs"], {
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        SUPABASE_URL,
-        SUPABASE_SERVICE_ROLE_KEY,
-        OPENAI_API_KEY,
-        ONLY_ID: String(usersTotalId),
-        MAX_ITEMS: "1",
-      },
-    });
+    const child = spawn(
+      "node",
+      ["scripts/process_users_total.mjs"],
+      {
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          SUPABASE_URL,
+          SUPABASE_SERVICE_ROLE_KEY,
+          OPENAI_API_KEY,
+          ONLY_ID: String(usersTotalId),
+          MAX_ITEMS: "1",
+        },
+      }
+    );
 
-    child.on("error", (err) => reject(err));
+    child.on("error", reject);
     child.on("exit", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`process_users_total.mjs exited with code ${code}`));
@@ -89,47 +73,73 @@ function runProcessUsersTotalOnlyId(usersTotalId) {
   });
 }
 
+function triggerPushoverWorkflow() {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ ref: "main" });
+
+    const req = https.request(
+      {
+        method: "POST",
+        hostname: "api.github.com",
+        path: "/repos/yaki-tamir-levy/landbot-runner/actions/workflows/pushover_notify.yml/dispatches",
+        headers: {
+          "Authorization": `Bearer ${GITHUB_WORKFLOW_TOKEN}`,
+          "User-Agent": "landbot-runner",
+          "Accept": "application/vnd.github+json",
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        if (res.statusCode === 204) {
+          console.log("GitHub workflow_dispatch triggered");
+          resolve();
+        } else {
+          let data = "";
+          res.on("data", (d) => (data += d));
+          res.on("end", () =>
+            reject(new Error(`GitHub dispatch failed ${res.statusCode}: ${data}`))
+          );
+        }
+      }
+    );
+
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 async function main() {
   let processedCount = 0;
+  let triggered = false;
 
   for (let i = 0; i < MAX_JOBS_PER_RUN; i++) {
     const job = await claimOne();
-
-    if (!job || !job.id) {
-      console.log(`[QUEUE] no NEW jobs found (iteration=${i + 1}/${MAX_JOBS_PER_RUN})`);
-      break;
-    }
+    if (!job || !job.id) break;
 
     const queueId = job.id;
     const usersTotalId = job.users_total_id;
 
-    const meta = await fetchUsersTotalMeta(usersTotalId);
-
-    console.log(
-      `[QUEUE] CLAIM queue_id=${queueId} users_total_id=${usersTotalId} phone=${meta.phone ?? ""} name=${meta.name ?? ""} processed=${meta.processed ?? ""} meta_error=${meta.meta_error ?? ""}`
-    );
-
     try {
       await runProcessUsersTotalOnlyId(usersTotalId);
 
-      await finishQueue(queueId, "DONE", null);
-      processedCount += 1;
-
-      console.log(
-        `[QUEUE] DONE queue_id=${queueId} users_total_id=${usersTotalId} phone=${meta.phone ?? ""} name=${meta.name ?? ""}`
-      );
-    } catch (err) {
-      const msg = err?.message ? err.message : String(err);
-
-      try {
-        await finishQueue(queueId, "ERROR", msg.slice(0, 2000));
-      } catch (e2) {
-        console.error(`[QUEUE] ERROR finishing queue job queue_id=${queueId}: ${e2?.message ?? e2}`);
+      if (!triggered) {
+        try {
+          await triggerPushoverWorkflow();
+          triggered = true;
+        } catch (e) {
+          console.error("Workflow trigger failed:", e.message);
+        }
       }
 
-      console.error(
-        `[QUEUE] ERROR queue_id=${queueId} users_total_id=${usersTotalId} phone=${meta.phone ?? ""} name=${meta.name ?? ""} msg=${msg}`
-      );
+      await finishQueue(queueId, "DONE", null);
+      processedCount += 1;
+      console.log(`QUEUE DONE users_total.id=${usersTotalId} (queue.id=${queueId})`);
+    } catch (err) {
+      const msg = err?.message || String(err);
+      await finishQueue(queueId, "ERROR", msg.slice(0, 2000));
+      console.error(`QUEUE ERROR users_total.id=${usersTotalId} (queue.id=${queueId}): ${msg}`);
     }
   }
 
