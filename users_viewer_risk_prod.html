@@ -92,7 +92,7 @@
     .inline-msg{margin:8px 12px;background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d;padding:8px 10px;border-radius:10px}
     .note-yellow{background:var(--hi); padding:0 4px; border-radius:4px}
     .btn-review-inline,.btn-unreview-inline{margin-inline-start:8px}
-  
+
   .meta.why{ display:inline-block; margin:0 8px; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; }
 </style>
 </head>
@@ -171,7 +171,6 @@
     return;
   }
   var supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
 
   // ------------------------------------------------------------
   // users_information.status backfill — at most one DB call per phone
@@ -261,6 +260,7 @@
     });
     return Promise.all(ps);
   }
+
   function putInfoStatus(phoneRaw, statusVal){
     var status = statusVal;
     if (status == null || String(status).trim() === '') return;
@@ -392,11 +392,20 @@
       });
   }
 
+  function normalizeDateInput(s){
+    var v = String(s || '').trim();
+    if (!v) return '';
+    // support YYYY-MM-DD -> YYYY.MM.DD
+    var m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return m[1] + '.' + m[2] + '.' + m[3];
+    return v;
+  }
+
   function getFilteredRowsFromCache(){
     var phoneNeedle = (el.fPhone.value || '').trim();
     var nameNeedle  = (el.fName.value  || '').trim();
-    var f = (el.fFrom.value || '').trim();
-    var t = (el.fTo.value   || '').trim();
+    var f = normalizeDateInput(el.fFrom.value || '');
+    var t = normalizeDateInput(el.fTo.value   || '');
 
     var fromTime = isYL(f) ? (f + '-00.00.00') : null;
     var toTime   = isYL(t) ? (t + '-23.59.59') : null;
@@ -474,16 +483,23 @@
 
   var LIMIT = 100;
 
-  function isYL(s){ return /^\d{4}\.\d{2}\.\d{2}$/.test(s||''); }
+  function isYL(s){
+    var v = String(s || '').trim();
+    if (!v) return false;
+    // accept YYYY.MM.DD or YYYY-MM-DD
+    if (/^\d{4}\.\d{2}\.\d{2}$/.test(v)) return true;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return true;
+    return false;
+  }
 
   function todayYMD(){
-    // מתאים ל-<input type="date"> (YYYY-MM-DD)
+    // Returns YYYY.MM.DD to match time_key prefix format
     try{
       var d = new Date();
       var y = d.getFullYear();
       var m = String(d.getMonth()+1).padStart(2,'0');
       var day = String(d.getDate()).padStart(2,'0');
-      return y + '-' + m + '-' + day;
+      return y + '.' + m + '.' + day;
     }catch(e){
       return '';
     }
@@ -507,7 +523,7 @@
     return s;
   }
 
-function stripAllHtml(raw){
+  function stripAllHtml(raw){
     var s = String(raw==null?'':raw);
     s = s.replace(/<br\s*\/?>(?=\s*)/gi, '\n');
     s = s.replace(/<\/?.*?>/g, '');
@@ -578,7 +594,7 @@ function stripAllHtml(raw){
     return d;
   }
 
-function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(phone); }
+  function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(phone); }
 
   function showInlineMsg(talkElem, msg){
     if (!talkElem) return;
@@ -645,17 +661,6 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
         if (res.error) return [];
         return res.data || [];
       });
-  }
-
-
-
-  function snippetAround(full, match){
-    var s = String(full||''), m = String(match||'');
-    if (!m) return s.slice(0, 60);
-    var idx = s.indexOf(m);
-    if (idx === -1) return (m.length>80? m.slice(0,80)+'…' : m);
-    var start = Math.max(0, idx - 18), end = Math.min(s.length, idx + m.length + 18);
-    return (start>0?'…':'') + s.slice(start, end).trim() + (end<s.length?'…':'');
   }
 
   function hashStr(str){
@@ -773,8 +778,6 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
   }
 
   function queryPage(forceReload){
-    // בטעינה הראשונית: מביאים את הכל ללא סלקציה.
-    // לאחר מכן: סלקציות מקומיות בלבד (ללא רשת).
     if (CACHE.loaded && !forceReload){
       rerenderFromCache();
       return;
@@ -783,8 +786,6 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
       rerenderFromCache();
     }).catch(function(){});
   }
-
-
 
   function render(rows, flagsMap, infoMap, talkKind){
     return new Promise(function(resolve){
@@ -899,8 +900,7 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
           headParts.push('<div class="head">');
           headParts.push('<div class="head-name">', nameHtml, '</div>');
           headParts.push('<div class="head-phone">', phoneHtml, '</div>');
-                              // למה השיחה נבחרה: (א) RISK override אם יש RISK, (ב) סוג שיחה לפי users_information.status,
-          // ואם אין מידע—נשתמש בסוג שנבחר בסלקציה הנוכחית (fKind) כ־fallback.
+
           var kindTxt = 'לא ידוע';
           try{
             var info2 = infoMap.get(normPhone(r.phone));
@@ -1101,7 +1101,6 @@ function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(p
               return;
             }
             if (CACHE && CACHE.loaded){
-              // אין צורך לעדכן flags כאן; פשוט לרנדר מחדש (המידע יגיע מה-cache).
               rerenderFromCache();
             } else {
               queryPage(true);
