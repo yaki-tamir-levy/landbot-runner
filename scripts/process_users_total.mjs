@@ -25,6 +25,7 @@ const ONLY_ID = process.env.ONLY_ID ?? null;
 const USERS_TOTAL_TABLE = "users_total";
 const USERS_TZVIRA_TABLE = "users_tzvira";
 const RISK_REVIEWS_TABLE = "risk_reviews";
+const RISK_PHRASES_TABLE = "risk_phrases";
 
 const USERS_INFORMATION_TABLE = "users_information";
 const PROMPT10_PHONE = "77777777";
@@ -297,6 +298,129 @@ async function supaFetchPrompt10() {
   return String(prompt10);
 }
 
+
+async function supaFetchActiveRiskPhrases() {
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${RISK_PHRASES_TABLE}`);
+  url.searchParams.set("select", "pattern");
+  url.searchParams.set("is_active", "eq.true");
+  // Keep ordering stable (optional)
+  url.searchParams.set("order", "pattern.asc");
+
+  const res = await fetch(url, { headers: supaHeaders() });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Supabase GET risk_phrases failed: ${res.status} ${text}`);
+
+  let rows = [];
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    rows = [];
+  }
+
+  const patterns = (Array.isArray(rows) ? rows : [])
+    .map((r) => String(r?.pattern ?? "").trim())
+    .filter((p) => p.length > 0);
+
+  // De-dup (case-insensitive)
+  const seen = new Set();
+  const out = [];
+  for (const p of patterns) {
+    const k = p.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out;
+}
+
+function textContainsPattern(haystack, needle) {
+  const h = String(haystack ?? "").toLowerCase();
+  const n = String(needle ?? "").toLowerCase();
+  if (!h || !n) return false;
+  return h.includes(n);
+}
+
+async function supaRiskReviewExists({ id, time_key, phone, line_num }) {
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${RISK_REVIEWS_TABLE}`);
+  url.searchParams.set("select", "id");
+  url.searchParams.set("id", `eq.${id}`);
+  url.searchParams.set("time_key", `eq.${time_key}`);
+  url.searchParams.set("phone", `eq.${phone}`);
+  url.searchParams.set("line_num", `eq.${line_num}`);
+  url.searchParams.set("limit", "1");
+
+  const res = await fetch(url, { headers: supaHeaders() });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Supabase GET risk_reviews exists failed: ${res.status} ${text}`);
+
+  let rows = [];
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    rows = [];
+  }
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+async function phraseScanAndInsertRisks({
+  id,
+  time_key,
+  phone,
+  name,
+  numberedText,
+  activeRiskPhrases,
+}) {
+  if (!Array.isArray(activeRiskPhrases) || activeRiskPhrases.length === 0) return 0;
+
+  const lines = parseNumberedLines(numberedText);
+  if (!Array.isArray(lines) || lines.length === 0) return 0;
+
+  let inserted = 0;
+
+  for (const ln of lines) {
+    const lineNum = ln.line_no;
+    const lineText = ln.text ?? "";
+
+    // Find first matching pattern for this line
+    let matchedPattern = null;
+    for (const pattern of activeRiskPhrases) {
+      if (textContainsPattern(lineText, pattern)) {
+        matchedPattern = pattern;
+        break;
+      }
+    }
+
+    if (!matchedPattern) continue;
+
+    // Skip if ANY existing risk_reviews row exists for this PK (regardless of who inserted it)
+    const exists = await supaRiskReviewExists({
+      id,
+      time_key,
+      phone,
+      line_num: lineNum,
+    });
+
+    if (exists) continue;
+
+    await insertRiskReviewsRows([
+      {
+        id,
+        time_key,
+        phone,
+        name,
+        line_num: lineNum,
+        short_risk: null,
+        risk_reasons: matchedPattern,
+        match_method: "2",
+      },
+    ]);
+
+    inserted += 1;
+  }
+
+  return inserted;
+}
+
 async function supaInsert(table, payload) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${table}`);
   const res = await fetch(url, {
@@ -324,7 +448,7 @@ async function insertRiskReviewsRows(rows) {
   await supaInsert(RISK_REVIEWS_TABLE, rows);
 }
 
-async function processOneRow(row, prompt10Text) {
+async function processOneRow(row, prompt10Text, activeRiskPhrases) {
   const phone = row.phone;
   if (!phone) throw new Error("Row missing phone");
 
@@ -409,6 +533,21 @@ async function processOneRow(row, prompt10Text) {
     }
   }
 
+
+
+// Phrase Scan (risk_phrases) - INSERT ONLY if no existing risk_reviews row for the same PK
+const phraseInserted = await phraseScanAndInsertRisks({
+  id,
+  time_key: lastSummaryAt,
+  phone,
+  name,
+  numberedText,
+  activeRiskPhrases,
+});
+
+if (phraseInserted > 0) {
+  console.log(`[INFO] phone=${phone} phrase_scan inserted risk_reviews rows=${phraseInserted}`);
+}
   console.log(
     `[DONE] phone=${phone} (summary_len=${summaryText.length}, risk_len=${String(risk ?? "").length}, reasons_len=${String(
       reasons ?? ""
@@ -435,13 +574,17 @@ async function main() {
     `[INFO] Loaded prompt10 from ${USERS_INFORMATION_TABLE}.${PROMPT10_COLUMN} phone=${PROMPT10_PHONE} (len=${prompt10Text.length})`
   );
 
+const activeRiskPhrases = await supaFetchActiveRiskPhrases();
+console.log(`[INFO] Loaded active risk_phrases patterns=${activeRiskPhrases.length}`);
+
+
   const rows = await supaGetEligibleRows(MAX_ITEMS);
   console.log(`Found ${rows.length} eligible rows.`);
 
   for (const row of rows) {
     const phone = row.phone ?? "(unknown)";
     try {
-      await processOneRow(row, prompt10Text);
+      await processOneRow(row, prompt10Text, activeRiskPhrases);
       await sleep(200);
     } catch (err) {
       await markError(phone, err);
