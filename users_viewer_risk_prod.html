@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-01-14 FIX-SYNTAX VIEW-ONLY ID-RISK -->
+<!-- VERSION: 2026-01-14 FIX-ANCHOR LINE_NUM -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -100,6 +100,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-14 FIX-ANCHOR LINE_NUM</div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -666,14 +667,20 @@ function showInlineMsg(talkElem, msg){
 
   // מנסים לעגן כל RISK בתוך שורת מטופל כדי לאפשר "פתח את הסיכון"
   
+  
   function bindRiskToDialog(dialogLines, talkDomId, riskRows){
+    // line_num is 1-based as stored in risk_reviews.
     var hits = [];
     (riskRows || []).forEach(function(rr){
+      var ln = rr && rr.line_num != null ? parseInt(rr.line_num, 10) : NaN;
+      if (!isFinite(ln) || ln < 1) ln = -1;
+
       hits.push({
         id: rr.id || null,
         time_key: rr.time_key || '',
         phone: rr.phone || '',
-        line_num: rr.line_num,
+        line_num: ln,
+        targetId: (ln >= 1 ? ('ln-' + talkDomId + '-' + ln) : ''),
         status: rr.status || 'NEW',
         reviewed_at: rr.reviewed_at || null,
         reviewer: rr.reviewer || '',
@@ -831,8 +838,7 @@ function showInlineMsg(talkElem, msg){
               var hh2 = notRev[nn];
               items.push({
                 text: (hh2.short_risk || hh2.risk_reasons || ('line ' + hh2.line_num)),
-                hash: hh2.hash,
-                pattern_key: hh2.pattern_key,
+                
                 targetId: hh2.targetId || ''
               });
             }
@@ -919,6 +925,7 @@ function showInlineMsg(talkElem, msg){
             if (r.phone) patientsShown.add(String(r.phone).trim());
 
             var dialogHtml = renderDialogHtml(parsed.patient, parsed.lines, hits);
+            dialogHtml = dialogHtml.replace(/__TALKDOM__-/g, 'ln-' + talkDomId + '-');
             parts.push('<div class="body">' + dialogHtml + '</div>');
 
             var sumRaw = (r.summarized_linked_talk || '').trim();
