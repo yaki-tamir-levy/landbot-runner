@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- VERSION: 2026-01-14 FIX-SYNTAX VIEW-ONLY ID-RISK -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -342,10 +343,9 @@
     });
   }
 
-  function markRowsWithRisk(
-){
+  function markRowsWithRisk(){
     (CACHE.allRows || []).forEach(function(r){
-      r._forceRisk = CACHE.riskKeySet.has(keyOf(r.time_key, r.phone));
+      r._forceRisk = CACHE.riskKeySet.has(String(r.id||''));
     });
   }
 
@@ -417,7 +417,7 @@
     });
 
     out.sort(function(a,b){
-      var ta = String(a.time||''), tb = String(b.time||'');
+      var ta = String(a.time_key||''), tb = String(b.time_key||'');
       if (ta < tb) return -1;
       if (ta > tb) return 1;
       var pa = String(a.phone||''), pb = String(b.phone||'');
@@ -648,8 +648,8 @@ function showInlineMsg(talkElem, msg){
       });
   }
 
+  
   function snippetAround(full, match){
-(full, match){
     var s = String(full||''), m = String(match||'');
     if (!m) return s.slice(0, 60);
     var idx = s.indexOf(m);
@@ -705,13 +705,13 @@ function showInlineMsg(talkElem, msg){
           if (String(h.status||'') === 'CHECKED'){
             cls += ' reviewed';
             var stamp = h.reviewed_at ? ilStamp(h.reviewed_at) : '';
-            note = ' <span class="note-yellow">(המטפל בדק' + (stamp?(' בתאריך ' + escapeHtml(stamp)):'') + (h.reviewed_by?(', ' + escapeHtml(h.reviewed_by)):'') + ')</span>';
-            btn = ' <button class="btn-unreview-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" title="בטל סימון">בטל סימון</button>';
+            note = ' <span class="note-yellow">(המטפל בדק' + (stamp?(' בתאריך ' + escapeHtml(stamp)):'') + (''?(', ' + escapeHtml('')):'') + ')</span>';
+            btn = ' <button class="btn-unreview-inline" data-line="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" title="בטל סימון">בטל סימון</button>';
           } else {
-            btn = ' <button class="btn-review-inline" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" data-snippet="'+escapeHtml(h.matchText)+'" title="סמן כטופל">סמן כטופל</button>';
+            btn = ' <button class="btn-review-inline" data-line="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" data-snippet="'+escapeHtml(h.matchText)+'" title="סמן כטופל">סמן כטופל</button>';
           }
 
-          body = body.replace(rxm, '<mark class="' + cls + '" data-hash="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'">$&</mark>' + note + btn);
+          body = body.replace(rxm, '<mark class="' + cls + '" data-line="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'">$&</mark>' + note + btn);
         }
 
         html.push('<div class="line speaker"><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> <span id="' + escapeHtml(ln._anchorId||'') + '">' + body + '</span></div>');
@@ -1031,75 +1031,20 @@ function showInlineMsg(talkElem, msg){
       return;
     }
 
-    var btnReview = ev.target.closest('.btn-review-inline');
+        var btnReview = ev.target.closest('.btn-review-inline');
     if (btnReview){
       var talkElem2 = btnReview.closest('.talk');
-      var time_key2 = talkElem2 ? talkElem2.getAttribute('data-time') : null;
-      var phone2    = talkElem2 ? talkElem2.getAttribute('data-phone') : null;
-      var name2     = talkElem2 ? talkElem2.getAttribute('data-name')  : null;
-
-      var hash     = btnReview.getAttribute('data-hash');
-      var pattern  = btnReview.getAttribute('data-pattern');
-      var text     = btnReview.getAttribute('data-snippet') || '';
-
-      var payload2 = {
-        time_key: time_key2, phone: phone2, patient_name: name2,
-        snippet_hash: hash, snippet_text: text, pattern_key: pattern,
-        status:'CHECKED', reviewed_at: nowISO(), reviewed_by:null
-      };
-
-      supa.from(REVIEWS_TABLE)
-          .upsert(payload2, { onConflict: 'time_key,phone,snippet_hash' })
-          .then(function(res3){
-            if (res3.error){
-              showInlineMsg(talkElem2, 'שגיאה בסימון: ' + (res3.error.message || 'unknown'));
-              return;
-            }
-            if (CACHE && CACHE.loaded){
-              CACHE.flagsMap.set(keyOf(time_key, phone), { is_hidden: !isHidden });
-              rerenderFromCache();
-            } else {
-              queryPage(true);
-            }
-          });
+      showInlineMsg(talkElem2, 'בגרסה זו: תצוגה בלבד (אין עדכון סטטוס מה-Viewer).');
       return;
     }
 
     var btnUnreview = ev.target.closest('.btn-unreview-inline');
     if (btnUnreview){
       var talkElem3 = btnUnreview.closest('.talk');
-      var time_key3 = talkElem3 ? talkElem3.getAttribute('data-time') : null;
-      var phone3    = talkElem3 ? talkElem3.getAttribute('data-phone') : null;
-      var hash3     = btnUnreview.getAttribute('data-hash');
-
-      supa.from(REVIEWS_TABLE)
-          .update({ status:'NEW' })
-          .eq('time_key', time_key3)
-          .eq('phone', phone3)
-          .eq('snippet_hash', hash3)
-          .then(function(res4){
-            if (res4.error){
-              showInlineMsg(talkElem3, 'שגיאה בביטול סימון: ' + (res4.error.message || 'unknown'));
-              return;
-            }
-            if (CACHE && CACHE.loaded){
-              CACHE.flagsMap.set(keyOf(time_key, phone), { is_hidden: !isHidden });
-              rerenderFromCache();
-            } else {
-              if (CACHE && CACHE.loaded){
-              var kk3 = keyOf(time_key3, phone3);
-              var arr3 = CACHE.riskMap.get(kk3) || [];
-              for (var jj=0; jj<arr3.length; jj++){
-                if (String(arr3[jj].snippet_hash||'') === String(hash3||'')) arr3[jj].status = 'pending';
-              }
-              CACHE.riskMap.set(kk3, arr3);
-              rerenderFromCache();
-            } else {
-              queryPage(true);
-            }
-            }
-          });
+      showInlineMsg(talkElem3, 'בגרסה זו: תצוגה בלבד (אין עדכון סטטוס מה-Viewer).');
+      return;
     }
+
   });
 
   el.fKind.addEventListener('change', function(){
