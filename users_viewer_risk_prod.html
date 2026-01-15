@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-01-14 FIX-ANCHOR4 LINE_NUM -->
+<!-- VERSION: 2026-01-14 FIX-ANCHOR LINE_NUM -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -100,7 +100,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-14 FIX-ANCHOR4 LINE_NUM</div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-14 FIX-ANCHOR LINE_NUM <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1069,6 +1069,17 @@ function showInlineMsg(talkElem, msg){
   };
 
   updateTitlesFromStatus();
+
+
+  // Cache-busting badge: show ?v=... near the version label (testing visibility)
+  (function(){
+    try{
+      var sp = new URLSearchParams(window.location.search || "");
+      var v = sp.get("v");
+      var badge = document.getElementById("vBadge");
+      if (badge && v){ badge.textContent = " · v=" + String(v); }
+    }catch(e){}
+  })();
 
   // init אחרי שה-DOM מוכן (למקרה של race)
   if (document.readyState === 'loading'){
