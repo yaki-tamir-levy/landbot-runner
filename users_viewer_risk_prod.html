@@ -614,19 +614,35 @@ function showInlineMsg(talkElem, msg){
     var out = [];
 
     for (var i=0;i<lines.length;i++){
-      var s = String(lines[i]||'');
+      var s0 = String(lines[i]||'');
 
-      if (rxPatientName.test(s)){ out.push({ speaker:'patient', body:s.replace(rxPatientName,'') }); continue; }
-      if (rxTher.test(s)){ out.push({ speaker:'therapist', body:s.replace(rxTher,'') }); out.push({ speaker:'spacer' }); continue; }
-      if (rxQ.test(s)){ out.push({ speaker:'patient', body:s.replace(rxQ,'') }); continue; }
-      if (rxA.test(s)){ out.push({ speaker:'therapist', body:s.replace(rxA,'') }); out.push({ speaker:'spacer' }); continue; }
-      if (rxGenericPatient.test(s)){ out.push({ speaker:'patient', body:s.replace(rxGenericPatient,'') }); continue; }
-      if (rxGenericTher.test(s)){ out.push({ speaker:'therapist', body:s.replace(rxGenericTher,'') }); out.push({ speaker:'spacer' }); continue; }
+      // Preserve original line number prefix like: "-1- Q: ..." / "-2- A: ..."
+      // This number is used for anchoring to risk_reviews.line_num / risk_reviews.page_num.
+      var lnNum = null;
+      var mNum = /^\s*-\s*(\d+)\s*-\s*(.*)$/.exec(s0);
+      var s = s0;
+      var numPrefix = '';
+      if (mNum){
+        lnNum = parseInt(mNum[1], 10);
+        if (isFinite(lnNum) && lnNum >= 1){
+          numPrefix = '-' + lnNum + '- ';
+        } else {
+          lnNum = null;
+        }
+        s = String(mNum[2]||'');
+      }
 
-      if (/^\s*שאלה:\s*/.test(s)){ out.push({ speaker:'patient', body:s.replace(/^\s*שאלה:\s*/,'') }); continue; }
-      if (/^\s*תשובה:\s*/.test(s)){ out.push({ speaker:'therapist', body:s.replace(/^\s*תשובה:\s*/,'') }); out.push({ speaker:'spacer' }); continue; }
+      if (rxPatientName.test(s)){ out.push({ speaker:'patient', body: numPrefix + s.replace(rxPatientName,''), _lineNum: lnNum }); continue; }
+      if (rxTher.test(s)){ out.push({ speaker:'therapist', body: numPrefix + s.replace(rxTher,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
+      if (rxQ.test(s)){ out.push({ speaker:'patient', body: numPrefix + s.replace(rxQ,''), _lineNum: lnNum }); continue; }
+      if (rxA.test(s)){ out.push({ speaker:'therapist', body: numPrefix + s.replace(rxA,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
+      if (rxGenericPatient.test(s)){ out.push({ speaker:'patient', body: numPrefix + s.replace(rxGenericPatient,''), _lineNum: lnNum }); continue; }
+      if (rxGenericTher.test(s)){ out.push({ speaker:'therapist', body: numPrefix + s.replace(rxGenericTher,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
 
-      out.push({ speaker:'text', body:s });
+      if (/^\s*שאלה:\s*/.test(s)){ out.push({ speaker:'patient', body: numPrefix + s.replace(/^\s*שאלה:\s*/,''), _lineNum: lnNum }); continue; }
+      if (/^\s*תשובה:\s*/.test(s)){ out.push({ speaker:'therapist', body: numPrefix + s.replace(/^\s*תשובה:\s*/,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
+
+      out.push({ speaker:'text', body: (numPrefix ? (numPrefix + s) : s), _lineNum: lnNum });
     }
     return { patient: patient, lines: out };
   }
@@ -641,7 +657,8 @@ function showInlineMsg(talkElem, msg){
       return Promise.resolve(CACHE.riskMap.get(String(talk_id)) || []);
     }
     return supa.from(REVIEWS_TABLE)
-      .select('id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
+      // include both line_num and page_num (some envs use PAGE_NUM)
+      .select('id, time_key, phone, line_num, page_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
       .eq('id', talk_id)
       .then(function(res){
         if (res.error) return [];
@@ -672,7 +689,9 @@ function showInlineMsg(talkElem, msg){
     // line_num is 1-based as stored in risk_reviews.
     var hits = [];
     (riskRows || []).forEach(function(rr){
-      var ln = rr && rr.line_num != null ? parseInt(rr.line_num, 10) : NaN;
+      // Prefer PAGE_NUM/page_num if exists, otherwise fallback to line_num
+      var rawLn = (rr && (rr.PAGE_NUM != null ? rr.PAGE_NUM : (rr.page_num != null ? rr.page_num : rr.line_num)));
+      var ln = rawLn != null ? parseInt(rawLn, 10) : NaN;
       if (!isFinite(ln) || ln < 1) ln = -1;
 
       hits.push({
@@ -689,6 +708,18 @@ function showInlineMsg(talkElem, msg){
       });
     });
     return hits;
+  }
+
+  function applyAnchorsToDialogLines(dialogLines, talkDomId){
+    if (!dialogLines || !dialogLines.length) return;
+    for (var i=0;i<dialogLines.length;i++){
+      var ln = dialogLines[i];
+      if (!ln) continue;
+      var n = ln._lineNum != null ? parseInt(ln._lineNum, 10) : NaN;
+      if (isFinite(n) && n >= 1){
+        ln._anchorId = 'ln-' + talkDomId + '-' + n;
+      }
+    }
   }
 
   function renderDialogHtml(patientName, dialogLines, hits){
@@ -721,7 +752,8 @@ function showInlineMsg(talkElem, msg){
           body = body.replace(rxm, '<mark class="' + cls + '" data-line="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'">$&</mark>' + note + btn);
         }
 
-        html.push('<div class="line speaker"><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> <span id="' + escapeHtml(ln._anchorId||'') + '">' + body + '</span></div>');
+        var anchor = (ln._anchorId && String(ln._anchorId).trim()) ? (' id="' + escapeHtml(ln._anchorId) + '"') : '';
+        html.push('<div class="line speaker"><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> <span' + anchor + '>' + body + '</span></div>');
       } else if (ln.speaker === 'therapist'){
         html.push('<div class="line speaker"><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + '</div>');
       } else if (ln.speaker === 'spacer'){
@@ -818,6 +850,9 @@ function showInlineMsg(talkElem, msg){
         var talkClean = cleanTalk(r.last_talk_tzvira || '');
         var parsed = toDialogLines(r.name, talkClean);
         var talkDomId = (r.time_key || '').replace(/[^0-9]/g,'') || Math.random().toString(36).slice(2);
+
+        // Anchor IDs are based on the original line numbers ("-1-", "-2-", ...)
+        applyAnchorsToDialogLines(parsed.lines, talkDomId);
 
         loadRiskRows(r.id).then(function(riskRows){
           var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
