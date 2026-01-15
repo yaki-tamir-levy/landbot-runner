@@ -3,7 +3,7 @@ name: Process Queue Worker (event-ish)
 on:
   # "Near real-time" runner (polls queue frequently)
   schedule:
-    - cron: "*/1 * * * *"   # every minute (UTC)
+    - cron: "*/5 * * * *"   # every minute (UTC)
   workflow_dispatch: {}
 
 concurrency:
