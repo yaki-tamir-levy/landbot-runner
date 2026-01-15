@@ -93,7 +93,7 @@
     <p>הכנס סיסמה כדי להציג את שיחות המטפל הוירטואלי.</p>
     <form id="loginForm">
       <label for="pw">סיסמה</label>
-<input id="pw" type="text" autocomplete="off" />
+      <input id="pw" type="password" autocomplete="current-password" />
       <button type="submit">כניסה</button>
       <div id="msg"></div>
     </form>
@@ -103,10 +103,13 @@
     (function () {
       "use strict";
 
-      // *** שים לב: זאת אותה סיסמה כמו בקובץ users_viewer_risk_prod.html ***
-      const APP_PASSWORD  = "yon1234";
+      // *** שים לב: זאת אותה הסיסמה כמו בקובץ users_viewer_risk_prod.html ***
+      const APP_PASSWORD   = "yon1234";
       const EXPECTED_TOKEN = "ok-" + btoa(APP_PASSWORD);
-      const STORAGE_KEY   = "riskAppAuth";
+      const STORAGE_KEY    = "riskAppAuth";
+
+      // Cache-busting: תמיד נטען את ה-Viewer ב-URL חדש (שלב ניסוי)
+      const VIEWER_FILE = "users_viewer_risk_prod.html";
 
       var form = document.getElementById("loginForm");
       var pw   = document.getElementById("pw");
@@ -117,6 +120,12 @@
         if (!msg) return;
         msg.textContent = text || "";
         msg.className = ok ? "ok" : "err";
+      }
+
+      function goToViewerWithCacheBust(){
+        var v = String(Date.now());
+        // שומר את ה-token לסשן הנוכחי ואז מפנה עם v כדי לעקוף קאש
+        window.location.href = VIEWER_FILE + "?v=" + encodeURIComponent(v);
       }
 
       form.addEventListener("submit", function (ev) {
@@ -136,7 +145,7 @@
             console.warn("sessionStorage error", e);
           }
           showMsg("מתחבר...", true);
-          window.location.href = "users_viewer_risk_prod.html";
+          goToViewerWithCacheBust();
         } else {
           showMsg("סיסמה שגויה.", false);
           btn.disabled = false;
