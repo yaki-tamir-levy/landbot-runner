@@ -87,6 +87,13 @@
     .line-spacer{height:1em}
     .target-blink{animation: blink 1.3s ease-in-out 1}
     @keyframes blink{ 0%{background:var(--hi)} 100%{background:transparent} }
+    .risk-line{ border-radius:6px; padding:2px 4px; }
+    .risk-line.open{ background:#ffe4e6; }
+    .risk-line.checked{ background:#d1fae5; }
+    .risk-badge{ display:inline-block; margin-inline-start:8px; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:900; border:1px solid #ddd; background:#fff; }
+    .risk-badge.open{ border-color:#fecaca; background:#ffe4e6; }
+    .risk-badge.checked{ border-color:#bbf7d0; background:#d1fae5; color:#065f46; }
+    .risk-selected{ box-shadow:0 0 0 3px var(--hi) inset; }
     #statusBar{margin:10px 0}
     #statusBar .err{background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d;padding:10px;border-radius:10px}
     #statusBar .ok{background:#dcfce7;border:1px solid #bbf7d0;color:#065f46;padding:10px;border-radius:10px}
@@ -346,7 +353,9 @@
 
   function markRowsWithRisk(){
     (CACHE.allRows || []).forEach(function(r){
-      r._forceRisk = CACHE.riskKeySet.has(String(r.id||''));
+      r._hasRisk   = CACHE.riskKeySet.has(String(r.id||''));
+      // _forceRisk remains for overriding client-side filters (phone/name/date).
+      r._forceRisk = !!r._hasRisk;
     });
   }
 
@@ -725,41 +734,71 @@ function showInlineMsg(talkElem, msg){
   function renderDialogHtml(patientName, dialogLines, hits){
     var html = [];
 
-    function hitForLine(i){ return null; }
+    // Map line_num -> hit (prefer open over checked if multiple)
+    var hitByLine = new Map();
+    (hits || []).forEach(function(h){
+      var ln = parseInt(h.line_num, 10);
+      if (!isFinite(ln) || ln < 1) return;
+      var prev = hitByLine.get(ln);
+      if (!prev){
+        hitByLine.set(ln, h);
+        return;
+      }
+      // Prefer open risk over checked
+      if (String(prev.status||'') === 'CHECKED' && String(h.status||'') !== 'CHECKED'){
+        hitByLine.set(ln, h);
+      }
+    });
+
+    function lineAttrs(lnObj){
+      var attrs = '';
+      var cls = 'line speaker';
+      var n = (lnObj && lnObj._lineNum != null) ? parseInt(lnObj._lineNum, 10) : NaN;
+      var hit = (isFinite(n) && n >= 1) ? hitByLine.get(n) : null;
+
+      if (lnObj && lnObj._anchorId){
+        attrs += ' id="' + escapeHtml(lnObj._anchorId) + '"';
+      }
+      if (hit){
+        var st = String(hit.status||'');
+        if (st === 'CHECKED') cls += ' risk-line checked';
+        else cls += ' risk-line open';
+        attrs += ' data-risk="1"';
+      }
+      attrs += ' class="' + cls + '"';
+      return { attrs: attrs, hit: hit };
+    }
 
     for (var i=0;i<dialogLines.length;i++){
       var ln = dialogLines[i];
+      if (!ln) continue;
 
       if (ln.speaker === 'patient'){
-        var body = escapeHtml(ln.body || '');
-        var h = hitForLine(i);
-
-        if (h && h.matchText){
-          var rxm = new RegExp(escapeRegExp(h.matchText), 'u');
-          var cls = 'risk';
-          var note = '';
-          var btn = '';
-
-          if (String(h.status||'') === 'CHECKED'){
-            cls += ' reviewed';
-            var stamp = h.reviewed_at ? ilStamp(h.reviewed_at) : '';
-            note = ' <span class="note-yellow">(המטפל בדק' + (stamp?(' בתאריך ' + escapeHtml(stamp)):'') + (''?(', ' + escapeHtml('')):'') + ')</span>';
-            btn = ' <button class="btn-unreview-inline" data-line="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" title="בטל סימון">בטל סימון</button>';
-          } else {
-            btn = ' <button class="btn-review-inline" data-line="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'" data-snippet="'+escapeHtml(h.matchText)+'" title="סמן כטופל">סמן כטופל</button>';
-          }
-
-          body = body.replace(rxm, '<mark class="' + cls + '" data-line="'+escapeHtml(h.hash)+'" data-pattern="'+escapeHtml(h.pattern_key)+'">$&</mark>' + note + btn);
+        var la = lineAttrs(ln);
+        var badge = '';
+        if (la.hit){
+          var st2 = String(la.hit.status||'');
+          badge = ' <span class="risk-badge ' + (st2==='CHECKED'?'checked':'open') + '">' + (st2==='CHECKED'?'RISK טופל':'RISK') + '</span>';
         }
-
-        var anchor = (ln._anchorId && String(ln._anchorId).trim()) ? (' id="' + escapeHtml(ln._anchorId) + '"') : '';
-        html.push('<div class="line speaker"><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> <span' + anchor + '>' + body + '</span></div>');
+        html.push('<div' + la.attrs + '><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
       } else if (ln.speaker === 'therapist'){
-        html.push('<div class="line speaker"><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + '</div>');
+        var la2 = lineAttrs(ln);
+        var badge2 = '';
+        if (la2.hit){
+          var st3 = String(la2.hit.status||'');
+          badge2 = ' <span class="risk-badge ' + (st3==='CHECKED'?'checked':'open') + '">' + (st3==='CHECKED'?'RISK טופל':'RISK') + '</span>';
+        }
+        html.push('<div' + la2.attrs + '><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + badge2 + '</div>');
       } else if (ln.speaker === 'spacer'){
         html.push('<div class="line-spacer"></div>');
       } else {
-        html.push('<div class="line">' + escapeHtml(ln.body || '') + '</div>');
+        var la3 = lineAttrs(ln);
+        var badge3 = '';
+        if (la3.hit){
+          var st4 = String(la3.hit.status||'');
+          badge3 = ' <span class="risk-badge ' + (st4==='CHECKED'?'checked':'open') + '">' + (st4==='CHECKED'?'RISK טופל':'RISK') + '</span>';
+        }
+        html.push('<div' + la3.attrs + '>' + escapeHtml(ln.body || '') + badge3 + '</div>');
       }
     }
 
@@ -787,17 +826,31 @@ function showInlineMsg(talkElem, msg){
       var patientsShown = new Set();
 
       function isRowAllowed(row){
-        // שיחה שנוספה בגלל RISK עוקפת את כל סינון הסטטוס
-        if (row && row._forceRisk) return true;
+        // Default: no override.
+        if (row) row._riskOverrideKind = false;
+
+        // No status filter selected
         if (!talkKind) return true;
+
         var phoneKey = normPhone(row.phone);
         if (!phoneKey) return false;
+
         var info = infoMap.get(phoneKey);
         if (!info || info.status == null) return false;
+
         var sVal = parseInt(info.status, 10);
         var kVal = parseInt(talkKind, 10);
         if (!isFinite(kVal)) return true;
-        return sVal === kVal;
+
+        var allowed = (sVal === kVal);
+        if (allowed) return true;
+
+        // If not allowed by status, still allow when talk has risk -> mark as override
+        if (row && row._hasRisk){
+          row._riskOverrideKind = true;
+          return true;
+        }
+        return false;
       }
 
       function nextRow(i){
@@ -831,7 +884,12 @@ function showInlineMsg(talkElem, msg){
                 var id = btn.getAttribute('data-target');
                 var node = id ? document.getElementById(id) : null;
                 if (!node) return;
+
+                // remove previous selection
+                document.querySelectorAll('.risk-selected').forEach(function(n){ n.classList.remove('risk-selected'); });
+
                 node.scrollIntoView({behavior:'smooth', block:'center'});
+                node.classList.add('risk-selected');
                 node.classList.add('target-blink');
                 setTimeout(function(){ node.classList.remove('target-blink'); }, 1300);
               });
@@ -909,13 +967,20 @@ function showInlineMsg(talkElem, msg){
               }
             }
           } catch(e){}
-          if (r && r._forceRisk){
+          if (r && r._riskOverrideKind){
             kindTxt = 'RISK override · ' + kindTxt;
           }
           headParts.push('<div class="meta why">', escapeHtml(kindTxt), '</div>');
 
-          if (r._forceRisk){
-            headParts.push('<div class="meta"><span class="pill">RISK override</span></div>');
+          // Show risk status pill only when relevant
+          if (hits && hits.length){
+            var openCount = 0;
+            for (var rc=0; rc<hits.length; rc++){
+              if (String(hits[rc].status||'') !== 'CHECKED') openCount++;
+            }
+            var pillTxt = openCount ? ('RISK פתוח (' + openCount + ')') : 'RISK טופל';
+            if (r && r._riskOverrideKind) pillTxt = 'RISK override · ' + pillTxt;
+            headParts.push('<div class="meta"><span class="pill">' + escapeHtml(pillTxt) + '</span></div>');
           }
 
           var canToggle = (isHidden || (!isHidden && notRev.length === 0));
