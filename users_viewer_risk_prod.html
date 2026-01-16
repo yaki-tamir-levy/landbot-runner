@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-01-16 STAGE3-FIX5 XX (RISK STATUS UPDATE + NOTE REQUIRED + INLINE ERROR NEAR TEXTAREA) -->
+<!-- VERSION: 2026-01-16 STAGE3-FIX5 (RISK STATUS UPDATE + NOTE REQUIRED + INLINE ERROR NEAR TEXTAREA) -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -108,7 +108,10 @@
     .risk-controls .rc-title{ font-weight:900; }
     .risk-controls .rc-btn{ font-weight:800; border:2px solid #d1d5db; border-radius:10px; padding:8px 10px; background:#fff; cursor:pointer; }
     .risk-controls .rc-btn:hover{ box-shadow:0 0 0 2px #e5e7eb inset; }
+    /* make the status buttons visually distinct */
     .risk-controls .rc-btn.active{ background:#eef2ff; border-color:#c7d2fe; }
+    .risk-controls .rc-btn.rc-seen.active{ background:#dcfce7; border-color:#86efac; }
+    .risk-controls .rc-btn.rc-cancel.active{ background:#fee2e2; border-color:#fecaca; }
     .risk-controls textarea{ width:100%; min-height:70px; resize:vertical; }
     .risk-controls .rc-small{ color:var(--muted); font-size:12px; margin-top:6px; }
     .risk-controls .rc-status{ display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ddd; background:#fff; font-weight:900; font-size:12px; }
@@ -120,7 +123,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX5 XX <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX5 YY <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -759,8 +762,10 @@ function showInlineMsg(talkElem, msg){
     if (!talkId || !lineNum) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
 
+    // Saving a note alone must NOT change status/reviewed_at/reviewer.
+    // reviewed_at/reviewer are updated only when a status decision is made (VIEWED/CHECKED).
     return supa.from(REVIEWS_TABLE)
-      .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
+      .update({ review_notes: txt })
       .eq('id', talkId)
       .eq('line_num', lineNum)
       .select('id')
@@ -778,8 +783,6 @@ function showInlineMsg(talkElem, msg){
             var ln = (rr && rr.line_num);
             if (parseInt(ln,10) === parseInt(lineNum,10)){
               rr.review_notes = txt;
-              rr.reviewed_at = nowISO();
-              rr.reviewer = 'viewer';
             }
           }
         }
@@ -914,8 +917,8 @@ function showInlineMsg(talkElem, msg){
       var stUi = (stDb === 'VIEWED') ? 'צפיתי' : ((stDb === 'CHECKED') ? 'מבטל סיכון' : 'NEW');
       var notes = (hit.review_notes != null ? String(hit.review_notes) : '').trim();
 
-      var btnSeenCls = (stUi === 'צפיתי') ? ' rc-btn active' : ' rc-btn';
-      var btnCancelCls = (stUi === 'מבטל סיכון') ? ' rc-btn active' : ' rc-btn';
+      var btnSeenCls = (stUi === 'צפיתי') ? ' rc-btn rc-seen active' : ' rc-btn rc-seen';
+      var btnCancelCls = (stUi === 'מבטל סיכון') ? ' rc-btn rc-cancel active' : ' rc-btn rc-cancel';
 
       var statusLine = '';
       if ((stUi && stUi !== 'NEW') || notes){
