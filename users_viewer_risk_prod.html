@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-01-16 STAGE3-FIX5 A (RISK STATUS UPDATE + NOTE REQUIRED + INLINE ERROR NEAR TEXTAREA) -->
+<!-- VERSION: 2026-01-16 STAGE3-FIX5 (RISK STATUS UPDATE + NOTE REQUIRED + INLINE ERROR NEAR TEXTAREA) -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -120,7 +120,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX5 A <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX5 B <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -724,7 +724,7 @@ function showInlineMsg(talkElem, msg){
     // Map UI labels to DB statuses
     var stDb = stUi;
     if (stUi === 'צפיתי') stDb = 'VIEWED';
-    if (stUi === 'מבטל סיכון') stDb = 'risk is deleted';
+    if (stUi === 'מבטל סיכון') stDb = 'CHECKED';
 
     return supa.from(REVIEWS_TABLE)
       .update({ status: stDb, review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
@@ -850,8 +850,6 @@ function showInlineMsg(talkElem, msg){
 
     function normStatus(st){
       var s = String(st || '').trim();
-      // legacy compatibility: CHECKED behaved like a 'viewed' open risk
-      if (s === 'CHECKED') return 'VIEWED';
       return s || 'NEW';
     }
 
@@ -862,7 +860,7 @@ function showInlineMsg(talkElem, msg){
 
     function isDeletedRiskStatus(st){
       var s = normStatus(st);
-      return (s === 'risk is deleted');
+      return (s === 'CHECKED');
     }
 
     // Map line_num -> hit (prefer open over deleted if multiple)
@@ -906,14 +904,14 @@ function showInlineMsg(talkElem, msg){
       var label = 'RISK';
       var cls = 'open';
       if (stDb === 'VIEWED') { label = 'צפיתי'; cls = 'open'; }
-      if (stDb === 'risk is deleted') { label = 'מבטל סיכון'; cls = 'checked'; }
+      if (stDb === 'CHECKED') { label = 'מבטל סיכון'; cls = 'checked'; }
       return ' <span class="risk-badge ' + cls + '">' + escapeHtml(label) + '</span>';
     }
 
     function controlsForHit(talkId, lineNum, hit){
       if (!hit) return '';
       var stDb = normStatus(hit.status || 'NEW');
-      var stUi = (stDb === 'VIEWED') ? 'צפיתי' : ((stDb === 'risk is deleted') ? 'מבטל סיכון' : 'NEW');
+      var stUi = (stDb === 'VIEWED') ? 'צפיתי' : ((stDb === 'CHECKED') ? 'מבטל סיכון' : 'NEW');
       var notes = (hit.review_notes != null ? String(hit.review_notes) : '').trim();
 
       var btnSeenCls = (stUi === 'צפיתי') ? ' rc-btn active' : ' rc-btn';
@@ -1082,11 +1080,10 @@ function showInlineMsg(talkElem, msg){
         loadRiskRows(r.id).then(function(riskRows){
           var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
-          // open risks for alerts: status NEW or VIEWED (legacy CHECKED treated as VIEWED)
+          // open risks for alerts: status NEW or VIEWED 
           var notRev = [];
           for (var h=0; h<hits.length; h++){
             var st = String(hits[h].status || 'NEW').trim();
-            if (st === 'CHECKED') st = 'VIEWED';
             if (st === 'NEW' || st === 'VIEWED') notRev.push(hits[h]);
           }
 
@@ -1139,14 +1136,13 @@ function showInlineMsg(talkElem, msg){
           headParts.push('<div class="meta why">', escapeHtml(kindTxt), '</div>');
 
           // Show risk title pill
-          // - If there is at least one risk with status NEW or VIEWED (legacy CHECKED treated as VIEWED) => "נמצא גורם סיכון"
+          // - If there is at least one risk with status NEW or VIEWED  => "נמצא גורם סיכון"
           // - If all risks are deleted => "גורם סיכון טופל"
           if (hits && hits.length){
             var allCanceled = true;
             for (var rc=0; rc<hits.length; rc++){
               var st = String(hits[rc].status || 'NEW').trim();
-              if (st === 'CHECKED') st = 'VIEWED';
-              if (st !== 'risk is deleted'){
+              if (st === 'NEW' || st === 'VIEWED'){
                 allCanceled = false;
                 break;
               }
