@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3-FIX1 -->
+<!-- VERSION: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3-FIX2 -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -118,7 +118,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3-FIX1 <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3-FIX2 <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -385,7 +385,7 @@
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
-        return fetchAllPaged(REVIEWS_TABLE, 'id, time_key, phone, line_num, status, reviewed_at, reviewer, name, reviews_notes, severity, match_method, risk_reasons, short_risk', 'id');
+        return fetchAllPaged(REVIEWS_TABLE, 'id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk', 'id');
       })
       .then(function(allRisk){
         buildRiskCache(allRisk || []);
@@ -674,7 +674,7 @@ function showInlineMsg(talkElem, msg){
     }
     return supa.from(REVIEWS_TABLE)
       // include both line_num and page_num (some envs use PAGE_NUM)
-      .select('id, time_key, phone, line_num, page_num, status, reviewed_at, reviewer, name, reviews_notes, severity, match_method, risk_reasons, short_risk')
+      .select('id, time_key, phone, line_num, page_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
       .eq('id', talk_id)
       .then(function(res){
         if (res.error) return [];
@@ -694,7 +694,7 @@ function showInlineMsg(talkElem, msg){
       .update({ status: st, reviewed_at: nowISO(), reviewer: 'viewer' })
       .eq('id', talkId)
       .eq('line_num', lineNum)
-      .select('id, line_num, page_num, status, reviews_notes')
+      .select('id, line_num, page_num, status, review_notes')
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
@@ -704,7 +704,7 @@ function showInlineMsg(talkElem, msg){
           .update({ status: st, reviewed_at: nowISO(), reviewer: 'viewer' })
           .eq('id', talkId)
           .eq('page_num', lineNum)
-          .select('id, line_num, page_num, status, reviews_notes')
+          .select('id, line_num, page_num, status, review_notes')
           .then(function(res2){
             if (res2 && res2.error) throw res2.error;
             var u2 = (res2 && res2.data) ? res2.data : [];
@@ -733,20 +733,20 @@ function showInlineMsg(talkElem, msg){
     var txt = (notes == null) ? '' : String(notes);
 
     return supa.from(REVIEWS_TABLE)
-      .update({ reviews_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
+      .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
       .eq('id', talkId)
       .eq('line_num', lineNum)
-      .select('id, line_num, page_num, status, reviews_notes')
+      .select('id, line_num, page_num, status, review_notes')
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
         if (updated && updated.length) return true;
 
         return supa.from(REVIEWS_TABLE)
-          .update({ reviews_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
+          .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
           .eq('id', talkId)
           .eq('page_num', lineNum)
-          .select('id, line_num, page_num, status, reviews_notes')
+          .select('id, line_num, page_num, status, review_notes')
           .then(function(res2){
             if (res2 && res2.error) throw res2.error;
             var u2 = (res2 && res2.data) ? res2.data : [];
@@ -760,7 +760,7 @@ function showInlineMsg(talkElem, msg){
             var rr = arr[i];
             var ln = (rr && (rr.page_num != null ? rr.page_num : rr.line_num));
             if (parseInt(ln,10) === parseInt(lineNum,10)){
-              rr.reviews_notes = txt;
+              rr.review_notes = txt;
               rr.reviewed_at = nowISO();
               rr.reviewer = 'viewer';
             }
@@ -809,7 +809,7 @@ function showInlineMsg(talkElem, msg){
         reviewer: rr.reviewer || '',
         short_risk: rr.short_risk || '',
         risk_reasons: rr.risk_reasons || '',
-        reviews_notes: (rr.reviews_notes != null ? String(rr.reviews_notes) : '')
+        review_notes: (rr.review_notes != null ? String(rr.review_notes) : '')
       });
     });
     return hits;
@@ -880,7 +880,7 @@ function showInlineMsg(talkElem, msg){
       if (!hit) return '';
       var st = String(hit.status || 'NEW').trim();
       if (st === 'CHECKED') st = 'צפיתי';
-      var notes = (hit.reviews_notes != null ? String(hit.reviews_notes) : '').trim();
+      var notes = (hit.review_notes != null ? String(hit.review_notes) : '').trim();
 
       var btnSeenCls = (st === 'צפיתי') ? ' rc-btn active' : ' rc-btn';
       var btnCancelCls = (st === 'מבטל סיכון') ? ' rc-btn active' : ' rc-btn';
