@@ -694,22 +694,13 @@ function showInlineMsg(talkElem, msg){
       .update({ status: st, reviewed_at: nowISO(), reviewer: 'viewer' })
       .eq('id', talkId)
       .eq('line_num', lineNum)
-      .select('id, line_num, page_num, status, review_notes')
+      .select('id, line_num, status, review_notes')
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
         if (updated && updated.length) return true;
 
-        return supa.from(REVIEWS_TABLE)
-          .update({ status: st, reviewed_at: nowISO(), reviewer: 'viewer' })
-          .eq('id', talkId)
-          .eq('page_num', lineNum)
-          .select('id, line_num, page_num, status, review_notes')
-          .then(function(res2){
-            if (res2 && res2.error) throw res2.error;
-            var u2 = (res2 && res2.data) ? res2.data : [];
-            return !!(u2 && u2.length);
-          });
+        return false;
       })
       .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
@@ -736,22 +727,13 @@ function showInlineMsg(talkElem, msg){
       .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
       .eq('id', talkId)
       .eq('line_num', lineNum)
-      .select('id, line_num, page_num, status, review_notes')
+      .select('id, line_num, status, review_notes')
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
         if (updated && updated.length) return true;
 
-        return supa.from(REVIEWS_TABLE)
-          .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
-          .eq('id', talkId)
-          .eq('page_num', lineNum)
-          .select('id, line_num, page_num, status, review_notes')
-          .then(function(res2){
-            if (res2 && res2.error) throw res2.error;
-            var u2 = (res2 && res2.data) ? res2.data : [];
-            return !!(u2 && u2.length);
-          });
+        return false;
       })
       .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
