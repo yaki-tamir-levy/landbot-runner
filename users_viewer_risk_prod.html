@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-01-16 FIX-RISK-TITLE STAGE2 -->
+<!-- VERSION: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3 -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -102,12 +102,23 @@
     .btn-review-inline,.btn-unreview-inline{margin-inline-start:8px}
   
   .meta.why{ display:inline-block; margin:0 8px; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; }
+
+    .risk-controls{ margin:6px 0 10px 0; padding:10px; border:1px solid var(--divider); border-radius:10px; background:#f9fafb; }
+    .risk-controls .rc-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .risk-controls .rc-title{ font-weight:900; }
+    .risk-controls .rc-btn{ font-weight:800; border:2px solid #d1d5db; border-radius:10px; padding:8px 10px; background:#fff; cursor:pointer; }
+    .risk-controls .rc-btn:hover{ box-shadow:0 0 0 2px #e5e7eb inset; }
+    .risk-controls .rc-btn.active{ background:#eef2ff; border-color:#c7d2fe; }
+    .risk-controls textarea{ width:100%; min-height:70px; resize:vertical; }
+    .risk-controls .rc-small{ color:var(--muted); font-size:12px; margin-top:6px; }
+    .risk-controls .rc-status{ display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ddd; background:#fff; font-weight:900; font-size:12px; }
+
 </style>
 </head>
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 FIX-RISK-TITLE STAGE2 <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3 <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -671,6 +682,94 @@ function showInlineMsg(talkElem, msg){
       });
   }
 
+
+  // ------------------------------------------------------------
+  // RISK REVIEW UI: update status / notes (Hebrew statuses)
+  // ------------------------------------------------------------
+  function updateRiskReviewStatus(talkId, lineNum, newStatus){
+    var st = String(newStatus || '').trim();
+    if (!talkId || !lineNum || !st) return Promise.resolve(false);
+
+    return supa.from(REVIEWS_TABLE)
+      .update({ status: st, reviewed_at: nowISO(), reviewer: 'viewer' })
+      .eq('id', talkId)
+      .eq('line_num', lineNum)
+      .select('id, line_num, page_num, status, review_notes')
+      .then(function(res){
+        if (res && res.error) throw res.error;
+        var updated = (res && res.data) ? res.data : [];
+        if (updated && updated.length) return true;
+
+        return supa.from(REVIEWS_TABLE)
+          .update({ status: st, reviewed_at: nowISO(), reviewer: 'viewer' })
+          .eq('id', talkId)
+          .eq('page_num', lineNum)
+          .select('id, line_num, page_num, status, review_notes')
+          .then(function(res2){
+            if (res2 && res2.error) throw res2.error;
+            var u2 = (res2 && res2.data) ? res2.data : [];
+            return !!(u2 && u2.length);
+          });
+      })
+      .then(function(ok){
+        if (ok && CACHE && CACHE.loaded){
+          var arr = CACHE.riskMap.get(String(talkId)) || [];
+          for (var i=0;i<arr.length;i++){
+            var rr = arr[i];
+            var ln = (rr && (rr.page_num != null ? rr.page_num : rr.line_num));
+            if (parseInt(ln,10) === parseInt(lineNum,10)){
+              rr.status = st;
+              rr.reviewed_at = nowISO();
+              rr.reviewer = 'viewer';
+            }
+          }
+        }
+        return ok;
+      });
+  }
+
+  function updateRiskReviewNotes(talkId, lineNum, notes){
+    if (!talkId || !lineNum) return Promise.resolve(false);
+    var txt = (notes == null) ? '' : String(notes);
+
+    return supa.from(REVIEWS_TABLE)
+      .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
+      .eq('id', talkId)
+      .eq('line_num', lineNum)
+      .select('id, line_num, page_num, status, review_notes')
+      .then(function(res){
+        if (res && res.error) throw res.error;
+        var updated = (res && res.data) ? res.data : [];
+        if (updated && updated.length) return true;
+
+        return supa.from(REVIEWS_TABLE)
+          .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
+          .eq('id', talkId)
+          .eq('page_num', lineNum)
+          .select('id, line_num, page_num, status, review_notes')
+          .then(function(res2){
+            if (res2 && res2.error) throw res2.error;
+            var u2 = (res2 && res2.data) ? res2.data : [];
+            return !!(u2 && u2.length);
+          });
+      })
+      .then(function(ok){
+        if (ok && CACHE && CACHE.loaded){
+          var arr = CACHE.riskMap.get(String(talkId)) || [];
+          for (var i=0;i<arr.length;i++){
+            var rr = arr[i];
+            var ln = (rr && (rr.page_num != null ? rr.page_num : rr.line_num));
+            if (parseInt(ln,10) === parseInt(lineNum,10)){
+              rr.review_notes = txt;
+              rr.reviewed_at = nowISO();
+              rr.reviewer = 'viewer';
+            }
+          }
+        }
+        return ok;
+      });
+  }
+
   
   function snippetAround(full, match){
     var s = String(full||''), m = String(match||'');
@@ -709,7 +808,8 @@ function showInlineMsg(talkElem, msg){
         reviewed_at: rr.reviewed_at || null,
         reviewer: rr.reviewer || '',
         short_risk: rr.short_risk || '',
-        risk_reasons: rr.risk_reasons || ''
+        risk_reasons: rr.risk_reasons || '',
+        review_notes: (rr.review_notes != null ? String(rr.review_notes) : '')
       });
     });
     return hits;
@@ -727,6 +827,7 @@ function showInlineMsg(talkElem, msg){
     }
   }
 
+
   function renderDialogHtml(patientName, dialogLines, hits){
     var html = [];
 
@@ -740,7 +841,6 @@ function showInlineMsg(talkElem, msg){
         hitByLine.set(ln, h);
         return;
       }
-      // Prefer open risk over checked
       if (String(prev.status||'') === 'CHECKED' && String(h.status||'') !== 'CHECKED'){
         hitByLine.set(ln, h);
       }
@@ -760,46 +860,82 @@ function showInlineMsg(talkElem, msg){
         if (st === 'CHECKED') cls += ' risk-line checked';
         else cls += ' risk-line open';
         attrs += ' data-risk="1"';
+        attrs += ' data-risk-id="' + escapeHtml(String(hit.id||'')) + '"';
+        attrs += ' data-risk-ln="' + escapeHtml(String(n)) + '"';
       }
       attrs += ' class="' + cls + '"';
-      return { attrs: attrs, hit: hit };
+      return { attrs: attrs, hit: hit, lineNum: n };
+    }
+
+    function badgeForHit(hit){
+      if (!hit) return '';
+      var st = String(hit.status||'').trim();
+      if (st === 'CHECKED') st = 'צפיתי';
+      var cls = (st === 'צפיתי') ? 'checked' : (st === 'מבטל סיכון' ? 'checked' : 'open');
+      var label = (st === 'צפיתי') ? 'צפיתי' : (st === 'מבטל סיכון' ? 'מבטל סיכון' : 'RISK');
+      return ' <span class="risk-badge ' + cls + '">' + escapeHtml(label) + '</span>';
+    }
+
+    function controlsForHit(talkId, lineNum, hit){
+      if (!hit) return '';
+      var st = String(hit.status || 'NEW').trim();
+      if (st === 'CHECKED') st = 'צפיתי';
+      var notes = (hit.review_notes != null ? String(hit.review_notes) : '').trim();
+
+      var btnSeenCls = (st === 'צפיתי') ? ' rc-btn active' : ' rc-btn';
+      var btnCancelCls = (st === 'מבטל סיכון') ? ' rc-btn active' : ' rc-btn';
+
+      var statusLine = '';
+      if ((st && st !== 'NEW') || notes){
+        var stShow = st && st !== 'NEW' ? st : '';
+        statusLine = '<div class="rc-small">' +
+          (stShow ? ('סטטוס: <span class="rc-status">' + escapeHtml(stShow) + '</span>') : '') +
+          (notes ? (' · הערה: ' + escapeHtml(notes)) : '') +
+        '</div>';
+      }
+
+      return (
+        '<div class="risk-controls" data-riskctl="1" data-id="' + escapeHtml(String(talkId||'')) + '" data-ln="' + escapeHtml(String(lineNum)) + '">' +
+          '<div class="rc-row">' +
+            '<span class="rc-title">אישור מטפל:</span>' +
+            '<button class="' + btnSeenCls + '" data-act="risk-status" data-status="צפיתי">צפיתי</button>' +
+            '<button class="' + btnCancelCls + '" data-act="risk-status" data-status="מבטל סיכון">מבטל סיכון</button>' +
+          '</div>' +
+          '<div style="margin-top:8px"><label class="hint">הערת מטפל:</label>' +
+          '<textarea data-act="risk-note" placeholder="הקלד הערה...">' + escapeHtml(notes) + '</textarea></div>' +
+          statusLine +
+        '</div>'
+      );
     }
 
     for (var i=0;i<dialogLines.length;i++){
       var ln = dialogLines[i];
       if (!ln) continue;
 
+      if (ln.speaker === 'spacer'){
+        html.push('<div class="line-spacer"></div>');
+        continue;
+      }
+
+      var la = lineAttrs(ln);
+      var badge = badgeForHit(la.hit);
+
       if (ln.speaker === 'patient'){
-        var la = lineAttrs(ln);
-        var badge = '';
-        if (la.hit){
-          var st2 = String(la.hit.status||'');
-          badge = ' <span class="risk-badge ' + (st2==='CHECKED'?'checked':'open') + '">' + (st2==='CHECKED'?'RISK טופל':'RISK') + '</span>';
-        }
         html.push('<div' + la.attrs + '><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
       } else if (ln.speaker === 'therapist'){
-        var la2 = lineAttrs(ln);
-        var badge2 = '';
-        if (la2.hit){
-          var st3 = String(la2.hit.status||'');
-          badge2 = ' <span class="risk-badge ' + (st3==='CHECKED'?'checked':'open') + '">' + (st3==='CHECKED'?'RISK טופל':'RISK') + '</span>';
-        }
-        html.push('<div' + la2.attrs + '><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + badge2 + '</div>');
-      } else if (ln.speaker === 'spacer'){
-        html.push('<div class="line-spacer"></div>');
+        html.push('<div' + la.attrs + '><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
       } else {
-        var la3 = lineAttrs(ln);
-        var badge3 = '';
-        if (la3.hit){
-          var st4 = String(la3.hit.status||'');
-          badge3 = ' <span class="risk-badge ' + (st4==='CHECKED'?'checked':'open') + '">' + (st4==='CHECKED'?'RISK טופל':'RISK') + '</span>';
-        }
-        html.push('<div' + la3.attrs + '>' + escapeHtml(ln.body || '') + badge3 + '</div>');
+        html.push('<div' + la.attrs + '>' + escapeHtml(ln.body || '') + badge + '</div>');
+      }
+
+      if (la.hit){
+        html.push(controlsForHit(la.hit.id, la.lineNum, la.hit));
       }
     }
 
     return html.join('\n');
   }
+
 
   function queryPage(forceReload){
     // בטעינה הראשונית: מביאים את הכל ללא סלקציה.
@@ -1140,6 +1276,28 @@ function showInlineMsg(talkElem, msg){
       return;
     }
 
+
+    // Inline risk controls: status buttons
+    var btnRiskStatus = ev.target.closest('button[data-act="risk-status"]');
+    if (btnRiskStatus){
+      var box = btnRiskStatus.closest('.risk-controls');
+      var talkId = box ? box.getAttribute('data-id') : null;
+      var ln = box ? parseInt(box.getAttribute('data-ln')||'0',10) : 0;
+      var newStatus = btnRiskStatus.getAttribute('data-status') || '';
+      var talkElemX = btnRiskStatus.closest('.talk');
+
+      updateRiskReviewStatus(talkId, ln, newStatus).then(function(ok){
+        if (!ok){
+          showInlineMsg(talkElemX, 'לא עודכן סטטוס (לא נמצאה שורה מתאימה).');
+          return;
+        }
+        if (CACHE && CACHE.loaded){ rerenderFromCache(); } else { queryPage(true); }
+      }).catch(function(e){
+        showInlineMsg(talkElemX, 'שגיאה בעדכון סטטוס: ' + (e && e.message ? e.message : e));
+      });
+      return;
+    }
+
         var btnReview = ev.target.closest('.btn-review-inline');
     if (btnReview){
       var talkElem2 = btnReview.closest('.talk');
@@ -1153,6 +1311,29 @@ function showInlineMsg(talkElem, msg){
       showInlineMsg(talkElem3, 'בגרסה זו: תצוגה בלבד (אין עדכון סטטוס מה-Viewer).');
       return;
     }
+
+  // Save risk notes on textarea blur (focusout)
+  el.out.addEventListener('focusout', function(ev){
+    var ta = ev.target && ev.target.matches ? (ev.target.matches('textarea[data-act="risk-note"]') ? ev.target : null) : null;
+    if (!ta) return;
+
+    var box = ta.closest('.risk-controls');
+    var talkId = box ? box.getAttribute('data-id') : null;
+    var ln = box ? parseInt(box.getAttribute('data-ln')||'0',10) : 0;
+    var txt = ta.value || '';
+    var talkElemX = ta.closest('.talk');
+
+    updateRiskReviewNotes(talkId, ln, txt).then(function(ok){
+      if (!ok){
+        showInlineMsg(talkElemX, 'לא עודכנה הערה (לא נמצאה שורה מתאימה).');
+        return;
+      }
+      if (CACHE && CACHE.loaded){ rerenderFromCache(); } else { queryPage(true); }
+    }).catch(function(e){
+      showInlineMsg(talkElemX, 'שגיאה בעדכון הערה: ' + (e && e.message ? e.message : e));
+    });
+  }, true);
+
 
   });
 
