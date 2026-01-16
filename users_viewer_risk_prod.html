@@ -3,7 +3,9 @@
 <html lang="he" dir="rtl">
 <head>
   <script>
-  (function () {
+  
+  var APP_VERSION = 'STAGE3_FIX10';
+(function () {
     // אותה הסיסמה כמו בקובץ launcher.html
     const APP_PASSWORD   = "yon1234";
     const EXPECTED_TOKEN = "ok-" + btoa(APP_PASSWORD);
@@ -123,7 +125,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX5 YY <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX5 ZZ <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -729,16 +731,29 @@ function showInlineMsg(talkElem, msg){
     if (stUi === 'צפיתי') stDb = 'VIEWED';
     if (stUi === 'מבטל סיכון') stDb = 'CHECKED';
 
-    return supa.from(REVIEWS_TABLE)
-      .update({ status: stDb, review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
-      .eq('id', talkId)
-      .eq('line_num', lineNum)
-      .select('id')
-      .then(function(res){
-        if (res && res.error) throw res.error;
-        var updated = (res && res.data) ? res.data : [];
-        if (updated && updated.length) return true;
-        return false;
+    function doUpdate(statusVal){
+      return supa.from(REVIEWS_TABLE)
+        .update({ status: statusVal, review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
+        .eq('id', talkId)
+        .eq('line_num', lineNum)
+        .select('id')
+        .then(function(res){
+          if (res && res.error) throw res.error;
+          var updated = (res && res.data) ? res.data : [];
+          return !!(updated && updated.length);
+        });
+    }
+
+    return doUpdate(stDb).catch(function(err){
+        var msg = (err && err.message) ? String(err.message) : String(err || '');
+        // Fallback: some DBs use REVIEWED instead of VIEWED
+        if (stDb === 'VIEWED' && msg.indexOf('risk_reviews_status_chk') !== -1){
+          return doUpdate('REVIEWED').then(function(ok){
+            if (ok) stDb = 'REVIEWED';
+            return ok;
+          });
+        }
+        throw err;
       })
       .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
@@ -758,7 +773,7 @@ function showInlineMsg(talkElem, msg){
       });
   }
 
-  function updateRiskReviewNotes(talkId, lineNum, notes){
+function updateRiskReviewNotes(talkId, lineNum, notes){
     if (!talkId || !lineNum) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
 
@@ -858,7 +873,8 @@ function showInlineMsg(talkElem, msg){
 
     function isOpenRiskStatus(st){
       var s = normStatus(st);
-      return (s === 'NEW' || s === 'VIEWED');
+      // Open risk statuses
+      return (s === 'NEW' || s === 'VIEWED' || s === 'REVIEWED');
     }
 
     function isDeletedRiskStatus(st){
@@ -906,7 +922,7 @@ function showInlineMsg(talkElem, msg){
       var stDb = normStatus(hit.status);
       var label = 'RISK';
       var cls = 'open';
-      if (stDb === 'VIEWED') { label = 'צפיתי'; cls = 'open'; }
+      if (stDb === 'VIEWED' || stDb === 'REVIEWED') { label = 'צפיתי'; cls = 'open'; }
       if (stDb === 'CHECKED') { label = 'מבטל סיכון'; cls = 'checked'; }
       return ' <span class="risk-badge ' + cls + '">' + escapeHtml(label) + '</span>';
     }
@@ -914,7 +930,7 @@ function showInlineMsg(talkElem, msg){
     function controlsForHit(talkId, lineNum, hit){
       if (!hit) return '';
       var stDb = normStatus(hit.status || 'NEW');
-      var stUi = (stDb === 'VIEWED') ? 'צפיתי' : ((stDb === 'CHECKED') ? 'מבטל סיכון' : 'NEW');
+      var stUi = (stDb === 'VIEWED' || stDb === 'REVIEWED') ? 'צפיתי' : ((stDb === 'CHECKED') ? 'מבטל סיכון' : 'NEW');
       var notes = (hit.review_notes != null ? String(hit.review_notes) : '').trim();
 
       var btnSeenCls = (stUi === 'צפיתי') ? ' rc-btn rc-seen active' : ' rc-btn rc-seen';
@@ -1083,11 +1099,11 @@ function showInlineMsg(talkElem, msg){
         loadRiskRows(r.id).then(function(riskRows){
           var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
-          // open risks for alerts: status NEW or VIEWED 
+          // open risks for alerts: status NEW or VIEWED (or REVIEWED) 
           var notRev = [];
           for (var h=0; h<hits.length; h++){
             var st = String(hits[h].status || 'NEW').trim();
-            if (st === 'NEW' || st === 'VIEWED') notRev.push(hits[h]);
+            if (st === 'NEW' || st === 'VIEWED' || st === 'REVIEWED') notRev.push(hits[h]);
           }
 
           var k = keyOf(r.time_key, r.phone);
@@ -1145,7 +1161,7 @@ function showInlineMsg(talkElem, msg){
             var allCanceled = true;
             for (var rc=0; rc<hits.length; rc++){
               var st = String(hits[rc].status || 'NEW').trim();
-              if (st === 'NEW' || st === 'VIEWED'){
+              if (st === 'NEW' || st === 'VIEWED' || st === 'REVIEWED'){
                 allCanceled = false;
                 break;
               }
