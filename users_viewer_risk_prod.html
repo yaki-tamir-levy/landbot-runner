@@ -633,25 +633,21 @@ function showInlineMsg(talkElem, msg){
       var numPrefix = '';
       if (mNum){
         lnNum = parseInt(mNum[1], 10);
-        if (isFinite(lnNum) && lnNum >= 1){
-          numPrefix = '-' + lnNum + '- ';
-        } else {
-          lnNum = null;
-        }
+        if (!isFinite(lnNum) || lnNum < 1){ lnNum = null; }
         s = String(mNum[2]||'');
       }
 
-      if (rxPatientName.test(s)){ out.push({ speaker:'patient', body: numPrefix + s.replace(rxPatientName,''), _lineNum: lnNum }); continue; }
-      if (rxTher.test(s)){ out.push({ speaker:'therapist', body: numPrefix + s.replace(rxTher,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
-      if (rxQ.test(s)){ out.push({ speaker:'patient', body: numPrefix + s.replace(rxQ,''), _lineNum: lnNum }); continue; }
-      if (rxA.test(s)){ out.push({ speaker:'therapist', body: numPrefix + s.replace(rxA,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
-      if (rxGenericPatient.test(s)){ out.push({ speaker:'patient', body: numPrefix + s.replace(rxGenericPatient,''), _lineNum: lnNum }); continue; }
-      if (rxGenericTher.test(s)){ out.push({ speaker:'therapist', body: numPrefix + s.replace(rxGenericTher,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
+      if (rxPatientName.test(s)){ out.push({ speaker:'patient', body: s.replace(rxPatientName,''), _lineNum: lnNum }); continue; }
+      if (rxTher.test(s)){ out.push({ speaker:'therapist', body: s.replace(rxTher,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
+      if (rxQ.test(s)){ out.push({ speaker:'patient', body: s.replace(rxQ,''), _lineNum: lnNum }); continue; }
+      if (rxA.test(s)){ out.push({ speaker:'therapist', body: s.replace(rxA,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
+      if (rxGenericPatient.test(s)){ out.push({ speaker:'patient', body: s.replace(rxGenericPatient,''), _lineNum: lnNum }); continue; }
+      if (rxGenericTher.test(s)){ out.push({ speaker:'therapist', body: s.replace(rxGenericTher,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
 
-      if (/^\s*שאלה:\s*/.test(s)){ out.push({ speaker:'patient', body: numPrefix + s.replace(/^\s*שאלה:\s*/,''), _lineNum: lnNum }); continue; }
-      if (/^\s*תשובה:\s*/.test(s)){ out.push({ speaker:'therapist', body: numPrefix + s.replace(/^\s*תשובה:\s*/,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
+      if (/^\s*שאלה:\s*/.test(s)){ out.push({ speaker:'patient', body: s.replace(/^\s*שאלה:\s*/,''), _lineNum: lnNum }); continue; }
+      if (/^\s*תשובה:\s*/.test(s)){ out.push({ speaker:'therapist', body: s.replace(/^\s*תשובה:\s*/,''), _lineNum: lnNum }); out.push({ speaker:'spacer' }); continue; }
 
-      out.push({ speaker:'text', body: (numPrefix ? (numPrefix + s) : s), _lineNum: lnNum });
+      out.push({ speaker:'text', body: s, _lineNum: lnNum });
     }
     return { patient: patient, lines: out };
   }
