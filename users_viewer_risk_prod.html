@@ -637,7 +637,7 @@ function showInlineMsg(talkElem, msg){
       var s0 = String(lines[i]||'');
 
       // Preserve original line number prefix like: "-1- Q: ..." / "-2- A: ..."
-      // This number is used for anchoring to risk_reviews.line_num / risk_reviews.page_num.
+      // This number is used for anchoring to risk_reviews.line_num / risk_reviews.line_num.
       var lnNum = null;
       var mNum = /^\s*-\s*(\d+)\s*-\s*(.*)$/.exec(s0);
       var s = s0;
@@ -673,8 +673,8 @@ function showInlineMsg(talkElem, msg){
       return Promise.resolve(CACHE.riskMap.get(String(talk_id)) || []);
     }
     return supa.from(REVIEWS_TABLE)
-      // include both line_num and page_num (some envs use PAGE_NUM)
-      .select('id, time_key, phone, line_num, page_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
+      // include both line_num and line_num (some envs use LINE_NUM)
+      .select('id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
       .eq('id', talk_id)
       .then(function(res){
         if (res.error) return [];
@@ -688,6 +688,9 @@ function showInlineMsg(talkElem, msg){
   // ------------------------------------------------------------
   function updateRiskReviewStatus(talkId, lineNum, newStatus){
     var st = String(newStatus || '').trim();
+    // DB constraint expects English enum values. Map UI labels to DB values.
+    if (st === 'צפיתי') st = 'CHECKED';
+    if (st === 'מבטל סיכון') st = 'CHECKED';
     if (!talkId || !lineNum || !st) return Promise.resolve(false);
 
     return supa.from(REVIEWS_TABLE)
@@ -698,16 +701,13 @@ function showInlineMsg(talkElem, msg){
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
-        if (updated && updated.length) return true;
+        var ok = !!(updated && updated.length);
 
-        return false;
-      })
-      .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
           var arr = CACHE.riskMap.get(String(talkId)) || [];
           for (var i=0;i<arr.length;i++){
             var rr = arr[i];
-            var ln = (rr && (rr.page_num != null ? rr.page_num : rr.line_num));
+            var ln = (rr && rr.line_num);
             if (parseInt(ln,10) === parseInt(lineNum,10)){
               rr.status = st;
               rr.reviewed_at = nowISO();
@@ -731,16 +731,13 @@ function showInlineMsg(talkElem, msg){
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
-        if (updated && updated.length) return true;
+        var ok = !!(updated && updated.length);
 
-        return false;
-      })
-      .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
           var arr = CACHE.riskMap.get(String(talkId)) || [];
           for (var i=0;i<arr.length;i++){
             var rr = arr[i];
-            var ln = (rr && (rr.page_num != null ? rr.page_num : rr.line_num));
+            var ln = (rr && rr.line_num);
             if (parseInt(ln,10) === parseInt(lineNum,10)){
               rr.review_notes = txt;
               rr.reviewed_at = nowISO();
@@ -775,8 +772,8 @@ function showInlineMsg(talkElem, msg){
     // line_num is 1-based as stored in risk_reviews.
     var hits = [];
     (riskRows || []).forEach(function(rr){
-      // Prefer PAGE_NUM/page_num if exists, otherwise fallback to line_num
-      var rawLn = (rr && (rr.PAGE_NUM != null ? rr.PAGE_NUM : (rr.page_num != null ? rr.page_num : rr.line_num)));
+      // Prefer LINE_NUM/line_num if exists, otherwise fallback to line_num
+      var rawLn = (rr && (rr.LINE_NUM != null ? rr.LINE_NUM : (rr.line_num != null ? rr.line_num : rr.line_num)));
       var ln = rawLn != null ? parseInt(rawLn, 10) : NaN;
       if (!isFinite(ln) || ln < 1) ln = -1;
 
