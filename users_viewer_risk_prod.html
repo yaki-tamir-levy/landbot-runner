@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3 -->
+<!-- VERSION: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3-FIX1 -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -118,7 +118,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3 <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3-FIX1 <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -385,7 +385,7 @@
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
-        return fetchAllPaged(REVIEWS_TABLE, 'id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk', 'id');
+        return fetchAllPaged(REVIEWS_TABLE, 'id, time_key, phone, line_num, status, reviewed_at, reviewer, name, reviews_notes, severity, match_method, risk_reasons, short_risk', 'id');
       })
       .then(function(allRisk){
         buildRiskCache(allRisk || []);
@@ -674,7 +674,7 @@ function showInlineMsg(talkElem, msg){
     }
     return supa.from(REVIEWS_TABLE)
       // include both line_num and page_num (some envs use PAGE_NUM)
-      .select('id, time_key, phone, line_num, page_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
+      .select('id, time_key, phone, line_num, page_num, status, reviewed_at, reviewer, name, reviews_notes, severity, match_method, risk_reasons, short_risk')
       .eq('id', talk_id)
       .then(function(res){
         if (res.error) return [];
@@ -694,7 +694,7 @@ function showInlineMsg(talkElem, msg){
       .update({ status: st, reviewed_at: nowISO(), reviewer: 'viewer' })
       .eq('id', talkId)
       .eq('line_num', lineNum)
-      .select('id, line_num, page_num, status, review_notes')
+      .select('id, line_num, page_num, status, reviews_notes')
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
@@ -704,7 +704,7 @@ function showInlineMsg(talkElem, msg){
           .update({ status: st, reviewed_at: nowISO(), reviewer: 'viewer' })
           .eq('id', talkId)
           .eq('page_num', lineNum)
-          .select('id, line_num, page_num, status, review_notes')
+          .select('id, line_num, page_num, status, reviews_notes')
           .then(function(res2){
             if (res2 && res2.error) throw res2.error;
             var u2 = (res2 && res2.data) ? res2.data : [];
@@ -733,20 +733,20 @@ function showInlineMsg(talkElem, msg){
     var txt = (notes == null) ? '' : String(notes);
 
     return supa.from(REVIEWS_TABLE)
-      .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
+      .update({ reviews_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
       .eq('id', talkId)
       .eq('line_num', lineNum)
-      .select('id, line_num, page_num, status, review_notes')
+      .select('id, line_num, page_num, status, reviews_notes')
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
         if (updated && updated.length) return true;
 
         return supa.from(REVIEWS_TABLE)
-          .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
+          .update({ reviews_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
           .eq('id', talkId)
           .eq('page_num', lineNum)
-          .select('id, line_num, page_num, status, review_notes')
+          .select('id, line_num, page_num, status, reviews_notes')
           .then(function(res2){
             if (res2 && res2.error) throw res2.error;
             var u2 = (res2 && res2.data) ? res2.data : [];
@@ -760,7 +760,7 @@ function showInlineMsg(talkElem, msg){
             var rr = arr[i];
             var ln = (rr && (rr.page_num != null ? rr.page_num : rr.line_num));
             if (parseInt(ln,10) === parseInt(lineNum,10)){
-              rr.review_notes = txt;
+              rr.reviews_notes = txt;
               rr.reviewed_at = nowISO();
               rr.reviewer = 'viewer';
             }
@@ -809,7 +809,7 @@ function showInlineMsg(talkElem, msg){
         reviewer: rr.reviewer || '',
         short_risk: rr.short_risk || '',
         risk_reasons: rr.risk_reasons || '',
-        review_notes: (rr.review_notes != null ? String(rr.review_notes) : '')
+        reviews_notes: (rr.reviews_notes != null ? String(rr.reviews_notes) : '')
       });
     });
     return hits;
@@ -880,7 +880,7 @@ function showInlineMsg(talkElem, msg){
       if (!hit) return '';
       var st = String(hit.status || 'NEW').trim();
       if (st === 'CHECKED') st = 'צפיתי';
-      var notes = (hit.review_notes != null ? String(hit.review_notes) : '').trim();
+      var notes = (hit.reviews_notes != null ? String(hit.reviews_notes) : '').trim();
 
       var btnSeenCls = (st === 'צפיתי') ? ' rc-btn active' : ' rc-btn';
       var btnCancelCls = (st === 'מבטל סיכון') ? ' rc-btn active' : ' rc-btn';
@@ -902,7 +902,8 @@ function showInlineMsg(talkElem, msg){
             '<button class="' + btnCancelCls + '" data-act="risk-status" data-status="מבטל סיכון">מבטל סיכון</button>' +
           '</div>' +
           '<div style="margin-top:8px"><label class="hint">הערת מטפל:</label>' +
-          '<textarea data-act="risk-note" placeholder="הקלד הערה...">' + escapeHtml(notes) + '</textarea></div>' +
+          '<textarea data-act="risk-note" placeholder="הקלד הערה...">' + escapeHtml(notes) + '</textarea>' +
+          '<div style="margin-top:8px"><button class="rc-btn" data-act="risk-note-save">שמור הערה</button></div></div>' +
           statusLine +
         '</div>'
       );
@@ -1277,6 +1278,32 @@ function showInlineMsg(talkElem, msg){
     }
 
 
+
+    // Inline risk controls: save note button
+    var btnRiskNoteSave = ev.target.closest('button[data-act="risk-note-save"]');
+    if (btnRiskNoteSave){
+      var boxN = btnRiskNoteSave.closest('.risk-controls');
+      var talkIdN = boxN ? boxN.getAttribute('data-id') : null;
+      var lnN = boxN ? parseInt(boxN.getAttribute('data-ln')||'0',10) : 0;
+      var taN = boxN ? boxN.querySelector('textarea[data-act="risk-note"]') : null;
+      var txtN = taN ? (taN.value || '') : '';
+      var talkElemN = btnRiskNoteSave.closest('.talk');
+
+      updateRiskReviewNotes(talkIdN, lnN, txtN).then(function(ok){
+        if (!ok){
+          showInlineMsg(talkElemN, 'לא עודכנה הערה (לא נמצאה שורה מתאימה).');
+          return;
+        }
+        // visual feedback
+        btnRiskNoteSave.textContent = 'נשמר ✔';
+        setTimeout(function(){ try{ btnRiskNoteSave.textContent = 'שמור הערה'; }catch(e){} }, 1200);
+        if (CACHE && CACHE.loaded){ rerenderFromCache(); } else { queryPage(true); }
+      }).catch(function(e){
+        showInlineMsg(talkElemN, 'שגיאה בעדכון הערה: ' + (e && e.message ? e.message : e));
+      });
+      return;
+    }
+
     // Inline risk controls: status buttons
     var btnRiskStatus = ev.target.closest('button[data-act="risk-status"]');
     if (btnRiskStatus){
@@ -1285,6 +1312,12 @@ function showInlineMsg(talkElem, msg){
       var ln = box ? parseInt(box.getAttribute('data-ln')||'0',10) : 0;
       var newStatus = btnRiskStatus.getAttribute('data-status') || '';
       var talkElemX = btnRiskStatus.closest('.talk');
+
+      // optimistic UI: mark selected button
+      try{
+        if (box){ box.querySelectorAll('button[data-act="risk-status"]').forEach(function(b){ b.classList.remove('active'); }); }
+        btnRiskStatus.classList.add('active');
+      }catch(e){}
 
       updateRiskReviewStatus(talkId, ln, newStatus).then(function(ok){
         if (!ok){
@@ -1313,26 +1346,8 @@ function showInlineMsg(talkElem, msg){
     }
 
   // Save risk notes on textarea blur (focusout)
-  el.out.addEventListener('focusout', function(ev){
-    var ta = ev.target && ev.target.matches ? (ev.target.matches('textarea[data-act="risk-note"]') ? ev.target : null) : null;
-    if (!ta) return;
-
-    var box = ta.closest('.risk-controls');
-    var talkId = box ? box.getAttribute('data-id') : null;
-    var ln = box ? parseInt(box.getAttribute('data-ln')||'0',10) : 0;
-    var txt = ta.value || '';
-    var talkElemX = ta.closest('.talk');
-
-    updateRiskReviewNotes(talkId, ln, txt).then(function(ok){
-      if (!ok){
-        showInlineMsg(talkElemX, 'לא עודכנה הערה (לא נמצאה שורה מתאימה).');
-        return;
-      }
-      if (CACHE && CACHE.loaded){ rerenderFromCache(); } else { queryPage(true); }
-    }).catch(function(e){
-      showInlineMsg(talkElemX, 'שגיאה בעדכון הערה: ' + (e && e.message ? e.message : e));
-    });
-  }, true);
+  // במכוון: לא שומרים אוטומטית. משתמשים בכפתור "שמור הערה".
+  el.out.addEventListener('focusout', function(ev){ return; }, true);
 
 
   });
