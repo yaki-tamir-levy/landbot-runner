@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-01-14 FIX-ANCHOR LINE_NUM -->
+<!-- VERSION: 2026-01-16 FIX-RISK-TITLE STAGE2 -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -107,7 +107,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-14 FIX-ANCHOR LINE_NUM <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 FIX-RISK-TITLE STAGE2 <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -963,19 +963,25 @@ function showInlineMsg(talkElem, msg){
               }
             }
           } catch(e){}
-          if (r && r._riskOverrideKind){
-            kindTxt = 'RISK override · ' + kindTxt;
-          }
+          /* kind override exists (row._riskOverrideKind) but we no longer prefix UI with 'RISK override'. */
           headParts.push('<div class="meta why">', escapeHtml(kindTxt), '</div>');
 
-          // Show risk status pill only when relevant
+          // Show risk title pill only when relevant (Hebrew statuses)
+          // Title rules:
+          // - If there is at least one risk with status NEW or "צפיתי" (or legacy CHECKED) => "נמצא גורם סיכון"
+          // - If all risks are "מבטל סיכון" => "גורם סיכון טופל"
           if (hits && hits.length){
-            var openCount = 0;
+            var allCanceled = true;
             for (var rc=0; rc<hits.length; rc++){
-              if (String(hits[rc].status||'') !== 'CHECKED') openCount++;
+              var st = String(hits[rc].status || 'NEW').trim();
+              // legacy: treat CHECKED as "צפיתי" (still not canceled)
+              if (st === 'CHECKED') st = 'צפיתי';
+              if (st !== 'מבטל סיכון'){
+                allCanceled = false;
+                break;
+              }
             }
-            var pillTxt = openCount ? ('RISK פתוח (' + openCount + ')') : 'RISK טופל';
-            if (r && r._riskOverrideKind) pillTxt = 'RISK override · ' + pillTxt;
+            var pillTxt = allCanceled ? 'גורם סיכון טופל' : 'נמצא גורם סיכון';
             headParts.push('<div class="meta"><span class="pill">' + escapeHtml(pillTxt) + '</span></div>');
           }
 
