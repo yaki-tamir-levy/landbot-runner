@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-01-16 FIX-RISK-VIEWED-DELETED + NOTE-REQUIRED + ALERT-RISK_REASONS -->
+<!-- VERSION: 2026-01-16 STAGE3-FIX5 (RISK STATUS UPDATE + NOTE REQUIRED + INLINE ERROR NEAR TEXTAREA) -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -112,13 +112,15 @@
     .risk-controls textarea{ width:100%; min-height:70px; resize:vertical; }
     .risk-controls .rc-small{ color:var(--muted); font-size:12px; margin-top:6px; }
     .risk-controls .rc-status{ display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ddd; background:#fff; font-weight:900; font-size:12px; }
+    .risk-controls .rc-inline-msg{ margin-top:8px; background:#fee2e2; border:1px solid #fecaca; color:#7f1d1d; padding:8px 10px; border-radius:10px; font-weight:700; }
+
 
 </style>
 </head>
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 FIX-RISK-REVIEW-UI STAGE3-FIX2 <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX5 <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -616,6 +618,34 @@ function showInlineMsg(talkElem, msg){
     box.textContent = msg;
   }
 
+  function showInlineMsgNearRiskBox(riskBox, msg){
+    if (!riskBox) return;
+    var box = riskBox.querySelector('.rc-inline-msg');
+    if (!box){
+      box = document.createElement('div');
+      box.className = 'rc-inline-msg';
+      // place it right after the textarea block (or at end of the risk-controls box)
+      var ta = riskBox.querySelector('textarea[data-act="risk-note"]');
+      if (ta && ta.parentNode){
+        var parent = ta.parentNode;
+        // try to insert after the textarea's container
+        if (parent.nextSibling) parent.parentNode.insertBefore(box, parent.nextSibling);
+        else riskBox.appendChild(box);
+      } else {
+        riskBox.appendChild(box);
+      }
+    }
+    box.textContent = msg;
+  }
+
+  function clearInlineMsgNearRiskBox(riskBox){
+    try{
+      var box = riskBox ? riskBox.querySelector('.rc-inline-msg') : null;
+      if (box) box.remove();
+    }catch(e){}
+  }
+
+
   // -------------------------------
   // דיאלוג לפורמטים שונים (שם מטופל/ת, "המטפל:", Q/A, וכו')
   // -------------------------------
@@ -700,6 +730,7 @@ function showInlineMsg(talkElem, msg){
       .update({ status: stDb, review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
       .eq('id', talkId)
       .eq('line_num', lineNum)
+      .select('id')
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
@@ -732,6 +763,7 @@ function showInlineMsg(talkElem, msg){
       .update({ review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
       .eq('id', talkId)
       .eq('line_num', lineNum)
+      .select('id')
       .then(function(res){
         if (res && res.error) throw res.error;
         var updated = (res && res.data) ? res.data : [];
@@ -1292,7 +1324,7 @@ function showInlineMsg(talkElem, msg){
 
       updateRiskReviewNotes(talkIdN, lnN, txtN).then(function(ok){
         if (!ok){
-          showInlineMsg(talkElemN, 'לא עודכנה הערה (לא נמצאה שורה מתאימה).');
+          showInlineMsgNearRiskBox(boxN, 'לא עודכנה הערה (לא נמצאה שורה מתאימה).');
           return;
         }
         // visual feedback
@@ -1300,7 +1332,7 @@ function showInlineMsg(talkElem, msg){
         setTimeout(function(){ try{ btnRiskNoteSave.textContent = 'שמור הערה'; }catch(e){} }, 1200);
         if (CACHE && CACHE.loaded){ rerenderFromCache(); } else { queryPage(true); }
       }).catch(function(e){
-        showInlineMsg(talkElemN, 'שגיאה בעדכון הערה: ' + (e && e.message ? e.message : e));
+        showInlineMsgNearRiskBox(boxN, 'שגיאה בעדכון הערה: ' + (e && e.message ? e.message : e));
       });
       return;
     }
@@ -1318,9 +1350,12 @@ function showInlineMsg(talkElem, msg){
       var taReq = box ? box.querySelector('textarea[data-act="risk-note"]') : null;
       var noteTxt = taReq ? String(taReq.value || '').trim() : '';
       if (noteTxt.length < 10){
-        showInlineMsg(talkElemX, 'חובה לצרף הסבר לאישור');
+        clearInlineMsgNearRiskBox(box);
+        showInlineMsgNearRiskBox(box, 'חובה לצרף הסבר לאישור');
+        try{ if (taReq) taReq.focus(); }catch(e){}
         return;
       }
+      clearInlineMsgNearRiskBox(box);
 
       // optimistic UI: mark selected button
       try{
@@ -1330,12 +1365,12 @@ function showInlineMsg(talkElem, msg){
 
       updateRiskReviewStatus(talkId, ln, newStatus, noteTxt).then(function(ok){
         if (!ok){
-          showInlineMsg(talkElemX, 'לא עודכן סטטוס (לא נמצאה שורה מתאימה).');
+          showInlineMsgNearRiskBox(box, 'לא עודכן סטטוס (לא נמצאה שורה מתאימה).');
           return;
         }
         if (CACHE && CACHE.loaded){ rerenderFromCache(); } else { queryPage(true); }
       }).catch(function(e){
-        showInlineMsg(talkElemX, 'שגיאה בעדכון סטטוס: ' + (e && e.message ? e.message : e));
+        showInlineMsgNearRiskBox(box, 'שגיאה בעדכון סטטוס: ' + (e && e.message ? e.message : e));
       });
       return;
     }
