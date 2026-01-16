@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- VERSION: 2026-01-16 STAGE3-FIX5 (RISK STATUS UPDATE + NOTE REQUIRED + INLINE ERROR NEAR TEXTAREA) -->
+<!-- VERSION: 2026-01-16 STAGE3-FIX11 (RISK_VIEWER REVIEWED + BUTTON CLICK BLUE) -->
 <html lang="he" dir="rtl">
 <head>
   <script>
   
-  var APP_VERSION = 'STAGE3_FIX10';
+  var APP_VERSION = 'STAGE3_FIX11';
 (function () {
     // אותה הסיסמה כמו בקובץ launcher.html
     const APP_PASSWORD   = "yon1234";
@@ -44,6 +44,8 @@
     input,button,select{background:#fff;color:var(--ink);border:1px solid var(--divider);border-radius:10px;padding:8px 10px}
     input::placeholder{color:#9ca3af}
     button{cursor:pointer}
+    /* Click feedback: paint clicked buttons light blue */
+    .btn-clicked{ background:#dbeafe !important; border-color:#93c5fd !important; }
     .controls{margin-bottom:10px}
     .table{margin-top:12px;display:flex;flex-direction:column;gap:10px}
     .talk{border:1px solid var(--divider);border-radius:12px;overflow:hidden;background:#fff}
@@ -125,7 +127,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX5 ZZ <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 AAA <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -162,6 +164,17 @@
 (function () {
   "use strict";
 
+  function flashClickedButton(ev){
+    try{
+      var b = ev && ev.target ? ev.target.closest('button') : null;
+      if (!b) return;
+      b.classList.add('btn-clicked');
+      setTimeout(function(){ try{ b.classList.remove('btn-clicked'); }catch(e){} }, 900);
+    }catch(e){}
+  }
+  document.addEventListener('click', flashClickedButton, true);
+
+
   function $(id){ return document.getElementById(id); }
   var el = {
     fPhone:$("fPhone"), fName:$("fName"), fFrom:$("fFrom"), fTo:$("fTo"), fKind:$("fKind"),
@@ -189,7 +202,7 @@
   var SUPABASE_URL      = "https://qcwimczsiuxkarwfiyai.supabase.co";
   var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI";
   var TABLE             = "users_tzvira";
-  var REVIEWS_TABLE     = "risk_reviews";
+  var REVIEWS_TABLE     = "risk_viewer";
   var FLAGS_TABLE       = "talk_read_flags";
   var USERS_INFO_TABLE  = "users_information";
 
@@ -726,14 +739,19 @@ function showInlineMsg(talkElem, msg){
     if (!talkId || !lineNum || !stUi) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
 
-    // Map UI labels to DB statuses
+    // UI -> DB status mapping
+    // דרישה: לחיצה על "צפיתי" מעדכנת סטטוס ל-REVIEWED
     var stDb = stUi;
-    if (stUi === 'צפיתי') stDb = 'VIEWED';
+    if (stUi === 'צפיתי') stDb = 'REVIEWED';
     if (stUi === 'מבטל סיכון') stDb = 'CHECKED';
 
-    function doUpdate(statusVal){
+    // Some environments might have the column spelled differently (STATUS vs STSTUS).
+    // We try STATUS first, then STSTUS.
+    function doUpdate(statusVal, colName){
+      var upd = { review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' };
+      upd[colName] = statusVal;
       return supa.from(REVIEWS_TABLE)
-        .update({ status: statusVal, review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' })
+        .update(upd)
         .eq('id', talkId)
         .eq('line_num', lineNum)
         .select('id')
@@ -744,33 +762,49 @@ function showInlineMsg(talkElem, msg){
         });
     }
 
-    return doUpdate(stDb).catch(function(err){
+    function tryColumns(statusVal){
+      return doUpdate(statusVal, 'status').catch(function(err){
         var msg = (err && err.message) ? String(err.message) : String(err || '');
-        // Fallback: some DBs use REVIEWED instead of VIEWED
-        if (stDb === 'VIEWED' && msg.indexOf('risk_reviews_status_chk') !== -1){
-          return doUpdate('REVIEWED').then(function(ok){
-            if (ok) stDb = 'REVIEWED';
+        if (msg.toLowerCase().indexOf('column') !== -1 && msg.toLowerCase().indexOf('status') !== -1 && msg.toLowerCase().indexOf('does not exist') !== -1){
+          return doUpdate(statusVal, 'ststus');
+        }
+        throw err;
+      });
+    }
+
+    // Ensure REVIEWED is valid: try it. If a CHECK constraint blocks it, fallback to VIEWED (legacy) but keep UI stable.
+    function tryWithConstraintFallback(){
+      return tryColumns(stDb).catch(function(err){
+        var msg = (err && err.message) ? String(err.message) : String(err || '');
+        var low = msg.toLowerCase();
+        var looksLikeChk = (low.indexOf('check constraint') !== -1) || (low.indexOf('_chk') !== -1);
+        if (stDb === 'REVIEWED' && looksLikeChk){
+          // not valid -> fallback
+          return tryColumns('VIEWED').then(function(ok){
+            if (ok) stDb = 'VIEWED';
             return ok;
           });
         }
         throw err;
-      })
-      .then(function(ok){
-        if (ok && CACHE && CACHE.loaded){
-          var arr = CACHE.riskMap.get(String(talkId)) || [];
-          for (var i=0;i<arr.length;i++){
-            var rr = arr[i];
-            var ln = (rr && rr.line_num);
-            if (parseInt(ln,10) === parseInt(lineNum,10)){
-              rr.status = stDb;
-              rr.review_notes = txt;
-              rr.reviewed_at = nowISO();
-              rr.reviewer = 'viewer';
-            }
+      });
+    }
+
+    return tryWithConstraintFallback().then(function(ok){
+      if (ok && CACHE && CACHE.loaded){
+        var arr = CACHE.riskMap.get(String(talkId)) || [];
+        for (var i=0;i<arr.length;i++){
+          var rr = arr[i];
+          var ln = (rr && rr.line_num);
+          if (parseInt(ln,10) === parseInt(lineNum,10)){
+            rr.status = stDb;
+            rr.review_notes = txt;
+            rr.reviewed_at = nowISO();
+            rr.reviewer = 'viewer';
           }
         }
-        return ok;
-      });
+      }
+      return ok;
+    });
   }
 
 function updateRiskReviewNotes(talkId, lineNum, notes){
