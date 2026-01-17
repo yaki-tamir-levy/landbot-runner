@@ -1,290 +1,360 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
-tools/risk_reviews_notify.py  (v03)
+risk_reviews_notify_v04.py
 
-Purpose
--------
-Fetch rows from a Supabase table (default: risk_reviews). If there are rows that appear "pending review",
-send ONE Pushover notification with:
-- total count
-- a short preview of up to PREVIEW_ROWS items (Name / Phone + truncated Risk Reasons)
+Purpose:
+- Fetch NEW risk review rows from Supabase (status = 'NEW')
+- Send notification via Pushover
+- Optionally send email via Gmail SMTP (App Password) when EMAIL_ENABLED="1"
 
-This script is defensive against schema changes:
-- It first tries common lowercase field names: name, phone, risk_reasons
-- If the API reports unknown columns, it retries with uppercase: NAME, PHONE, RISK_REASONS
-- It will try to filter out "reviewed" rows using STATUS_FIELD/REVIEWED_VALUE, but if that column doesn't exist,
-  it falls back to no status filter.
+Designed for GitHub Actions (env vars), but also works locally.
 
-Env vars
---------
-Required:
-  SUPABASE_URL
-  SUPABASE_SERVICE_ROLE_KEY
-  PUSHOVER_TOKEN
-  PUSHOVER_USER
+Required env vars (Supabase):
+- SUPABASE_URL                      e.g. https://xxxx.supabase.co
+- SUPABASE_SERVICE_ROLE_KEY         service_role key (recommended for server-side scripts)
 
-Optional:
-  RISK_REVIEWS_TABLE   default: risk_reviews
-  PAGE_SIZE            default: 500
-  PREVIEW_ROWS         default: 5
-  STATUS_FIELD         default: status
-  REVIEWED_VALUE       default: reviewed
-  NAME_FIELD           default: name
-  PHONE_FIELD          default: phone
-  RISK_REASONS_FIELD   default: risk_reasons
+Optional env vars (Supabase):
+- SUPABASE_SCHEMA                   default: public
+- RISK_REVIEWS_TABLE                default: risk_reviews
+- SUPABASE_TIMEOUT_SECONDS          default: 20
+- SUPABASE_SELECT                   default: id,time_key,phone,name,severity,short_risk,risk_reasons,line_num,created_at,status
 
-Pushover integration uses tools/pushover_send.py, so these optional envs are also supported:
-  PUSHOVER_USER_2
-  PUSHOVER_URL
-  PUSHOVER_URL_TITLE
+Required env vars (Pushover):
+- PUSHOVER_APP_TOKEN
+- PUSHOVER_USER_KEY
+
+Email env vars (Gmail SMTP):
+- EMAIL_ENABLED                     "1" to enable (anything else disables)
+- GMAIL_SMTP_USER
+- GMAIL_APP_PASSWORD
+- EMAIL_TO                          e.g. yonatan10.bot@gmail.com
+
+Optional email env vars:
+- EMAIL_FROM                        default: GMAIL_SMTP_USER
+- EMAIL_SUBJECT_PREFIX              default: [RISK]
+- SMTP_HOST                         default: smtp.gmail.com
+- SMTP_PORT                         default: 587
+- EMAIL_MAX_ITEMS                   default: 50
+
+Other optional env vars:
+- DRY_RUN                           "1" to not send anything (prints what it would do)
+- PUSHOVER_TITLE                    default: Risk Reviews
+- PUSHOVER_PRIORITY                 default: 0
+- PUSHOVER_SOUND                    default: pushover
 """
+
+from __future__ import annotations
 
 import os
 import sys
 import json
-import subprocess
-from typing import Any, Dict, List, Tuple, Optional
+import time
+import smtplib
+import traceback
+from dataclasses import dataclass
+from email.message import EmailMessage
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
 
-def env_required(name: str) -> str:
-    v = os.environ.get(name, "").strip()
-    if not v:
-        print(f"[ERROR] Missing required env var: {name}", file=sys.stderr)
-        sys.exit(2)
+def _env(name: str, default: Optional[str] = None) -> Optional[str]:
+    v = os.getenv(name)
+    if v is None or v == "":
+        return default
     return v
 
 
-def env_int(name: str, default: int) -> int:
-    v = os.environ.get(name, "").strip()
-    if not v:
+def _env_int(name: str, default: int) -> int:
+    v = _env(name)
+    if v is None:
         return default
     try:
         return int(v)
-    except ValueError:
-        print(f"[WARN] Invalid int for {name}={v!r}; using default {default}", file=sys.stderr)
+    except Exception:
         return default
 
 
-def supabase_get(
-    base_url: str,
-    service_key: str,
-    table: str,
-    select_fields: List[str],
-    status_field: str,
-    reviewed_value: str,
-    use_status_filter: bool,
-    offset: int,
-    limit: int,
-) -> Tuple[int, Any, str]:
-    """
-    Returns (status_code, json_or_text, content_type)
-    """
-    url = f"{base_url.rstrip('/')}/rest/v1/{table}"
-    headers = {
-        "apikey": service_key,
-        "Authorization": f"Bearer {service_key}",
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = _env(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+@dataclass
+class Config:
+    # Supabase
+    supabase_url: str
+    supabase_service_role_key: str
+    supabase_schema: str = "public"
+    risk_reviews_table: str = "risk_reviews"
+    supabase_timeout_seconds: int = 20
+    supabase_select: str = "id,time_key,phone,name,severity,short_risk,risk_reasons,line_num,created_at,status"
+
+    # Pushover
+    pushover_app_token: str = ""
+    pushover_user_key: str = ""
+    pushover_title: str = "Risk Reviews"
+    pushover_priority: str = "0"
+    pushover_sound: str = "pushover"
+
+    # Email
+    email_enabled: bool = False
+    gmail_smtp_user: str = ""
+    gmail_app_password: str = ""
+    email_to: str = ""
+    email_from: str = ""
+    email_subject_prefix: str = "[RISK]"
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    email_max_items: int = 50
+
+    # Other
+    dry_run: bool = False
+
+
+def load_config() -> Config:
+    supabase_url = _env("SUPABASE_URL")
+    supabase_key = _env("SUPABASE_SERVICE_ROLE_KEY")
+
+    if not supabase_url or not supabase_key:
+        raise RuntimeError("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
+
+    cfg = Config(
+        supabase_url=supabase_url.rstrip("/"),
+        supabase_service_role_key=supabase_key,
+        supabase_schema=_env("SUPABASE_SCHEMA", "public") or "public",
+        risk_reviews_table=_env("RISK_REVIEWS_TABLE", "risk_reviews") or "risk_reviews",
+        supabase_timeout_seconds=_env_int("SUPABASE_TIMEOUT_SECONDS", 20),
+        supabase_select=_env("SUPABASE_SELECT", "id,time_key,phone,name,severity,short_risk,risk_reasons,line_num,created_at,status")
+        or "id,time_key,phone,name,severity,short_risk,risk_reasons,line_num,created_at,status",
+        pushover_app_token=_env("PUSHOVER_APP_TOKEN", "") or "",
+        pushover_user_key=_env("PUSHOVER_USER_KEY", "") or "",
+        pushover_title=_env("PUSHOVER_TITLE", "Risk Reviews") or "Risk Reviews",
+        pushover_priority=_env("PUSHOVER_PRIORITY", "0") or "0",
+        pushover_sound=_env("PUSHOVER_SOUND", "pushover") or "pushover",
+        email_enabled=_env("EMAIL_ENABLED", "").strip() == "1",
+        gmail_smtp_user=_env("GMAIL_SMTP_USER", "") or "",
+        gmail_app_password=_env("GMAIL_APP_PASSWORD", "") or "",
+        email_to=_env("EMAIL_TO", "") or "",
+        email_from=_env("EMAIL_FROM", "") or "",
+        email_subject_prefix=_env("EMAIL_SUBJECT_PREFIX", "[RISK]") or "[RISK]",
+        smtp_host=_env("SMTP_HOST", "smtp.gmail.com") or "smtp.gmail.com",
+        smtp_port=_env_int("SMTP_PORT", 587),
+        email_max_items=_env_int("EMAIL_MAX_ITEMS", 50),
+        dry_run=_env_bool("DRY_RUN", False),
+    )
+
+    # Validate Pushover vars (only if not dry-run and we intend to send pushover)
+    if not cfg.dry_run:
+        if not cfg.pushover_app_token or not cfg.pushover_user_key:
+            raise RuntimeError("Missing PUSHOVER_APP_TOKEN or PUSHOVER_USER_KEY")
+
+    # Email defaults
+    if cfg.email_enabled:
+        if not cfg.gmail_smtp_user or not cfg.gmail_app_password or not cfg.email_to:
+            raise RuntimeError("EMAIL_ENABLED=1 but missing one of: GMAIL_SMTP_USER, GMAIL_APP_PASSWORD, EMAIL_TO")
+        if not cfg.email_from:
+            cfg.email_from = cfg.gmail_smtp_user
+
+    return cfg
+
+
+def supabase_headers(cfg: Config) -> Dict[str, str]:
+    return {
+        "apikey": cfg.supabase_service_role_key,
+        "Authorization": f"Bearer {cfg.supabase_service_role_key}",
+        "Content-Type": "application/json",
         "Accept": "application/json",
     }
 
+
+def fetch_new_rows(cfg: Config) -> List[Dict[str, Any]]:
+    """
+    Fetch rows with status=NEW only (hard filter).
+    """
+    url = f"{cfg.supabase_url}/rest/v1/{cfg.risk_reviews_table}"
     params = {
-        "select": ",".join(select_fields),
-        "limit": str(limit),
-        "offset": str(offset),
+        "select": cfg.supabase_select,
+        "status": "eq.NEW",
+        "order": "created_at.desc",
+        "limit": str(cfg.email_max_items),  # cap for safety
     }
 
-    # Always prefer only rows with non-empty-ish risk reasons.
-    # Server-side null filter where possible; empty-string will be filtered client-side.
-    # PostgREST: risk_reasons=not.is.null
-    # We'll add it only if the field exists; if it doesn't, the call will fail and we retry with alternate fields.
-    # Here we assume field name is in select_fields[-1] maybe, but caller provides correct name.
-    risk_field = select_fields[-1]
-    params[f"{risk_field}"] = "not.is.null"
-
-    if use_status_filter:
-        # Exclude reviewed rows. If status_field doesn't exist, Supabase will return 400 and we will retry.
-         params[f"{status_field}"] = "eq.NEW"
-
-    r = requests.get(url, headers=headers, params=params, timeout=30)
-    ctype = r.headers.get("content-type", "")
+    r = requests.get(url, headers=supabase_headers(cfg), params=params, timeout=cfg.supabase_timeout_seconds)
     if r.status_code >= 400:
-        try:
-            return r.status_code, r.json(), ctype
-        except Exception:
-            return r.status_code, r.text, ctype
+        raise RuntimeError(f"Supabase GET failed: {r.status_code} {r.text}")
 
-    try:
-        return r.status_code, r.json(), ctype
-    except Exception:
-        return r.status_code, r.text, ctype
+    data = r.json()
+    if not isinstance(data, list):
+        raise RuntimeError(f"Unexpected Supabase response (expected list): {type(data)}")
 
-
-def looks_like_unknown_column(err: Any) -> bool:
-    """
-    Supabase/PostgREST error shapes vary. We'll do best-effort detection.
-    """
-    s = ""
-    if isinstance(err, dict):
-        s = json.dumps(err, ensure_ascii=False)
-    else:
-        s = str(err)
-    s_low = s.lower()
-    return ("column" in s_low and "does not exist" in s_low) or ("unknown" in s_low and "column" in s_low)
+    # Normalize
+    cleaned: List[Dict[str, Any]] = []
+    for row in data:
+        if isinstance(row, dict) and str(row.get("status", "")).upper() == "NEW":
+            cleaned.append(row)
+    return cleaned
 
 
-def normalize_str(x: Any) -> str:
-    if x is None:
+def _safe(s: Any) -> str:
+    if s is None:
         return ""
-    return str(x).strip()
+    return str(s).strip()
 
 
-def truncate(s: str, n: int) -> str:
-    s = s.replace("\r", " ").replace("\n", " ").strip()
-    if len(s) <= n:
-        return s
-    return s[: max(0, n - 1)].rstrip() + "…"
-
-
-def send_pushover(message: str, title: str) -> None:
+def build_summary(rows: List[Dict[str, Any]], max_lines: int = 10) -> Tuple[str, str]:
     """
-    Delegate sending to tools/pushover_send.py so existing env support stays consistent.
+    Returns: (short_text_for_pushover, full_text_for_email)
     """
-    cmd = [sys.executable, "tools/pushover_send.py", "--title", title, "--message", message]
-    # pushover_send.py may read env vars directly (token/user/url, etc.)
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    if p.returncode != 0:
-        print("[ERROR] pushover_send.py failed", file=sys.stderr)
-        if p.stdout:
-            print(p.stdout, file=sys.stderr)
-        if p.stderr:
-            print(p.stderr, file=sys.stderr)
-        sys.exit(p.returncode)
+    total = len(rows)
+    if total == 0:
+        return ("No NEW rows.", "No NEW rows.")
+
+    # Sort: newest first if created_at exists, else keep as-is
+    def keyfunc(r: Dict[str, Any]) -> str:
+        return _safe(r.get("created_at")) or _safe(r.get("time_key"))
+
+    rows_sorted = sorted(rows, key=keyfunc, reverse=True)
+
+    # Short lines (pushover)
+    lines: List[str] = []
+    for i, r in enumerate(rows_sorted[:max_lines], start=1):
+        sev = _safe(r.get("severity"))
+        phone = _safe(r.get("phone"))
+        name = _safe(r.get("name"))
+        line_num = _safe(r.get("line_num"))
+        short_risk = _safe(r.get("short_risk"))
+        risk_reasons = _safe(r.get("risk_reasons"))
+
+        who = name or phone or "unknown"
+        suffix = []
+        if sev:
+            suffix.append(f"sev={sev}")
+        if line_num:
+            suffix.append(f"line={line_num}")
+        suffix_txt = (" (" + ", ".join(suffix) + ")") if suffix else ""
+
+        main = short_risk or risk_reasons or ""
+        if len(main) > 120:
+            main = main[:117] + "..."
+
+        lines.append(f"{i}. {who}{suffix_txt}: {main}".strip())
+
+    if total > max_lines:
+        lines.append(f"...and {total - max_lines} more")
+
+    pushover_text = f"NEW risk reviews: {total}\n" + "\n".join(lines)
+
+    # Full email body
+    now_utc = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    full_lines: List[str] = []
+    full_lines.append(f"NEW risk reviews: {total}")
+    full_lines.append(f"Generated: {now_utc}")
+    full_lines.append("")
+    for i, r in enumerate(rows_sorted, start=1):
+        parts = {
+            "id": _safe(r.get("id")),
+            "time_key": _safe(r.get("time_key")),
+            "phone": _safe(r.get("phone")),
+            "name": _safe(r.get("name")),
+            "severity": _safe(r.get("severity")),
+            "line_num": _safe(r.get("line_num")),
+            "created_at": _safe(r.get("created_at")),
+            "short_risk": _safe(r.get("short_risk")),
+            "risk_reasons": _safe(r.get("risk_reasons")),
+            "status": _safe(r.get("status")),
+        }
+        full_lines.append(f"{i})")
+        for k, v in parts.items():
+            if v != "":
+                full_lines.append(f"  {k}: {v}")
+        full_lines.append("")
+
+    email_text = "\n".join(full_lines).strip() + "\n"
+    return pushover_text, email_text
+
+
+def send_pushover(cfg: Config, message: str) -> None:
+    url = "https://api.pushover.net/1/messages.json"
+    payload = {
+        "token": cfg.pushover_app_token,
+        "user": cfg.pushover_user_key,
+        "title": cfg.pushover_title,
+        "message": message,
+        "priority": cfg.pushover_priority,
+        "sound": cfg.pushover_sound,
+    }
+
+    if cfg.dry_run:
+        print("[DRY_RUN] Would send Pushover:")
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return
+
+    r = requests.post(url, data=payload, timeout=20)
+    if r.status_code >= 400:
+        raise RuntimeError(f"Pushover send failed: {r.status_code} {r.text}")
+
+
+def send_email(cfg: Config, subject: str, body: str) -> None:
+    if not cfg.email_enabled:
+        print("EMAIL_ENABLED is not '1' -> email disabled.")
+        return
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = cfg.email_from
+    msg["To"] = cfg.email_to
+    msg.set_content(body)
+
+    if cfg.dry_run:
+        print("[DRY_RUN] Would send Email:")
+        print("To:", cfg.email_to)
+        print("From:", cfg.email_from)
+        print("Subject:", subject)
+        print("Body preview:\n", body[:800])
+        return
+
+    with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port, timeout=30) as server:
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(cfg.gmail_smtp_user, cfg.gmail_app_password)
+        server.send_message(msg)
 
 
 def main() -> int:
-    base_url = env_required("SUPABASE_URL")
-    service_key = env_required("SUPABASE_SERVICE_ROLE_KEY")
+    try:
+        cfg = load_config()
+        rows = fetch_new_rows(cfg)
 
-    table = os.environ.get("RISK_REVIEWS_TABLE", "risk_reviews").strip() or "risk_reviews"
-    page_size = env_int("PAGE_SIZE", 500)
-    preview_rows = env_int("PREVIEW_ROWS", 5)
+        if len(rows) == 0:
+            print("No NEW rows found. Nothing to notify.")
+            return 0
 
-    status_field = os.environ.get("STATUS_FIELD", "status").strip() or "status"
-    reviewed_value = os.environ.get("REVIEWED_VALUE", "reviewed").strip() or "reviewed"
+        pushover_text, email_text = build_summary(rows, max_lines=10)
 
-    # Allow overriding field names, but keep safe defaults.
-    name_field_default = os.environ.get("NAME_FIELD", "name").strip() or "name"
-    phone_field_default = os.environ.get("PHONE_FIELD", "phone").strip() or "phone"
-    risk_field_default = os.environ.get("RISK_REASONS_FIELD", "risk_reasons").strip() or "risk_reasons"
+        # Pushover
+        send_pushover(cfg, pushover_text)
+        print(f"Sent Pushover for {len(rows)} NEW rows.")
 
-    # We'll try a couple of field-name variants to survive schema casing changes.
-    field_variants: List[Tuple[str, str, str]] = [
-        (name_field_default, phone_field_default, risk_field_default),
-        ("name", "phone", "risk_reasons"),
-        ("NAME", "PHONE", "RISK_REASONS"),
-    ]
+        # Email
+        subject = f"{cfg.email_subject_prefix} {len(rows)} NEW risk reviews"
+        send_email(cfg, subject, email_text)
+        if cfg.email_enabled:
+            print(f"Sent Email to {cfg.email_to} for {len(rows)} NEW rows.")
+        else:
+            print("Email disabled.")
 
-    rows: List[Dict[str, Any]] = []
-    used_fields: Optional[Tuple[str, str, str]] = None
-    used_status_filter = True  # try first, fallback if status column missing
-
-    # We'll attempt: (fields variant) x (status filter on/off) with pagination.
-    last_err: Any = None
-    for fields in field_variants:
-        for status_filter in (True, False):
-            # Only try status_filter=False after trying True (unless we already had to disable it globally)
-            if not used_status_filter and status_filter:
-                continue
-
-            all_rows: List[Dict[str, Any]] = []
-            offset = 0
-            while True:
-                code, payload, _ctype = supabase_get(
-                    base_url=base_url,
-                    service_key=service_key,
-                    table=table,
-                    select_fields=[fields[0], fields[1], fields[2]],
-                    status_field=status_field,
-                    reviewed_value=reviewed_value,
-                    use_status_filter=status_filter,
-                    offset=offset,
-                    limit=page_size,
-                )
-
-                if code >= 400:
-                    last_err = payload
-                    # If status filter caused unknown column, retry without it for same fields.
-                    if status_filter and looks_like_unknown_column(payload):
-                        used_status_filter = False
-                        break  # break pagination; outer loop will try status_filter=False
-                    # If field names are wrong, try next variant
-                    if looks_like_unknown_column(payload):
-                        break
-                    print(f"[ERROR] Supabase request failed ({code}): {payload}", file=sys.stderr)
-                    return 1
-
-                if not isinstance(payload, list):
-                    print(f"[ERROR] Unexpected response type: {type(payload)} => {payload}", file=sys.stderr)
-                    return 1
-
-                all_rows.extend(payload)
-
-                if len(payload) < page_size:
-                    break
-                offset += page_size
-
-            # If we got rows without errors, accept and stop.
-            if all_rows:
-                rows = all_rows
-                used_fields = fields
-                used_status_filter = status_filter
-                break
-
-            # If we didn't get rows but also didn't hit a fatal error, we still accept the schema and stop
-            # (means there are simply zero pending items)
-            if last_err is None:
-                rows = []
-                used_fields = fields
-                used_status_filter = status_filter
-                break
-
-        if used_fields is not None:
-            break
-
-    if used_fields is None:
-        print(f"[ERROR] Could not query table {table}. Last error: {last_err}", file=sys.stderr)
-        return 1
-
-    name_f, phone_f, risk_f = used_fields
-
-    # Client-side filtering of empty risk reasons
-    pending: List[Dict[str, Any]] = []
-    for r in rows:
-        reasons = normalize_str(r.get(risk_f))
-        if not reasons:
-            continue
-        pending.append(r)
-
-    if len(pending) == 0:
-        # Exit quietly - no notification
-        print("[INFO] No pending risk reviews. Exiting quietly.")
         return 0
 
-    # Build preview
-    preview_lines: List[str] = []
-    for r in pending[: max(1, preview_rows)]:
-        nm = normalize_str(r.get(name_f)) or "-"
-        ph = normalize_str(r.get(phone_f)) or "-"
-        rr = truncate(normalize_str(r.get(risk_f)), 120) or "-"
-        preview_lines.append(f"- {nm} | {ph} | {rr}")
-
-    title = f"Risk reviews pending: {len(pending)}"
-    msg = "יש רשומות שמחכות לבדיקה:\n" + "\n".join(preview_lines)
-
-    send_pushover(message=msg, title=title)
-    print(f"[OK] Sent notification. count={len(pending)} (status_filter={used_status_filter}, fields={used_fields})")
-    return 0
+    except Exception as e:
+        print("ERROR:", str(e))
+        traceback.print_exc()
+        return 2
 
 
 if __name__ == "__main__":
