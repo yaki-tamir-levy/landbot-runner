@@ -32,6 +32,12 @@ jobs:
           PUSHOVER_USER:             ${{ secrets.PUSHOVER_USER }}
           PUSHOVER_USER_2:           ${{ secrets.PUSHOVER_USER_2 }}    # אופציונלי
           PUSHOVER_URL:              ${{ secrets.PUSHOVER_URL }}       # אופציונלי (לינק ל-launcher)
-          PUSHOVER_URL_TITLE:        ${{ secrets.PUSHOVER_URL_TITLE }} # אופציונלי
+          PUSHOVER_URL_TITLE:        ${{ secrets.PUSHOVER_URL_TITLE }} # 
+          EMAIL_ENABLED:             ${{ secrets.EMAIL_ENABLED }}
+          GMAIL_SMTP_USER:           ${{ secrets.GMAIL_SMTP_USER }}
+          GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO:                  ${{ secrets.EMAIL_TO }}
+          EMAIL_FROM:                ${{ secrets.EMAIL_FROM }}         # אופציונלי
+אופציונלי
         run: |
           python tools/risk_reviews_notify.py
