@@ -40,6 +40,5 @@ jobs:
           GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_TO:                  ${{ secrets.EMAIL_TO }}
           EMAIL_FROM:                ${{ secrets.EMAIL_FROM }}         # אופציונלי
-אופציונלי
         run: |
           python tools/risk_reviews_notify.py
