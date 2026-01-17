@@ -1,5 +1,5 @@
 name: Pushover Notify (Israel Time)
-
+ 
 on:
   schedule:
     # Israel winter time (UTC+2):
