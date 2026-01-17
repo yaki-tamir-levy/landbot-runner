@@ -104,7 +104,7 @@ def supabase_get(
 
     if use_status_filter:
         # Exclude reviewed rows. If status_field doesn't exist, Supabase will return 400 and we will retry.
-        params[f"{status_field}"] = f"neq.{reviewed_value}"
+         params[f"{status_field}"] = "eq.NEW"
 
     r = requests.get(url, headers=headers, params=params, timeout=30)
     ctype = r.headers.get("content-type", "")
