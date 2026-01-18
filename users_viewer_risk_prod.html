@@ -127,12 +127,16 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 KK <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 AA <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
 
   <div class="card controls">
+    <div style="margin-bottom:10px; text-align:center">
+      <button id="btnOldToggle" type="button">הצג שיחות ישנות</button>
+      <div class="hint" id="oldHint" style="margin-top:6px;">שורות מעל חודש - לא מוצגות</div>
+    </div>
     <div class="row">
       <div><label>Phone<br /><input id="fPhone" placeholder="+9725..." /></label></div>
       <div><label>Name<br /><input id="fName" placeholder="שם" /></label></div>
@@ -179,8 +183,66 @@
   var el = {
     fPhone:$("fPhone"), fName:$("fName"), fFrom:$("fFrom"), fTo:$("fTo"), fKind:$("fKind"),
     btnRun:$("btnRun"), btnClear:$("btnClear"),
-    out:$("out"), alertHost:$("alertHost"), statusBar:$("statusBar"), countInfo:$("countInfo")
+    out:$("out"), alertHost:$("alertHost"), statusBar:$("statusBar"), countInfo:$("countInfo"),
+    btnOldToggle:$("btnOldToggle"), oldHint:$("oldHint")
   };
+
+  // Hide old rows by default (older than 30 days from page load)
+  var PAGE_LOADED_AT = Date.now();
+  var SHOW_OLD = false;
+  var OLD_DAYS = 30;
+
+  function _parseTimeKeyToMs(timeKey){
+    // Expected examples: '2026-01-16 19:01:00.720000+00'
+    try{
+      var s = String(timeKey || '').trim();
+      if (!s) return null;
+
+      // Split date/time and timezone
+      // 1) Replace first space with 'T'
+      s = s.replace(' ', 'T');
+
+      // 2) Trim microseconds to milliseconds if present
+      //    19:01:00.720000 -> 19:01:00.720
+      s = s.replace(/\.(\d{3})\d+/, '.$1');
+
+      // 3) Normalize timezone like +00 to +00:00
+      s = s.replace(/([+-]\d{2})(?!:)/, '$1:00');
+
+      var d = new Date(s);
+      var ms = d.getTime();
+      if (!isFinite(ms)) return null;
+      return ms;
+    } catch(e){
+      return null;
+    }
+  }
+
+  function _isTooOld(timeKey){
+    var ms = _parseTimeKeyToMs(timeKey);
+    if (ms == null) return false; // if unknown, don't hide
+    var cutoff = PAGE_LOADED_AT - (OLD_DAYS * 24 * 60 * 60 * 1000);
+    return ms < cutoff;
+  }
+
+  function _syncOldToggleUi(){
+    try{
+      if (!el.btnOldToggle) return;
+      el.btnOldToggle.textContent = SHOW_OLD ? 'הסתר שיחות ישנות' : 'הצג שיחות ישנות';
+    } catch(e){}
+  }
+
+  try{
+    if (el.btnOldToggle){
+      _syncOldToggleUi();
+      el.btnOldToggle.addEventListener('click', function(){
+        SHOW_OLD = !SHOW_OLD;
+        _syncOldToggleUi();
+        // rerender using current cache/filters
+        if (CACHE && CACHE.loaded){ rerenderFromCache(); }
+      });
+    }
+  } catch(e){}
 
   // default date range: To = today (leave empty = ALL)
   try{
@@ -448,6 +510,8 @@
     var out = [];
     (CACHE.allRows || []).forEach(function(r){
       if (r && r._forceRisk){ out.push(r); return; }
+
+      if (!SHOW_OLD && _isTooOld(r.time_key)) return;
 
       if (pnLow && String(r.phone || '').toLowerCase().indexOf(pnLow) === -1) return;
       if (nnLow && String(r.name  || '').toLowerCase().indexOf(nnLow) === -1) return;
