@@ -127,7 +127,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 AA <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 BB <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -188,41 +188,45 @@
   };
 
   // Hide old rows by default (older than 30 days from page load)
-  var PAGE_LOADED_AT = Date.now();
+  // Date-only logic: ignore hours/minutes/seconds.
+  var PAGE_LOADED_DAY_MS = (function(){
+    var d = new Date();
+    d.setHours(0,0,0,0);
+    return d.getTime();
+  })();
   var SHOW_OLD = false;
   var OLD_DAYS = 30;
 
-  function _parseTimeKeyToMs(timeKey){
-    // Expected examples: '2026-01-16 19:01:00.720000+00'
+  function _parseTimeKeyToDayMs(timeKey){
+    // Date-only parsing (ignore time): supports
+    // - '2026-01-16 19:01:00.720000+00'
+    // - '2026-01-16T19:01:00.720000+00:00'
+    // - '2025.11.03 20:27:50:264910'
     try{
       var s = String(timeKey || '').trim();
       if (!s) return null;
 
-      // Split date/time and timezone
-      // 1) Replace first space with 'T'
-      s = s.replace(' ', 'T');
+      // Capture leading date only: YYYY-MM-DD or YYYY.MM.DD
+      var m = s.match(/^(\d{4})[\.-](\d{2})[\.-](\d{2})/);
+      if (!m) return null;
 
-      // 2) Trim microseconds to milliseconds if present
-      //    19:01:00.720000 -> 19:01:00.720
-      s = s.replace(/\.(\d{3})\d+/, '.$1');
+      var y = parseInt(m[1], 10);
+      var mo = parseInt(m[2], 10);
+      var d = parseInt(m[3], 10);
+      if (!isFinite(y) || !isFinite(mo) || !isFinite(d)) return null;
 
-      // 3) Normalize timezone like +00 to +00:00
-      s = s.replace(/([+-]\d{2})(?!:)/, '$1:00');
-
-      var d = new Date(s);
-      var ms = d.getTime();
-      if (!isFinite(ms)) return null;
-      return ms;
+      // Local midnight for the extracted date.
+      return new Date(y, mo - 1, d).getTime();
     } catch(e){
       return null;
     }
   }
 
   function _isTooOld(timeKey){
-    var ms = _parseTimeKeyToMs(timeKey);
-    if (ms == null) return false; // if unknown, don't hide
-    var cutoff = PAGE_LOADED_AT - (OLD_DAYS * 24 * 60 * 60 * 1000);
-    return ms < cutoff;
+    var dayMs = _parseTimeKeyToDayMs(timeKey);
+    if (dayMs == null) return false; // if unknown, don't hide
+    var cutoff = PAGE_LOADED_DAY_MS - (OLD_DAYS * 24 * 60 * 60 * 1000);
+    return dayMs < cutoff;
   }
 
   function _syncOldToggleUi(){
