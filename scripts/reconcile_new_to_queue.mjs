@@ -2,10 +2,10 @@
  * scripts/reconcile_new_to_queue.mjs
  *
  * Hourly safety net:
- * - Finds users_total rows with processed='NEW'
+ * - Finds users_total rows with processed IN ('NEW','ERROR','IN_PROGRESS')
  * - Ensures they exist in process_queue as an active job (NEW/PROCESSING)
  *
- * This does NOT process conversations. It only ensures queue coverage.
+ * This does NOT process conversations. It only ensures queue coverage / retries.
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -24,17 +24,28 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 });
 
 async function main() {
-  // Pull NEW items (cap to avoid huge hourly jobs; adjust if needed)
+  const TARGET_PROCESSED_VALUES = ["NEW", "ERROR", "IN_PROGRESS"];
+
+  // Pull items (cap to avoid huge hourly jobs; adjust if needed)
   const { data: rows, error } = await supabase
     .from("users_total")
-    .select("id")
-    .eq("processed", "NEW")
+    .select("id, processed")
+    .in("processed", TARGET_PROCESSED_VALUES)
     .limit(500);
 
   if (error) throw new Error(`users_total select failed: ${error.message}`);
 
   let inserted = 0;
   let skipped = 0;
+
+  // Optional: basic breakdown by processed value
+  const byProcessed = {};
+  for (const v of TARGET_PROCESSED_VALUES) byProcessed[v] = 0;
+  for (const r of rows || []) {
+    if (r?.processed && byProcessed[r.processed] !== undefined) {
+      byProcessed[r.processed] += 1;
+    }
+  }
 
   for (const r of rows || []) {
     try {
@@ -51,7 +62,15 @@ async function main() {
     }
   }
 
-  console.log(JSON.stringify({ foundNew: (rows || []).length, inserted, skipped }));
+  console.log(
+    JSON.stringify({
+      targetProcessed: TARGET_PROCESSED_VALUES,
+      found: (rows || []).length,
+      byProcessed,
+      inserted,
+      skipped,
+    })
+  );
 }
 
 main().catch((e) => {
