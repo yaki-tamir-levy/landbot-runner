@@ -46,6 +46,8 @@
     button{cursor:pointer}
     /* Click feedback: paint clicked buttons light blue */
     .btn-clicked{ background:#dbeafe !important; border-color:#93c5fd !important; }
+    .btn-old-primary{ background:#4f46e5 !important; border-color:#4f46e5 !important; color:#fff !important; box-shadow:0 6px 16px rgba(79,70,229,.18); }
+    .old-hint-warn{ color:#b45309; font-weight:800; }
     .controls{margin-bottom:10px}
     .table{margin-top:12px;display:flex;flex-direction:column;gap:10px}
     .talk{border:1px solid var(--divider);border-radius:12px;overflow:hidden;background:#fff}
@@ -127,7 +129,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 BB <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 zz <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -135,7 +137,7 @@
   <div class="card controls">
     <div style="margin-bottom:10px; text-align:center">
       <button id="btnOldToggle" type="button">הצג שיחות ישנות</button>
-      <div class="hint" id="oldHint" style="margin-top:6px;">שורות מעל חודש - לא מוצגות</div>
+      <div class="hint old-hint-warn" id="oldHint" style="margin-top:6px;">שורות מעל חודש - לא מוצגות</div>
     </div>
     <div class="row">
       <div><label>Phone<br /><input id="fPhone" placeholder="+9725..." /></label></div>
@@ -232,7 +234,18 @@
   function _syncOldToggleUi(){
     try{
       if (!el.btnOldToggle) return;
+      var filteringOld = !SHOW_OLD;
       el.btnOldToggle.textContent = SHOW_OLD ? 'הסתר שיחות ישנות' : 'הצג שיחות ישנות';
+      // Emphasize the button when filtering old rows (default state)
+      if (filteringOld){
+        el.btnOldToggle.classList.add('btn-old-primary');
+      } else {
+        el.btnOldToggle.classList.remove('btn-old-primary');
+      }
+      // Show hint only when filtering is active
+      if (el.oldHint){
+        el.oldHint.style.display = filteringOld ? 'block' : 'none';
+      }
     } catch(e){}
   }
 
