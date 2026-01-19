@@ -83,13 +83,6 @@
     .alertbar h3{margin:0 0 6px 0;color:#7f1d1d;font-size:14px}
     .alertitem{margin:6px 0;padding:8px 10px;border-radius:8px;background:#fff;border:1px dashed #fecaca}
     .alertitem .when{color:#7f1d1d;font-weight:700}
-    .alert-reviewer{margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center}
-    .alert-reviewer .label{font-weight:900; color:#111827}
-    .alert-reviewer .val{font-weight:800; color:#111827}
-    .alert-reviewer .arev-input{min-width:180px}
-    .alert-reviewer .arev-btn{font-weight:900; background:#fff; border:2px solid #d1d5db; border-radius:10px; padding:6px 10px; cursor:pointer}
-    .alert-reviewer .arev-btn:hover{box-shadow:0 0 0 2px #e5e7eb inset}
-    .alert-reviewer .arev-msg{color:#065f46; font-weight:800}
     .pill{ display:inline-block; padding:6px 12px; border-radius:999px; background:#ffe4e6; color:#000; font-size:16px; margin:2px 6px 2px 0; font-weight:900; border:1px solid #fecaca }
     .btn-open-risk{ font-weight:900; background:#ffd1d6; border:2px solid #fca5a5; padding:6px 12px; border-radius:10px; }
     .btn-open-risk:hover{ filter:brightness(0.98) }
@@ -138,11 +131,19 @@
 
 
 </style>
+
+<script>
+function getReviewerName(){
+  var inp = document.querySelector('input[data-act="reviewer-name"]');
+  return inp && inp.value ? inp.value.trim() : '';
+}
+</script>
 </head>
+
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 qq<span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 AAA <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -849,6 +850,9 @@ function showInlineMsg(talkElem, msg){
     var stUi = String(newStatus || '').trim();
     if (!talkId || !lineNum || !stUi) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
+    var reviewerName = getReviewerName();
+    if (!reviewerName){ throw new Error('חובה להזין שם מטפל'); }
+
 
     // UI -> DB status mapping
     // דרישה: לחיצה על "צפיתי" מעדכנת סטטוס ל-REVIEWED
@@ -859,7 +863,7 @@ function showInlineMsg(talkElem, msg){
     // Some environments might have the column spelled differently (STATUS vs STSTUS).
     // We try STATUS first, then STSTUS.
     function doUpdate(statusVal, colName){
-      var upd = { review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' };
+      var upd = { review_notes: txt, reviewed_at: nowISO(),  };
       upd[colName] = statusVal;
       return supa.from(REVIEWS_TABLE)
         .update(upd)
@@ -921,6 +925,9 @@ function showInlineMsg(talkElem, msg){
 function updateRiskReviewNotes(talkId, lineNum, notes){
     if (!talkId || !lineNum) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
+    var reviewerName = getReviewerName();
+    if (!reviewerName){ throw new Error('חובה להזין שם מטפל'); }
+
 
     // Saving a note alone must NOT change status/reviewed_at/reviewer.
     // reviewed_at/reviewer are updated only when a status decision is made (VIEWED/CHECKED).
@@ -951,31 +958,6 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
   }
 
   
-
-
-  function updateRiskReviewerForTalk(talkId, reviewerName){
-    var tid = String(talkId || '').trim();
-    var nm = String(reviewerName || '').trim();
-    if (!tid || !nm) return Promise.resolve(false);
-
-    // Update reviewer for ALL risk rows of the talk (by id)
-    return supa.from(REVIEWS_TABLE)
-      .update({ reviewer: nm })
-      .eq('id', tid)
-      .select('id')
-      .then(function(res){
-        if (res && res.error) throw res.error;
-        var updated = (res && res.data) ? res.data : [];
-        var ok = !!(updated && updated.length);
-        if (ok && CACHE && CACHE.loaded){
-          var arr = CACHE.riskMap.get(tid) || [];
-          for (var i=0;i<arr.length;i++){
-            if (arr[i]) arr[i].reviewer = nm;
-          }
-        }
-        return ok;
-      });
-  }
   function snippetAround(full, match){
     var s = String(full||''), m = String(match||'');
     if (!m) return s.slice(0, 60);
@@ -1020,25 +1002,6 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
     return hits;
   }
 
-
-
-  function pickBestReviewerFromHits(hits){
-    var best = '';
-    var bestTs = -1;
-    (hits || []).forEach(function(h){
-      var r = (h && h.reviewer != null) ? String(h.reviewer).trim() : '';
-      if (!r) return;
-      var ts = -1;
-      try{
-        if (h.reviewed_at){
-          var t = Date.parse(String(h.reviewed_at));
-          if (isFinite(t)) ts = t;
-        }
-      }catch(e){ ts = -1; }
-      if (!best || ts >= bestTs){ best = r; bestTs = ts; }
-    });
-    return best;
-  }
   function applyAnchorsToDialogLines(dialogLines, talkDomId){
     if (!dialogLines || !dialogLines.length) return;
     for (var i=0;i<dialogLines.length;i++){
@@ -1254,17 +1217,6 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
               top.push('<div class="alertitem">');
               top.push('<div><strong>' + escapeHtml(AA.name) + '</strong> · ' + escapeHtml(AA.phone) + '</div>');
               top.push('<div class="when">' + escapeHtml(AA.time) + '</div><div>');
-              top.push('<div class="alert-reviewer">');
-              top.push('<span class="label">מטפל:</span>');
-              if (AA.reviewer && String(AA.reviewer).trim() !== ''){
-                top.push('<span class="val">' + escapeHtml(AA.reviewer) + '</span>');
-              } else {
-                var pref = getLocalTherapistName();
-                top.push('<input class="arev-input" data-act="reviewer-input" placeholder="שם המטפל" value="' + escapeHtml(pref) + '" />');
-                top.push('<button class="arev-btn" data-act="save-reviewer" data-talkid="' + escapeHtml(String(AA.talkId||'')) + '">שמור שם המטפל</button>');
-                top.push('<span class="arev-msg" data-act="reviewer-msg"></span>');
-              }
-              top.push('</div>');
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
                 top.push('<span class="pill mono" title="' + escapeHtml(it.text) +'">'+ escapeHtml(it.text) +'</span> ');
@@ -1291,46 +1243,6 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
                 node.classList.add('risk-selected');
                 node.classList.add('target-blink');
                 setTimeout(function(){ node.classList.remove('target-blink'); }, 1300);
-              });
-            });
-
-            // Save therapist name (reviewer) from the top alert list
-            el.alertHost.querySelectorAll('button[data-act="save-reviewer"]').forEach(function(b){
-              b.addEventListener('click', function(){
-                var talkId = b.getAttribute('data-talkid') || '';
-                var host = b.closest('.alertitem') || b.parentNode;
-                var inp = host ? host.querySelector('input[data-act="reviewer-input"]') : null;
-                var msg = host ? host.querySelector('[data-act="reviewer-msg"]') : null;
-                var name = inp ? String(inp.value || '').trim() : '';
-                if (msg) msg.textContent = '';
-
-                if (!name){
-                  if (msg) msg.textContent = 'חובה להזין שם מטפל';
-                  try{ if (inp) inp.focus(); }catch(e){}
-                  return;
-                }
-
-                // store locally for convenience
-                setLocalTherapistName(name);
-
-                b.disabled = true;
-                var prevTxt = b.textContent;
-                b.textContent = 'שומר...';
-
-                updateRiskReviewerForTalk(talkId, name).then(function(ok){
-                  if (!ok){
-                    if (msg) msg.textContent = 'לא עודכן (לא נמצאו שורות לעדכון)';
-                    b.disabled = false;
-                    b.textContent = prevTxt;
-                    return;
-                  }
-                  // refresh UI
-                  if (CACHE && CACHE.loaded){ rerenderFromCache(); } else { queryPage(true); }
-                }).catch(function(e){
-                  if (msg) msg.textContent = 'שגיאה בעדכון שם המטפל: ' + (e && e.message ? e.message : e);
-                  b.disabled = false;
-                  b.textContent = prevTxt;
-                });
               });
             });
           } else {
@@ -1374,10 +1286,7 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
                 targetId: hh2.targetId || ''
               });
             }
-            var bestReviewer = pickBestReviewerFromHits(hits);
             alerts.push({
-              talkId: r.id || '',
-              reviewer: bestReviewer || '',
               name: r.name || 'מטופל/ת',
               phone: r.phone || '',
               time: timeKeyToHuman(r.time_key),
