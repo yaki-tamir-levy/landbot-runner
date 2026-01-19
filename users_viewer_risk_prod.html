@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- VERSION: 2026-01-19 STAGE3-FIX12 (RISK_REVIEWS + BUTTON CLICK BLUE) -->
+<!-- VERSION: 2026-01-16 STAGE3-FIX11 (RISK_REVIEWS + BUTTON CLICK BLUE) -->
 <html lang="he" dir="rtl">
 <head>
   <script>
   
-  var APP_VERSION = 'STAGE3_FIX12';
+  var APP_VERSION = 'STAGE3_FIX11';
 (function () {
     // אותה הסיסמה כמו בקובץ launcher.html
     const APP_PASSWORD   = "yon1234";
@@ -86,8 +86,6 @@
     .pill{ display:inline-block; padding:6px 12px; border-radius:999px; background:#ffe4e6; color:#000; font-size:16px; margin:2px 6px 2px 0; font-weight:900; border:1px solid #fecaca }
     .btn-open-risk{ font-weight:900; background:#ffd1d6; border:2px solid #fca5a5; padding:6px 12px; border-radius:10px; }
     .btn-open-risk:hover{ filter:brightness(0.98) }
-    .risk-top-meta{ display:inline-block; margin-inline-start:8px; padding:2px 10px; border-radius:999px; border:1px solid #fecaca; background:#fff; font-weight:900; font-size:12px; }
-    .risk-top-meta .k{ color:var(--muted); font-weight:800; }
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     .speaker{white-space:pre-wrap}
     .speaker-patient{font-weight:700}
@@ -125,24 +123,31 @@
     .risk-controls .rc-status{ display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ddd; background:#fff; font-weight:900; font-size:12px; }
     .risk-controls .rc-inline-msg{ margin-top:8px; background:#fee2e2; border:1px solid #fecaca; color:#7f1d1d; padding:8px 10px; border-radius:10px; font-weight:700; }
 
-    .risk-controls .rc-current{ font-weight:900; margin-inline-start:8px; }
-    .risk-controls .rc-ther-row{ margin-top:8px; }
-    .risk-controls .rc-ther-label{ margin-inline-end:6px; }
-    .risk-controls .rc-ther-input{ min-width:220px; }
-
-
 
 </style>
 </head>
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-19 STAGE3-FIX12 BB <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 cc <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
 
   <div class="card controls">
+    <div style="margin-bottom:10px; text-align:center">
+      <div class="row" style="justify-content:center; align-items:center">
+        <div>
+          <label>שם המטפל<br /><input id="reviewerInput" placeholder="הקלד שם מטפל" /></label>
+        </div>
+        <div>
+          <label>&nbsp;<br /><button id="btnSaveReviewer" type="button">שמור שם המטפל</button></label>
+        </div>
+        <div class="meta" style="font-weight:900; align-self:center; padding-top:18px">
+          מטפל: <span id="reviewerBadge">—</span>
+        </div>
+      </div>
+    </div>
     <div style="margin-bottom:10px; text-align:center">
       <button id="btnOldToggle" type="button">הצג שיחות ישנות</button>
       <div class="hint old-hint-warn" id="oldHint" style="margin-top:6px;">שורות מעל חודש - לא מוצגות</div>
@@ -194,8 +199,83 @@
     fPhone:$("fPhone"), fName:$("fName"), fFrom:$("fFrom"), fTo:$("fTo"), fKind:$("fKind"),
     btnRun:$("btnRun"), btnClear:$("btnClear"),
     out:$("out"), alertHost:$("alertHost"), statusBar:$("statusBar"), countInfo:$("countInfo"),
-    btnOldToggle:$("btnOldToggle"), oldHint:$("oldHint")
+    btnOldToggle:$("btnOldToggle"), oldHint:$("oldHint"),
+    reviewerInput:$("reviewerInput"), btnSaveReviewer:$("btnSaveReviewer"), reviewerBadge:$("reviewerBadge")
   };
+
+  // ------------------------------------------------------------
+  // REVIEWER (therapist name)
+  // - User types therapist name
+  // - Saved locally (localStorage)
+  // - Used to update risk_reviews.reviewer on the *same row* where we update review_notes/status
+  // ------------------------------------------------------------
+  var LS_REVIEWER_KEY = 'uvr_reviewer_name';
+  function getCurrentReviewer(){
+    try{
+      var v = (el.reviewerInput && el.reviewerInput.value != null) ? String(el.reviewerInput.value) : '';
+      v = v.trim();
+      return v;
+    }catch(e){
+      return '';
+    }
+  }
+  function reviewerLabelText(){
+    var v = getCurrentReviewer();
+    return v ? v : '—';
+  }
+  function syncReviewerBadges(){
+    try{
+      if (el.reviewerBadge) el.reviewerBadge.textContent = reviewerLabelText();
+      // Also update any top alert bar label if present
+      var tops = document.querySelectorAll('[data-role="reviewer-top"]');
+      tops.forEach(function(n){ n.textContent = reviewerLabelText(); });
+    }catch(e){}
+  }
+
+  function loadReviewerFromStorage(){
+    try{
+      if (!window.localStorage) return;
+      var saved = localStorage.getItem(LS_REVIEWER_KEY);
+      if (saved != null && el.reviewerInput){
+        el.reviewerInput.value = String(saved);
+      }
+    }catch(e){}
+    syncReviewerBadges();
+  }
+
+  function saveReviewerToStorage(){
+    try{
+      var v = getCurrentReviewer();
+      if (!v){
+        setStatusErr('יש להזין שם מטפל לפני שמירה.');
+        return false;
+      }
+      if (window.localStorage){
+        localStorage.setItem(LS_REVIEWER_KEY, v);
+      }
+      setStatusOk('שם המטפל נשמר.');
+      syncReviewerBadges();
+      return true;
+    }catch(e){
+      setStatusErr('שגיאה בשמירת שם המטפל.');
+      return false;
+    }
+  }
+
+  try{
+    loadReviewerFromStorage();
+    if (el.btnSaveReviewer){
+      el.btnSaveReviewer.addEventListener('click', function(){
+        saveReviewerToStorage();
+      });
+    }
+    if (el.reviewerInput){
+      el.reviewerInput.addEventListener('input', function(){
+        // keep UI in sync even before clicking save
+        syncReviewerBadges();
+      });
+    }
+  }catch(e){}
 
   // Hide old rows by default (older than 30 days from page load)
   // Date-only logic: ignore hours/minutes/seconds.
@@ -579,23 +659,6 @@
     });
   }
   var LS_STATUS_KEY = 'uvr_status_filter';
-  var LS_THERAPIST_NAME_KEY = 'uvr_therapist_name';
-
-  function getTherapistName(){
-    try{
-      if (!window.localStorage) return '';
-      return String(localStorage.getItem(LS_THERAPIST_NAME_KEY) || '').trim();
-    }catch(e){ return ''; }
-  }
-
-  function setTherapistName(v){
-    try{
-      if (!window.localStorage) return;
-      var s = String(v == null ? '' : v).trim();
-      if (!s) return;
-      localStorage.setItem(LS_THERAPIST_NAME_KEY, s);
-    }catch(e){}
-  }
   var STATUS_TITLE_MAP = {
     "":  "כל הסוגים",
     "1": "השיחות של המטפל הוירטואלי",
@@ -854,7 +917,10 @@ function showInlineMsg(talkElem, msg){
     // Some environments might have the column spelled differently (STATUS vs STSTUS).
     // We try STATUS first, then STSTUS.
     function doUpdate(statusVal, colName){
-      var upd = { review_notes: txt, reviewed_at: nowISO(), reviewer: 'viewer' };
+      var reviewerNow = getCurrentReviewer();
+      var upd = { review_notes: txt, reviewed_at: nowISO() };
+      // Update reviewer only when user provided a name (do not wipe existing reviewer).
+      if (reviewerNow){ upd.reviewer = reviewerNow; }
       upd[colName] = statusVal;
       return supa.from(REVIEWS_TABLE)
         .update(upd)
@@ -898,6 +964,7 @@ function showInlineMsg(talkElem, msg){
     return tryWithConstraintFallback().then(function(ok){
       if (ok && CACHE && CACHE.loaded){
         var arr = CACHE.riskMap.get(String(talkId)) || [];
+        var reviewerNow2 = getCurrentReviewer();
         for (var i=0;i<arr.length;i++){
           var rr = arr[i];
           var ln = (rr && rr.line_num);
@@ -905,7 +972,7 @@ function showInlineMsg(talkElem, msg){
             rr.status = stDb;
             rr.review_notes = txt;
             rr.reviewed_at = nowISO();
-            rr.reviewer = 'viewer';
+            if (reviewerNow2){ rr.reviewer = reviewerNow2; }
           }
         }
       }
@@ -1076,14 +1143,6 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
       var btnSeenCls = (stUi === 'צפיתי') ? ' rc-btn rc-seen active' : ' rc-btn rc-seen';
       var btnCancelCls = (stUi === 'מבטל סיכון') ? ' rc-btn rc-cancel active' : ' rc-btn rc-cancel';
 
-      // UI labels requirement:
-      // - Before click: "צפייה" / "ביטול סיכון"
-      // - After click:  "צפיתי" / "ביטלתי סיכון"
-      var btnSeenLabel = (stUi === 'צפיתי') ? 'צפיתי' : 'צפייה';
-      var btnCancelLabel = (stUi === 'מבטל סיכון') ? 'ביטלתי סיכון' : 'ביטול סיכון';
-      var stCurrent = (stUi && stUi !== 'NEW') ? stUi : '';
-      var therapistPrefill = getTherapistName();
-
       var statusLine = '';
       if ((stUi && stUi !== 'NEW') || notes){
         var stShow = stUi && stUi !== 'NEW' ? stUi : '';
@@ -1097,15 +1156,8 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
         '<div class="risk-controls" data-riskctl="1" data-id="' + escapeHtml(String(talkId||'')) + '" data-ln="' + escapeHtml(String(lineNum)) + '">' +
           '<div class="rc-row">' +
             '<span class="rc-title">אישור מטפל:</span>' +
-            '<button class="' + btnSeenCls + '" data-act="risk-status" data-status="צפיתי">' + btnSeenLabel + '</button>' +
-            '<button class="' + btnCancelCls + '" data-act="risk-status" data-status="מבטל סיכון">' + btnCancelLabel + '</button>' +
-            '<span class="rc-current">' +
-              'סטטוס נוכחי: ' + (stCurrent ? ('<span class=\"rc-status\">' + escapeHtml(stCurrent) + '</span>') : '<span class=\"rc-status\">—</span>') +
-            '</span>' +
-          '</div>' +
-          '<div class="rc-row rc-ther-row">' +
-            '<label class="hint rc-ther-label">שם המטפל:</label>' +
-            '<input class="rc-ther-input" data-act="therapist-name" placeholder="הקלד שם מטפל..." value="' + escapeHtml(therapistPrefill || '') + '" />' +
+            '<button class="' + btnSeenCls + '" data-act="risk-status" data-status="צפיתי">צפיתי</button>' +
+            '<button class="' + btnCancelCls + '" data-act="risk-status" data-status="מבטל סיכון">מבטל סיכון</button>' +
           '</div>' +
           '<div style="margin-top:8px"><label class="hint">הערת מטפל:</label>' +
           '<textarea data-act="risk-note" placeholder="הקלד הערה...">' + escapeHtml(notes) + '</textarea>' +
@@ -1199,7 +1251,10 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
           el.out.innerHTML = parts.join('') || '<div class="card hint">אין תוצאות.</div>';
 
           if (alerts.length){
-            var top = ['<div class="alertbar"><h3>⚠️ נמצאו ' + totalHits + ' ביטויי סיכון ב-' + alerts.length + ' שיחות</h3>'];
+            var top = ['<div class="alertbar">' +
+              '<h3>⚠️ נמצאו ' + totalHits + ' ביטויי סיכון ב-' + alerts.length + ' שיחות</h3>' +
+              '<div class="meta" style="font-weight:900">מטפל: <span data-role="reviewer-top">' + escapeHtml(reviewerLabelText()) + '</span></div>' +
+              ''];
             for (var a=0;a<alerts.length;a++){
               var AA = alerts[a];
               top.push('<div class="alertitem">');
@@ -1213,17 +1268,13 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
                 } else {
                   top.push('<button class="btn-open-risk" disabled title="לא נמצא עוגן בטקסט">פתח את הסיכון</button> ');
                 }
-                if ((it.st && String(it.st).trim() !== '') || (it.reviewer && String(it.reviewer).trim() !== '')){
-                  var meta = [];
-                  if (it.st && String(it.st).trim() !== '') meta.push('<span class="k">סטטוס:</span> ' + escapeHtml(it.st));
-                  if (it.reviewer && String(it.reviewer).trim() !== '') meta.push('<span class="k">מטפל:</span> ' + escapeHtml(it.reviewer));
-                  top.push('<span class="risk-top-meta">' + meta.join(' | ') + '</span> ');
-                }
               }
               top.push('</div></div>');
             }
             top.push('</div>');
             el.alertHost.innerHTML = top.join('');
+            // ensure reviewer labels in the alertbar reflect latest input
+            try{ syncReviewerBadges(); }catch(e){}
             el.alertHost.querySelectorAll('button[data-act="goto"]').forEach(function(btn){
               btn.addEventListener('click', function(){
                 var id = btn.getAttribute('data-target');
@@ -1242,6 +1293,9 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
           } else {
             el.alertHost.innerHTML = '';
           }
+
+          // reviewer badge (top of page) should always stay in sync
+          try{ syncReviewerBadges(); }catch(e){}
 
           resolve({ hiddenCount:hiddenCount, shownCount:shownCount, patientsCount: patientsShown.size });
           return;
@@ -1275,15 +1329,9 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
             var items = [];
             for (var nn=0; nn<notRev.length; nn++){
               var hh2 = notRev[nn];
-              var st2 = String(hh2.status || '').trim();
-              var stUi2 = '';
-              if (st2 === 'VIEWED' || st2 === 'REVIEWED') stUi2 = 'צפיתי';
-              if (st2 === 'CHECKED') stUi2 = 'מבטל סיכון';
               items.push({
                 text: (hh2.risk_reasons || hh2.short_risk || ('line ' + hh2.line_num)),
-                targetId: hh2.targetId || '',
-                st: stUi2,
-                reviewer: (hh2.reviewer != null ? String(hh2.reviewer).trim() : '')
+                targetId: hh2.targetId || ''
               });
             }
             alerts.push({
@@ -1514,15 +1562,6 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
       }
       clearInlineMsgNearRiskBox(boxN);
 
-      // Require therapist name (UI only in this step)
-      var tnN = boxN ? boxN.querySelector('input[data-act=\"therapist-name\"]') : null;
-      var therapistNameN = tnN ? String(tnN.value || '').trim() : '';
-      if (!therapistNameN){
-        showInlineMsgNearRiskBox(boxN, 'יש להזין שם מטפל');
-        try{ if (tnN) tnN.focus(); }catch(e){}
-        return;
-      }
-      setTherapistName(therapistNameN);
 
       updateRiskReviewNotes(talkIdN, lnN, noteTrimN).then(function(ok){
         if (!ok){
@@ -1558,37 +1597,11 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
         return;
       }
       clearInlineMsgNearRiskBox(box);
-      // Require therapist name (UI only in this step)
-      var tnX = box ? box.querySelector('input[data-act=\"therapist-name\"]') : null;
-      var therapistNameX = tnX ? String(tnX.value || '').trim() : '';
-      if (!therapistNameX){
-        showInlineMsgNearRiskBox(box, 'יש להזין שם מטפל');
-        try{ if (tnX) tnX.focus(); }catch(e){}
-        return;
-      }
-      setTherapistName(therapistNameX);
-
 
       // optimistic UI: mark selected button
       try{
         if (box){ box.querySelectorAll('button[data-act="risk-status"]').forEach(function(b){ b.classList.remove('active'); }); }
         btnRiskStatus.classList.add('active');
-      }catch(e){}
-
-      // Update labels immediately per requirement
-      try{
-        var btnSeen = box ? box.querySelector('button[data-act=\"risk-status\"][data-status=\"צפיתי\"]') : null;
-        var btnCancel = box ? box.querySelector('button[data-act=\"risk-status\"][data-status=\"מבטל סיכון\"]') : null;
-        var cur = box ? box.querySelector('.rc-current') : null;
-        if (newStatus === 'צפיתי'){
-          if (btnSeen) btnSeen.textContent = 'צפיתי';
-          if (btnCancel) btnCancel.textContent = 'ביטול סיכון';
-          if (cur) cur.innerHTML = 'סטטוס נוכחי: <span class=\"rc-status\">צפיתי</span>';
-        } else if (newStatus === 'מבטל סיכון'){
-          if (btnCancel) btnCancel.textContent = 'ביטלתי סיכון';
-          if (btnSeen) btnSeen.textContent = 'צפייה';
-          if (cur) cur.innerHTML = 'סטטוס נוכחי: <span class=\"rc-status\">מבטל סיכון</span>';
-        }
       }catch(e){}
 
       updateRiskReviewStatus(talkId, ln, newStatus, noteTxt).then(function(ok){
