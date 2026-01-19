@@ -123,6 +123,12 @@
     .risk-controls .rc-status{ display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #ddd; background:#fff; font-weight:900; font-size:12px; }
     .risk-controls .rc-inline-msg{ margin-top:8px; background:#fee2e2; border:1px solid #fecaca; color:#7f1d1d; padding:8px 10px; border-radius:10px; font-weight:700; }
 
+    .risk-controls .rc-current{ font-weight:900; margin-inline-start:8px; }
+    .risk-controls .rc-ther-row{ margin-top:8px; }
+    .risk-controls .rc-ther-label{ margin-inline-end:6px; }
+    .risk-controls .rc-ther-input{ min-width:220px; }
+
+
 
 </style>
 </head>
@@ -571,6 +577,23 @@
     });
   }
   var LS_STATUS_KEY = 'uvr_status_filter';
+  var LS_THERAPIST_NAME_KEY = 'uvr_therapist_name';
+
+  function getTherapistName(){
+    try{
+      if (!window.localStorage) return '';
+      return String(localStorage.getItem(LS_THERAPIST_NAME_KEY) || '').trim();
+    }catch(e){ return ''; }
+  }
+
+  function setTherapistName(v){
+    try{
+      if (!window.localStorage) return;
+      var s = String(v == null ? '' : v).trim();
+      if (!s) return;
+      localStorage.setItem(LS_THERAPIST_NAME_KEY, s);
+    }catch(e){}
+  }
   var STATUS_TITLE_MAP = {
     "":  "כל הסוגים",
     "1": "השיחות של המטפל הוירטואלי",
@@ -1051,6 +1074,14 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
       var btnSeenCls = (stUi === 'צפיתי') ? ' rc-btn rc-seen active' : ' rc-btn rc-seen';
       var btnCancelCls = (stUi === 'מבטל סיכון') ? ' rc-btn rc-cancel active' : ' rc-btn rc-cancel';
 
+      // UI labels requirement:
+      // - Before click: "צפייה" / "ביטול סיכון"
+      // - After click:  "צפיתי" / "ביטלתי סיכון"
+      var btnSeenLabel = (stUi === 'צפיתי') ? 'צפיתי' : 'צפייה';
+      var btnCancelLabel = (stUi === 'מבטל סיכון') ? 'ביטלתי סיכון' : 'ביטול סיכון';
+      var stCurrent = (stUi && stUi !== 'NEW') ? stUi : '';
+      var therapistPrefill = getTherapistName();
+
       var statusLine = '';
       if ((stUi && stUi !== 'NEW') || notes){
         var stShow = stUi && stUi !== 'NEW' ? stUi : '';
@@ -1064,8 +1095,15 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
         '<div class="risk-controls" data-riskctl="1" data-id="' + escapeHtml(String(talkId||'')) + '" data-ln="' + escapeHtml(String(lineNum)) + '">' +
           '<div class="rc-row">' +
             '<span class="rc-title">אישור מטפל:</span>' +
-            '<button class="' + btnSeenCls + '" data-act="risk-status" data-status="צפיתי">צפיתי</button>' +
-            '<button class="' + btnCancelCls + '" data-act="risk-status" data-status="מבטל סיכון">מבטל סיכון</button>' +
+            '<button class="' + btnSeenCls + '" data-act="risk-status" data-status="צפיתי">' + btnSeenLabel + '</button>' +
+            '<button class="' + btnCancelCls + '" data-act="risk-status" data-status="מבטל סיכון">' + btnCancelLabel + '</button>' +
+            '<span class="rc-current">' +
+              'סטטוס נוכחי: ' + (stCurrent ? ('<span class=\"rc-status\">' + escapeHtml(stCurrent) + '</span>') : '<span class=\"rc-status\">—</span>') +
+            '</span>' +
+          '</div>' +
+          '<div class="rc-row rc-ther-row">' +
+            '<label class="hint rc-ther-label">שם המטפל:</label>' +
+            '<input class="rc-ther-input" data-act="therapist-name" placeholder="הקלד שם מטפל..." value="' + escapeHtml(therapistPrefill || '') + '" />' +
           '</div>' +
           '<div style="margin-top:8px"><label class="hint">הערת מטפל:</label>' +
           '<textarea data-act="risk-note" placeholder="הקלד הערה...">' + escapeHtml(notes) + '</textarea>' +
@@ -1462,6 +1500,15 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
       }
       clearInlineMsgNearRiskBox(boxN);
 
+      // Require therapist name (UI only in this step)
+      var tnN = boxN ? boxN.querySelector('input[data-act=\"therapist-name\"]') : null;
+      var therapistNameN = tnN ? String(tnN.value || '').trim() : '';
+      if (!therapistNameN){
+        showInlineMsgNearRiskBox(boxN, 'יש להזין שם מטפל');
+        try{ if (tnN) tnN.focus(); }catch(e){}
+        return;
+      }
+      setTherapistName(therapistNameN);
 
       updateRiskReviewNotes(talkIdN, lnN, noteTrimN).then(function(ok){
         if (!ok){
@@ -1497,11 +1544,37 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
         return;
       }
       clearInlineMsgNearRiskBox(box);
+      // Require therapist name (UI only in this step)
+      var tnX = box ? box.querySelector('input[data-act=\"therapist-name\"]') : null;
+      var therapistNameX = tnX ? String(tnX.value || '').trim() : '';
+      if (!therapistNameX){
+        showInlineMsgNearRiskBox(box, 'יש להזין שם מטפל');
+        try{ if (tnX) tnX.focus(); }catch(e){}
+        return;
+      }
+      setTherapistName(therapistNameX);
+
 
       // optimistic UI: mark selected button
       try{
         if (box){ box.querySelectorAll('button[data-act="risk-status"]').forEach(function(b){ b.classList.remove('active'); }); }
         btnRiskStatus.classList.add('active');
+      }catch(e){}
+
+      // Update labels immediately per requirement
+      try{
+        var btnSeen = box ? box.querySelector('button[data-act=\"risk-status\"][data-status=\"צפיתי\"]') : null;
+        var btnCancel = box ? box.querySelector('button[data-act=\"risk-status\"][data-status=\"מבטל סיכון\"]') : null;
+        var cur = box ? box.querySelector('.rc-current') : null;
+        if (newStatus === 'צפיתי'){
+          if (btnSeen) btnSeen.textContent = 'צפיתי';
+          if (btnCancel) btnCancel.textContent = 'ביטול סיכון';
+          if (cur) cur.innerHTML = 'סטטוס נוכחי: <span class=\"rc-status\">צפיתי</span>';
+        } else if (newStatus === 'מבטל סיכון'){
+          if (btnCancel) btnCancel.textContent = 'ביטלתי סיכון';
+          if (btnSeen) btnSeen.textContent = 'צפייה';
+          if (cur) cur.innerHTML = 'סטטוס נוכחי: <span class=\"rc-status\">מבטל סיכון</span>';
+        }
       }catch(e){}
 
       updateRiskReviewStatus(talkId, ln, newStatus, noteTxt).then(function(ok){
