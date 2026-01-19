@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- VERSION: 2026-01-16 STAGE3-FIX11 (RISK_REVIEWS + BUTTON CLICK BLUE) -->
+<!-- VERSION: 2026-01-19 STAGE3-FIX12 (RISK_REVIEWS + BUTTON CLICK BLUE) -->
 <html lang="he" dir="rtl">
 <head>
   <script>
   
-  var APP_VERSION = 'STAGE3_FIX11';
+  var APP_VERSION = 'STAGE3_FIX12';
 (function () {
     // אותה הסיסמה כמו בקובץ launcher.html
     const APP_PASSWORD   = "yon1234";
@@ -86,6 +86,8 @@
     .pill{ display:inline-block; padding:6px 12px; border-radius:999px; background:#ffe4e6; color:#000; font-size:16px; margin:2px 6px 2px 0; font-weight:900; border:1px solid #fecaca }
     .btn-open-risk{ font-weight:900; background:#ffd1d6; border:2px solid #fca5a5; padding:6px 12px; border-radius:10px; }
     .btn-open-risk:hover{ filter:brightness(0.98) }
+    .risk-top-meta{ display:inline-block; margin-inline-start:8px; padding:2px 10px; border-radius:999px; border:1px solid #fecaca; background:#fff; font-weight:900; font-size:12px; }
+    .risk-top-meta .k{ color:var(--muted); font-weight:800; }
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     .speaker{white-space:pre-wrap}
     .speaker-patient{font-weight:700}
@@ -135,7 +137,7 @@
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 AA <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-19 STAGE3-FIX12 BB <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1211,6 +1213,12 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
                 } else {
                   top.push('<button class="btn-open-risk" disabled title="לא נמצא עוגן בטקסט">פתח את הסיכון</button> ');
                 }
+                if ((it.st && String(it.st).trim() !== '') || (it.reviewer && String(it.reviewer).trim() !== '')){
+                  var meta = [];
+                  if (it.st && String(it.st).trim() !== '') meta.push('<span class="k">סטטוס:</span> ' + escapeHtml(it.st));
+                  if (it.reviewer && String(it.reviewer).trim() !== '') meta.push('<span class="k">מטפל:</span> ' + escapeHtml(it.reviewer));
+                  top.push('<span class="risk-top-meta">' + meta.join(' | ') + '</span> ');
+                }
               }
               top.push('</div></div>');
             }
@@ -1267,9 +1275,15 @@ function updateRiskReviewNotes(talkId, lineNum, notes){
             var items = [];
             for (var nn=0; nn<notRev.length; nn++){
               var hh2 = notRev[nn];
+              var st2 = String(hh2.status || '').trim();
+              var stUi2 = '';
+              if (st2 === 'VIEWED' || st2 === 'REVIEWED') stUi2 = 'צפיתי';
+              if (st2 === 'CHECKED') stUi2 = 'מבטל סיכון';
               items.push({
                 text: (hh2.risk_reasons || hh2.short_risk || ('line ' + hh2.line_num)),
-                targetId: hh2.targetId || ''
+                targetId: hh2.targetId || '',
+                st: stUi2,
+                reviewer: (hh2.reviewer != null ? String(hh2.reviewer).trim() : '')
               });
             }
             alerts.push({
