@@ -108,6 +108,7 @@
     .btn-review-inline,.btn-unreview-inline{margin-inline-start:8px}
   
   .meta.why{ display:inline-block; margin:0 8px; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; }
+  .meta.reviewer{ display:inline-block; margin:0 8px; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; font-weight:800; background:#fff; }
 
     .risk-controls{ margin:6px 0 10px 0; padding:10px; border:1px solid var(--divider); border-radius:10px; background:#f9fafb; }
     .risk-controls .rc-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
@@ -143,7 +144,7 @@ function getReviewerName(){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 1AA <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 BBB <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1335,6 +1336,19 @@ function updateRiskReviewNotes(talkId, lineNum, notes, reviewerName){
             }
             var pillTxt = allCanceled ? 'גורם סיכון טופל' : 'נמצא גורם סיכון';
             headParts.push('<div class="meta"><span class="pill">' + escapeHtml(pillTxt) + '</span></div>');
+          }
+
+          // Show therapist name from risk_reviews.reviewer (first non-empty reviewer for this talk)
+          var reviewerHeader = '';
+          try{
+            for (var rv=0; rv<(hits ? hits.length : 0); rv++){
+              var rrn = (hits[rv] && hits[rv].reviewer != null) ? String(hits[rv].reviewer) : '';
+              rrn = rrn.trim();
+              if (rrn){ reviewerHeader = rrn; break; }
+            }
+          }catch(e){}
+          if (reviewerHeader){
+            headParts.push('<div class="meta reviewer">שם המטפל: ' + escapeHtml(reviewerHeader) + '</div>');
           }
 
           var canToggle = (isHidden || (!isHidden && notRev.length === 0));
