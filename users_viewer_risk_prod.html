@@ -83,7 +83,6 @@
     .alertbar h3{margin:0 0 6px 0;color:#7f1d1d;font-size:14px}
     .alertitem{margin:6px 0;padding:8px 10px;border-radius:8px;background:#fff;border:1px dashed #fecaca}
     .alertitem .when{color:#7f1d1d;font-weight:700}
-    .alertitem .reviewerline{margin-top:4px;color:#111827;font-weight:800} 
     .pill{ display:inline-block; padding:6px 12px; border-radius:999px; background:#ffe4e6; color:#000; font-size:16px; margin:2px 6px 2px 0; font-weight:900; border:1px solid #fecaca }
     .btn-open-risk{ font-weight:900; background:#ffd1d6; border:2px solid #fca5a5; padding:6px 12px; border-radius:10px; }
     .btn-open-risk:hover{ filter:brightness(0.98) }
@@ -134,16 +133,20 @@
 </style>
 
 <script>
-function getReviewerName(){
-  // Reviewer name is the therapist name typed in the per-RISK input.
-  // Fallback to saved localStorage name.
+function getReviewerName(ev){
+  // Prefer the nearest per-RISK therapist-name input
   try{
-    var inp = document.querySelector('input[data-act="therapist-name"]');
-    var v = inp && inp.value ? String(inp.value).trim() : '';
-    if (v) return v;
+    var t = ev && ev.target ? ev.target : null;
+    var box = t ? t.closest('.risk-controls') : null;
+    var inp = box ? box.querySelector('input[data-act="therapist-name"]') : null;
+    if (inp && inp.value && String(inp.value).trim()) return String(inp.value).trim();
   }catch(e){}
-  try{ return getTherapistName ? String(getTherapistName()||'').trim() : ''; }catch(e){}
-  return '';
+
+  // Fallback: last saved therapist name (optional)
+  try{
+    if (!window.localStorage) return '';
+    return String(localStorage.getItem('uvr_therapist_name') || '').trim();
+  }catch(e){ return ''; }
 }
 </script>
 </head>
@@ -151,7 +154,7 @@ function getReviewerName(){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 15-50<span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 17-40<span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -835,30 +838,18 @@ function showInlineMsg(talkElem, msg){
   // RISK: מגיע רק מ-risk_reviews (בלי Regex)
   // -------------------------------
   
-  function loadRiskRows(talk_id, time_key, phone){
-    if (!talk_id || !time_key || !phone) return Promise.resolve([]);
-    var tk = String(time_key || '');
-    var ph = String(phone || '');
-    var nph = normPhone(ph);
-
+  function loadRiskRows(talk_id){
+    if (!talk_id) return Promise.resolve([]);
     if (CACHE && CACHE.loaded){
-      var arr = CACHE.riskMap.get(String(talk_id)) || [];
-      // IMPORTANT: id is NOT guaranteed unique across time/phone in all environments.
-      // Filter by time_key + phone to avoid leaking risks between patients.
-      return Promise.resolve(arr.filter(function(rr){
-        return String(rr.time_key||'') === tk && normPhone(rr.phone) === nph;
-      }));
+      return Promise.resolve(CACHE.riskMap.get(String(talk_id)) || []);
     }
-
     return supa.from(REVIEWS_TABLE)
       // NOTE: production schema uses LINE_NUM (no page_num)
       .select('id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
       .eq('id', talk_id)
-      .eq('time_key', tk)
       .then(function(res){
         if (res.error) return [];
-        var data = res.data || [];
-        return data.filter(function(rr){ return normPhone(rr.phone) === nph; });
+        return res.data || [];
       });
   }
 
@@ -868,10 +859,8 @@ function showInlineMsg(talkElem, msg){
   // ------------------------------------------------------------
   function updateRiskReviewStatus(talkId, timeKey, phone, lineNum, newStatus, notes, reviewerName){
     var stUi = String(newStatus || '').trim();
-    if (!talkId || !timeKey || !phone || !lineNum || !stUi) return Promise.resolve(false);
+    if (!talkId || !lineNum || !stUi) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
-    var rn = String(reviewerName == null ? '' : reviewerName).trim();
-    if (!rn){ throw new Error('חובה להזין שם מטפל'); }
 
 
     // UI -> DB status mapping
@@ -883,6 +872,8 @@ function showInlineMsg(talkElem, msg){
     // Some environments might have the column spelled differently (STATUS vs STSTUS).
     // We try STATUS first, then STSTUS.
     function doUpdate(statusVal, colName){
+      var rn = String(reviewerName == null ? '' : reviewerName).trim();
+      if (!rn) { throw new Error('חובה להזין שם מטפל'); }
       var upd = { review_notes: txt, reviewed_at: nowISO(), reviewer: rn };
       upd[colName] = statusVal;
       return supa.from(REVIEWS_TABLE)
@@ -932,11 +923,11 @@ function showInlineMsg(talkElem, msg){
         for (var i=0;i<arr.length;i++){
           var rr = arr[i];
           var ln = (rr && rr.line_num);
-          if (String(rr.time_key||'') === String(timeKey||'') && String(rr.phone||'') === String(phone||'') && parseInt(ln,10) === parseInt(lineNum,10)){
+          if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.phone||'') === String(phone||'')){
             rr.status = stDb;
             rr.review_notes = txt;
             rr.reviewed_at = nowISO();
-            rr.reviewer = rn;
+            rr.reviewer = String(reviewerName || '').trim();
           }
         }
       }
@@ -945,7 +936,7 @@ function showInlineMsg(talkElem, msg){
   }
 
 function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerName){
-    if (!talkId || !timeKey || !phone || !lineNum) return Promise.resolve(false);
+    if (!talkId || !lineNum) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
     var rn = String(reviewerName == null ? '' : reviewerName).trim();
     if (!rn){ throw new Error('חובה להזין שם מטפל'); }
@@ -971,7 +962,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
           for (var i=0;i<arr.length;i++){
             var rr = arr[i];
             var ln = (rr && rr.line_num);
-            if (String(rr.time_key||'') === String(timeKey||'') && String(rr.phone||'') === String(phone||'') && parseInt(ln,10) === parseInt(lineNum,10)){
+            if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.phone||'') === String(phone||'')){
               rr.review_notes = txt;
               rr.reviewer = rn;
             }
@@ -1130,7 +1121,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       }
 
       return (
-        '<div class="risk-controls" data-riskctl="1" data-id="' + escapeHtml(String(talkId||'')) + '" data-time_key="' + escapeHtml(String((hit && hit.time_key) || '')) + '" data-phone="' + escapeHtml(String((hit && hit.phone) || '')) + '" data-ln="' + escapeHtml(String(lineNum)) + '">' +
+        '<div class="risk-controls" data-riskctl="1" data-id="' + escapeHtml(String(talkId||'')) + '" data-ln="' + escapeHtml(String(lineNum)) + '">' +
           '<div class="rc-row">' +
             '<span class="rc-title">אישור מטפל:</span>' +
             '<button class="' + btnSeenCls + '" data-act="risk-status" data-status="צפיתי">' + btnSeenLabel + '</button>' +
@@ -1243,18 +1234,20 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
               top.push('<div class="when">' + escapeHtml(AA.time) + '</div><div>');
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
-		        top.push('<span class="pill mono" title="' + escapeHtml(it.text) +'">'+ escapeHtml(it.text) +'</span> ');
-		        if (it.targetId){
-		          top.push('<button class="btn-open-risk" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">פתח את הסיכון</button> ');
-		        } else {
-		          top.push('<button class="btn-open-risk" disabled title="לא נמצא עוגן בטקסט">פתח את הסיכון</button> ');
-		        }
-		        // show reviewer ONCE per RISK, after the "פתח את הסיכון" button
-		        var rv = (it.reviewer != null) ? String(it.reviewer).trim() : '';
-		        var rvLow = rv ? rv.toLowerCase() : '';
-		        if (rv && rvLow !== 'viewer' && rvLow !== 'viewer_default'){
-		          top.push('<span class="meta" style="margin-inline-start:6px; font-weight:800">שם המטפל: ' + escapeHtml(rv) + '</span> ');
-		        }
+                top.push('<span class="pill mono" title="' + escapeHtml(it.text) +'">'+ escapeHtml(it.text) +'</span> ');
+
+                if (it.targetId){
+                  top.push('<button class="btn-open-risk" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">פתח את הסיכון</button> ');
+                } else {
+                  top.push('<button class="btn-open-risk" disabled title="לא נמצא עוגן בטקסט">פתח את הסיכון</button> ');
+                }
+
+                // Per-risk reviewer (unique per RISK). Display ONLY if it exists in DB.
+                var rv = (it.reviewer != null) ? String(it.reviewer).trim() : '';
+                var rvLow = rv ? rv.toLowerCase() : '';
+                if (rv && rvLow !== 'viewer' && rvLow !== 'viewer_default' && rvLow !== 'null'){
+                  top.push('<span class="meta" style="margin-inline-start:6px; font-weight:800">שם המטפל: ' + escapeHtml(rv) + '</span> ');
+                }
               }
               top.push('</div></div>');
             }
@@ -1293,7 +1286,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         // Anchor IDs are based on the original line numbers ("-1-", "-2-", ...)
         applyAnchorsToDialogLines(parsed.lines, talkDomId);
 
-        loadRiskRows(r.id, r.time_key, r.phone).then(function(riskRows){
+        loadRiskRows(r.id).then(function(riskRows){
           var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
           // open risks for alerts: status NEW or VIEWED (or REVIEWED) 
@@ -1530,12 +1523,19 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
     if (btnRiskNoteSave){
       var boxN = btnRiskNoteSave.closest('.risk-controls');
       var talkIdN = boxN ? boxN.getAttribute('data-id') : null;
-	    var timeKeyN = boxN ? boxN.getAttribute('data-time_key') : null;
-	    var phoneN = boxN ? boxN.getAttribute('data-phone') : null;
+      var timeKeyN = null;
+      var phoneN = null;
+      try{
+        var talkElN = btnRiskNoteSave.closest('.talk');
+        timeKeyN = talkElN ? (talkElN.getAttribute('data-time_key') || talkElN.getAttribute('data-time') || null) : null;
+        phoneN = talkElN ? (talkElN.getAttribute('data-phone') || null) : null;
+      }catch(e){}
       var lnN = boxN ? parseInt(boxN.getAttribute('data-ln')||'0',10) : 0;
       var taN = boxN ? boxN.querySelector('textarea[data-act="risk-note"]') : null;
       var txtN = taN ? (taN.value || '') : '';
       var talkElemN = btnRiskNoteSave.closest('.talk');
+      var timeKeyN = talkElemN ? (talkElemN.getAttribute('data-time_key') || talkElemN.getAttribute('data-time') || '') : '';
+      var phoneN = talkElemN ? (talkElemN.getAttribute('data-phone') || '') : '';
 
       // Require explanation note (min 10 chars) before saving notes
       var noteTrimN = String(txtN || '').trim();
@@ -1557,7 +1557,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       }
       setTherapistName(therapistNameN);
 
-	    updateRiskReviewNotes(talkIdN, timeKeyN, phoneN, lnN, noteTrimN, therapistNameN).then(function(ok){
+      updateRiskReviewNotes(talkIdN, timeKeyN, phoneN, lnN, noteTrimN, therapistNameN).then(function(ok){
         if (!ok){
           showInlineMsgNearRiskBox(boxN, 'לא עודכנה הערה (לא נמצאה שורה מתאימה).');
           return;
@@ -1577,11 +1577,18 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
     if (btnRiskStatus){
       var box = btnRiskStatus.closest('.risk-controls');
       var talkId = box ? box.getAttribute('data-id') : null;
-	    var timeKey = box ? box.getAttribute('data-time_key') : null;
-	    var phone = box ? box.getAttribute('data-phone') : null;
+      var timeKeyX = null;
+      var phoneX = null;
+      try{
+        var talkElX = btnRiskStatus.closest('.talk');
+        timeKeyX = talkElX ? (talkElX.getAttribute('data-time_key') || talkElX.getAttribute('data-time') || null) : null;
+        phoneX = talkElX ? (talkElX.getAttribute('data-phone') || null) : null;
+      }catch(e){}
       var ln = box ? parseInt(box.getAttribute('data-ln')||'0',10) : 0;
       var newStatus = btnRiskStatus.getAttribute('data-status') || '';
       var talkElemX = btnRiskStatus.closest('.talk');
+      var timeKeyX = talkElemX ? (talkElemX.getAttribute('data-time_key') || talkElemX.getAttribute('data-time') || '') : '';
+      var phoneX = talkElemX ? (talkElemX.getAttribute('data-phone') || '') : '';
 
       // Require explanation note (min 10 chars) for both actions
       var taReq = box ? box.querySelector('textarea[data-act="risk-note"]') : null;
@@ -1626,7 +1633,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         }
       }catch(e){}
 
-	    updateRiskReviewStatus(talkId, timeKey, phone, ln, newStatus, noteTxt, therapistNameX).then(function(ok){
+      updateRiskReviewStatus(talkId, timeKeyX, phoneX, ln, newStatus, noteTxt, therapistNameX).then(function(ok){
         if (!ok){
           showInlineMsgNearRiskBox(box, 'לא עודכן סטטוס (לא נמצאה שורה מתאימה).');
           try{ btnRiskStatus.classList.remove('active'); }catch(e){}
