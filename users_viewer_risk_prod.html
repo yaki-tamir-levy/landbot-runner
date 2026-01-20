@@ -135,8 +135,15 @@
 
 <script>
 function getReviewerName(){
-  var inp = document.querySelector('input[data-act="reviewer-name"]');
-  return inp && inp.value ? inp.value.trim() : '';
+  // Reviewer name is the therapist name typed in the per-RISK input.
+  // Fallback to saved localStorage name.
+  try{
+    var inp = document.querySelector('input[data-act="therapist-name"]');
+    var v = inp && inp.value ? String(inp.value).trim() : '';
+    if (v) return v;
+  }catch(e){}
+  try{ return getTherapistName ? String(getTherapistName()||'').trim() : ''; }catch(e){}
+  return '';
 }
 </script>
 </head>
@@ -144,7 +151,7 @@ function getReviewerName(){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 BB1 <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 AA2 <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -864,7 +871,7 @@ function showInlineMsg(talkElem, msg){
     // Some environments might have the column spelled differently (STATUS vs STSTUS).
     // We try STATUS first, then STSTUS.
     function doUpdate(statusVal, colName){
-      var upd = { review_notes: txt, reviewed_at: nowISO(),  };
+      var upd = { review_notes: txt, reviewed_at: nowISO(), reviewer: reviewerName };
       upd[colName] = statusVal;
       return supa.from(REVIEWS_TABLE)
         .update(upd)
@@ -914,8 +921,9 @@ function showInlineMsg(talkElem, msg){
           if (parseInt(ln,10) === parseInt(lineNum,10)){
             rr.status = stDb;
             rr.review_notes = txt;
+              rr.reviewer = reviewerName;
             rr.reviewed_at = nowISO();
-            rr.reviewer = 'viewer';
+            rr.reviewer = reviewerName;
           }
         }
       }
@@ -950,6 +958,7 @@ function updateRiskReviewNotes(talkId, lineNum, notes, reviewerName){
             var ln = (rr && rr.line_num);
             if (parseInt(ln,10) === parseInt(lineNum,10)){
               rr.review_notes = txt;
+              rr.reviewer = reviewerName;
               rr.reviewer = rn;
             }
           }
@@ -1223,6 +1232,11 @@ function updateRiskReviewNotes(talkId, lineNum, notes, reviewerName){
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
                 top.push('<span class="pill mono" title="' + escapeHtml(it.text) +'">'+ escapeHtml(it.text) +'</span> ');
+                // Per-risk reviewer (unique per RISK)
+                var rv = (it.reviewer != null) ? String(it.reviewer).trim() : '';
+                if (rv && rv.toLowerCase() !== 'viewer'){
+                  top.push('<span class="meta" style="margin-inline-start:6px; font-weight:800">שם המטפל: ' + escapeHtml(rv) + '</span> ');
+                }
                 if (it.targetId){
                   top.push('<button class="btn-open-risk" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">פתח את הסיכון</button> ');
                 } else {
@@ -1286,7 +1300,8 @@ function updateRiskReviewNotes(talkId, lineNum, notes, reviewerName){
               var hh2 = notRev[nn];
               items.push({
                 text: (hh2.risk_reasons || hh2.short_risk || ('line ' + hh2.line_num)),
-                targetId: hh2.targetId || ''
+                targetId: hh2.targetId || '',
+                reviewer: (hh2.reviewer != null ? String(hh2.reviewer).trim() : '')
               });
             }
             // pick first non-empty reviewer from open risks (ignore placeholders)
