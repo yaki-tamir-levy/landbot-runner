@@ -83,6 +83,7 @@
     .alertbar h3{margin:0 0 6px 0;color:#7f1d1d;font-size:14px}
     .alertitem{margin:6px 0;padding:8px 10px;border-radius:8px;background:#fff;border:1px dashed #fecaca}
     .alertitem .when{color:#7f1d1d;font-weight:700}
+    .alertitem .reviewerline{margin-top:4px;color:#111827;font-weight:800} 
     .pill{ display:inline-block; padding:6px 12px; border-radius:999px; background:#ffe4e6; color:#000; font-size:16px; margin:2px 6px 2px 0; font-weight:900; border:1px solid #fecaca }
     .btn-open-risk{ font-weight:900; background:#ffd1d6; border:2px solid #fca5a5; padding:6px 12px; border-radius:10px; }
     .btn-open-risk:hover{ filter:brightness(0.98) }
@@ -108,7 +109,6 @@
     .btn-review-inline,.btn-unreview-inline{margin-inline-start:8px}
   
   .meta.why{ display:inline-block; margin:0 8px; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; }
-  .meta.reviewer{ display:inline-block; margin:0 8px; padding:2px 8px; border:1px solid #ddd; border-radius:999px; font-size:12px; font-weight:800; background:#fff; }
 
     .risk-controls{ margin:6px 0 10px 0; padding:10px; border:1px solid var(--divider); border-radius:10px; background:#f9fafb; }
     .risk-controls .rc-row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
@@ -144,7 +144,7 @@ function getReviewerName(){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 BBB <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 BB1 <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1217,7 +1217,9 @@ function updateRiskReviewNotes(talkId, lineNum, notes, reviewerName){
               var AA = alerts[a];
               top.push('<div class="alertitem">');
               top.push('<div><strong>' + escapeHtml(AA.name) + '</strong> · ' + escapeHtml(AA.phone) + '</div>');
-              top.push('<div class="when">' + escapeHtml(AA.time) + '</div><div>');
+              top.push('<div class="when">' + escapeHtml(AA.time) + '</div>');
+              if (AA.reviewer){ top.push('<div class="reviewerline">שם המטפל: ' + escapeHtml(AA.reviewer) + '</div>'); }
+              top.push('<div>');
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
                 top.push('<span class="pill mono" title="' + escapeHtml(it.text) +'">'+ escapeHtml(it.text) +'</span> ');
@@ -1287,10 +1289,23 @@ function updateRiskReviewNotes(talkId, lineNum, notes, reviewerName){
                 targetId: hh2.targetId || ''
               });
             }
+            // pick first non-empty reviewer from open risks (ignore placeholders)
+            var reviewerTop = '';
+            try{
+              for (var rci=0; rci<notRev.length; rci++){
+                var rv = (notRev[rci] && notRev[rci].reviewer != null) ? String(notRev[rci].reviewer).trim() : '';
+                var rvLow = rv.toLowerCase();
+                if (!rv) continue;
+                if (rvLow === 'viewer' || rvLow === 'viewer_default') continue;
+                reviewerTop = rv;
+                break;
+              }
+            }catch(e){}
             alerts.push({
               name: r.name || 'מטופל/ת',
               phone: r.phone || '',
               time: timeKeyToHuman(r.time_key),
+              reviewer: reviewerTop,
               items: items
             });
           }
@@ -1336,19 +1351,6 @@ function updateRiskReviewNotes(talkId, lineNum, notes, reviewerName){
             }
             var pillTxt = allCanceled ? 'גורם סיכון טופל' : 'נמצא גורם סיכון';
             headParts.push('<div class="meta"><span class="pill">' + escapeHtml(pillTxt) + '</span></div>');
-          }
-
-          // Show therapist name from risk_reviews.reviewer (first non-empty reviewer for this talk)
-          var reviewerHeader = '';
-          try{
-            for (var rv=0; rv<(hits ? hits.length : 0); rv++){
-              var rrn = (hits[rv] && hits[rv].reviewer != null) ? String(hits[rv].reviewer) : '';
-              rrn = rrn.trim();
-              if (rrn){ reviewerHeader = rrn; break; }
-            }
-          }catch(e){}
-          if (reviewerHeader){
-            headParts.push('<div class="meta reviewer">שם המטפל: ' + escapeHtml(reviewerHeader) + '</div>');
           }
 
           var canToggle = (isHidden || (!isHidden && notRev.length === 0));
