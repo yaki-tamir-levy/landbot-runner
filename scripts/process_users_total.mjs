@@ -22,6 +22,9 @@ const MAX_ITEMS = parseInt(process.env.MAX_ITEMS ?? "20", 10);
 // If set: process a single users_total row by ID (and only if processed in NEW/IN_PROGRESS)
 const ONLY_ID = process.env.ONLY_ID ?? null;
 
+// If set to "1": run ONLY the phrase scan against users_total.summarized_linked_talk_num (no OpenAI, no users_total updates)
+const PHRASE_SCAN_ONLY = String(process.env.PHRASE_SCAN_ONLY ?? "").trim() === "1";
+
 const USERS_TOTAL_TABLE = "users_total";
 const USERS_TZVIRA_TABLE = "users_tzvira";
 const RISK_REVIEWS_TABLE = "risk_reviews";
@@ -254,6 +257,34 @@ async function supaGetEligibleRows(limit) {
   return await res.json();
 }
 
+
+async function supaGetRowById(id) {
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
+  url.searchParams.set(
+    "select",
+    [
+      "id",
+      "phone",
+      "name",
+      "processed",
+      "last_summary_at",
+      "summarized_linked_talk_num",
+    ].join(",")
+  );
+  url.searchParams.set("id", `eq.${id}`);
+  url.searchParams.set("limit", "1");
+
+  const res = await fetch(url, { headers: supaHeaders() });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Supabase GET users_total by id failed: ${res.status} ${text}`);
+
+  let rows = [];
+  try { rows = JSON.parse(text); } catch { rows = []; }
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return rows[0];
+}
+
+
 async function supaPatch(phone, patchObj, expectedProcessedStates = null) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
   url.searchParams.set("phone", `eq.${phone}`);
@@ -364,10 +395,12 @@ async function supaRiskReviewExists({ id, time_key, phone, line_num }) {
 }
 
 
-function isPatientLineText(lineText) {
-  // Patient lines are marked as Q: (English) or שאלה: (Hebrew), allowing leading spaces.
-  const t = String(lineText ?? "").trimStart().toLowerCase();
-  return t.startsWith("q:") || t.startsWith("שאלה:");
+function isPatientNumberedLineRaw(rawLine) {
+  // rawLine example: "-7- Q: ..." or "-7- שאלה: ..."
+  const s = String(rawLine ?? "").trimStart().toLowerCase();
+  const m = s.match(/^-\d+-\s*(.*)$/);
+  const body = (m ? m[1] : s).trimStart();
+  return body.startsWith("q:") || body.startsWith("שאלה:");
 }
 
 
@@ -382,9 +415,6 @@ async function phraseScanAndInsertRisks({ id, time_key, phone, name, numberedTex
   for (const ln of lines) {
     const lineNum = ln.line_no;
     const lineText = ln.text ?? "";
-
-    // Scan patterns ONLY in patient lines (Q:/שאלה:)
-    if (!isPatientLineText(lineText)) continue;
 
     // Find first matching pattern for this line
     let matchedPattern = null;
@@ -540,23 +570,15 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     }
   }
 
-  
-// Phrase Scan (risk_phrases) - scan ONLY users_total.summarized_linked_talk (per requirement)
-const phraseSource = row.summarized_linked_talk ?? "";
-let phraseInserted = 0;
-if (String(phraseSource).trim()) {
-  phraseInserted = await phraseScanAndInsertRisks({
+  // Phrase Scan (risk_phrases) - INSERT ONLY if no existing risk_reviews row for the same PK
+  const phraseInserted = await phraseScanAndInsertRisks({
     id,
     time_key: lastSummaryAt,
     phone,
     name,
-    numberedText: phraseSource,
+    numberedText,
     activeRiskPhrases,
   });
-} else {
-  console.log(`[INFO] phone=${phone} phrase_scan skipped (summarized_linked_talk is empty)`);
-}
-
 
   if (phraseInserted > 0) {
     console.log(`[INFO] phone=${phone} phrase_scan inserted risk_reviews rows=${phraseInserted}`);
@@ -579,7 +601,52 @@ async function markError(phone, err) {
   }
 }
 
+
+async function runPhraseScanOnly() {
+  if (!ONLY_ID) throw new Error("PHRASE_SCAN_ONLY=1 requires ONLY_ID to be set (users_total.id)");
+  console.log(`PHRASE_SCAN_ONLY=1 (ONLY_ID=${ONLY_ID})`);
+
+  const activeRiskPhrases = await supaFetchActiveRiskPhrases();
+  console.log(`[INFO] Loaded active risk_phrases patterns=${activeRiskPhrases.length}`);
+
+  const row = await supaGetRowById(ONLY_ID);
+  if (!row) throw new Error(`users_total row not found for id=${ONLY_ID}`);
+
+  const id = row.id;
+  const phone = row.phone;
+  const name = row.name ?? null;
+  const time_key = row.last_summary_at;
+
+  if (!time_key || !String(time_key).trim()) {
+    throw new Error("users_total.last_summary_at is empty; cannot use as time_key for risk_reviews PK in PHRASE_SCAN_ONLY mode");
+  }
+
+  const numberedText = row.summarized_linked_talk_num ?? "";
+  if (!String(numberedText).trim()) {
+    console.log(`[INFO] phone=${phone} summarized_linked_talk_num is empty -> nothing to scan.`);
+    return;
+  }
+
+  const phraseInserted = await phraseScanAndInsertRisks({
+    id,
+    time_key,
+    phone,
+    name,
+    numberedText,
+    activeRiskPhrases,
+  });
+
+  console.log(`[DONE] PHRASE_SCAN_ONLY phone=${phone} inserted=${phraseInserted} time_key=${time_key}`);
+}
+
+
 async function main() {
+
+if (PHRASE_SCAN_ONLY) {
+  await runPhraseScanOnly();
+  return;
+}
+
   const mode = ONLY_ID ? `ONLY_ID=${ONLY_ID}` : `limit=${MAX_ITEMS}`;
   console.log(`Scanning ${USERS_TOTAL_TABLE} for processed in (NEW, IN_PROGRESS) (${mode})...`);
 
