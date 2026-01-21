@@ -149,7 +149,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 14-40 <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 15-10 <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -442,7 +442,9 @@ function getReviewerName(ev){
     flagsMap: new Map(),   // key(time,phone) -> {is_hidden}
     infoMap:  new Map(),   // phone -> {status}
     riskMap:  new Map(),   // key(time,phone) -> [riskRows]
-    riskKeySet: new Set()  // key(time,phone)
+    riskKeySet: new Set(), // ids that have any risk
+    riskForceKeySet: new Set() // ids that have risk in status NEW/REVIEWED (VIEWED legacy)
+  
   };
 
   function fetchAllPaged(tableName, selectCols, orderCol){
@@ -470,11 +472,18 @@ function getReviewerName(ev){
   
   function buildRiskCache(allRisk){
     CACHE.riskMap = new Map();   // id -> [riskRows]
-    CACHE.riskKeySet = new Set();// ids that have risk
+    CACHE.riskKeySet = new Set();    // ids that have any risk
+    CACHE.riskForceKeySet = new Set(); // ids that have risk in status NEW/REVIEWED (VIEWED legacy)
     (allRisk || []).forEach(function(rr){
       var tid = rr && rr.id ? String(rr.id) : '';
       if (!tid) return;
       CACHE.riskKeySet.add(tid);
+      // _forceRisk should be true only if there is at least one unhandled/needs-attention risk
+      // NEW or REVIEWED. VIEWED is treated as REVIEWED for backward compatibility.
+      try{
+        var st = String(rr.status || 'NEW').trim().toUpperCase();
+        if (st === 'NEW' || st === 'REVIEWED' || st === 'VIEWED') CACHE.riskForceKeySet.add(tid);
+      }catch(e){}
       var arr = CACHE.riskMap.get(tid);
       if (!arr){ arr = []; CACHE.riskMap.set(tid, arr); }
       arr.push(rr);
@@ -484,8 +493,8 @@ function getReviewerName(ev){
   function markRowsWithRisk(){
     (CACHE.allRows || []).forEach(function(r){
       r._hasRisk   = CACHE.riskKeySet.has(String(r.id||''));
-      // _forceRisk remains for overriding client-side filters (phone/name/date).
-      r._forceRisk = !!r._hasRisk;
+      // _forceRisk: override client-side filters only when risk status is NEW/REVIEWED (VIEWED legacy).
+      r._forceRisk = CACHE.riskForceKeySet.has(String(r.id||''));
     });
   }
 
@@ -499,6 +508,7 @@ function getReviewerName(ev){
     CACHE.infoMap = new Map();
     CACHE.riskMap = new Map();
     CACHE.riskKeySet = new Set();
+    CACHE.riskForceKeySet = new Set();
 
     return fetchAllPaged(TABLE, 'id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk', 'time_key')
       .then(function(allRows){
@@ -1186,14 +1196,29 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         var kVal = parseInt(talkKind, 10);
         if (!isFinite(kVal)) return true;
 
-        var allowed = (sVal === kVal);
+        // Status filter logic:
+        // 1 ("מטפל וירטואלי"): allow status 1 or 3
+        // 2 ("מדריך קורס"): allow status 2 or 3
+        // 3 ("גם וגם"): allow status 3 only
+        var allowed = false;
+        if (kVal === 1){
+          allowed = (sVal === 1 || sVal === 3);
+        } else if (kVal === 2){
+          allowed = (sVal === 2 || sVal === 3);
+        } else if (kVal === 3){
+          allowed = (sVal === 3);
+        } else {
+          allowed = true;
+        }
+
         if (allowed) return true;
 
-        // If not allowed by status, still allow when talk has risk -> mark as override
-        if (row && row._hasRisk){
+        // If not allowed by status, still allow when talk has *force* risk (NEW/REVIEWED) -> mark as override
+        if (row && row._forceRisk){
           row._riskOverrideKind = true;
           return true;
         }
+
         return false;
       }
 
