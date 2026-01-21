@@ -134,19 +134,14 @@
 
 <script>
 function getReviewerName(ev){
-  // Prefer the nearest per-RISK therapist-name input
+  // Prefer the nearest per-RISK therapist-name input (authoritative per risk)
   try{
     var t = ev && ev.target ? ev.target : null;
     var box = t ? t.closest('.risk-controls') : null;
     var inp = box ? box.querySelector('input[data-act="therapist-name"]') : null;
     if (inp && inp.value && String(inp.value).trim()) return String(inp.value).trim();
   }catch(e){}
-
-  // Fallback: last saved therapist name (optional)
-  try{
-    if (!window.localStorage) return '';
-    return String(localStorage.getItem('uvr_therapist_name') || '').trim();
-  }catch(e){ return ''; }
+  return '';
 }
 </script>
 </head>
@@ -154,7 +149,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 17-40<span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 14-40 <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -596,23 +591,6 @@ function getReviewerName(ev){
     });
   }
   var LS_STATUS_KEY = 'uvr_status_filter';
-  var LS_THERAPIST_NAME_KEY = 'uvr_therapist_name';
-
-  function getTherapistName(){
-    try{
-      if (!window.localStorage) return '';
-      return String(localStorage.getItem(LS_THERAPIST_NAME_KEY) || '').trim();
-    }catch(e){ return ''; }
-  }
-
-  function setTherapistName(v){
-    try{
-      if (!window.localStorage) return;
-      var s = String(v == null ? '' : v).trim();
-      if (!s) return;
-      localStorage.setItem(LS_THERAPIST_NAME_KEY, s);
-    }catch(e){}
-  }
   var STATUS_TITLE_MAP = {
     "":  "כל הסוגים",
     "1": "השיחות של המטפל הוירטואלי",
@@ -1109,7 +1087,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       var btnSeenLabel = (stUi === 'צפיתי') ? 'צפיתי' : 'צפייה';
       var btnCancelLabel = (stUi === 'מבטל סיכון') ? 'ביטלתי סיכון' : 'ביטול סיכון';
       var stCurrent = (stUi && stUi !== 'NEW') ? stUi : '';
-      var therapistPrefill = getTherapistName();
+      var therapistPrefill = (hit && hit.reviewer != null) ? String(hit.reviewer).trim() : '';
 
       var statusLine = '';
       if ((stUi && stUi !== 'NEW') || notes){
@@ -1555,8 +1533,6 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         try{ if (tnN) tnN.focus(); }catch(e){}
         return;
       }
-      setTherapistName(therapistNameN);
-
       updateRiskReviewNotes(talkIdN, timeKeyN, phoneN, lnN, noteTrimN, therapistNameN).then(function(ok){
         if (!ok){
           showInlineMsgNearRiskBox(boxN, 'לא עודכנה הערה (לא נמצאה שורה מתאימה).');
@@ -1608,9 +1584,6 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         try{ if (tnX) tnX.focus(); }catch(e){}
         return;
       }
-      setTherapistName(therapistNameX);
-
-
       // optimistic UI: mark selected button
       try{
         if (box){ box.querySelectorAll('button[data-act="risk-status"]').forEach(function(b){ b.classList.remove('active'); }); }
