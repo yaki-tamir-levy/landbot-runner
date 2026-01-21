@@ -416,6 +416,12 @@ async function phraseScanAndInsertRisks({ id, time_key, phone, name, numberedTex
     const lineNum = ln.line_no;
     const lineText = ln.text ?? "";
 
+
+// Scan patterns ONLY in patient lines (Q:/שאלה:)
+const _t = String(lineText ?? "").trimStart().toLowerCase();
+if (!(_t.startsWith("q:") || _t.startsWith("שאלה:"))) continue;
+
+
     // Find first matching pattern for this line
     let matchedPattern = null;
     for (const pattern of activeRiskPhrases) {
