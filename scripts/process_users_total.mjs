@@ -363,6 +363,14 @@ async function supaRiskReviewExists({ id, time_key, phone, line_num }) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
+
+function isPatientLineText(lineText) {
+  // Patient lines are marked as Q: (English) or שאלה: (Hebrew), allowing leading spaces.
+  const t = String(lineText ?? "").trimStart().toLowerCase();
+  return t.startsWith("q:") || t.startsWith("שאלה:");
+}
+
+
 async function phraseScanAndInsertRisks({ id, time_key, phone, name, numberedText, activeRiskPhrases }) {
   if (!Array.isArray(activeRiskPhrases) || activeRiskPhrases.length === 0) return 0;
 
@@ -374,6 +382,9 @@ async function phraseScanAndInsertRisks({ id, time_key, phone, name, numberedTex
   for (const ln of lines) {
     const lineNum = ln.line_no;
     const lineText = ln.text ?? "";
+
+    // Scan patterns ONLY in patient lines (Q:/שאלה:)
+    if (!isPatientLineText(lineText)) continue;
 
     // Find first matching pattern for this line
     let matchedPattern = null;
@@ -529,15 +540,23 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     }
   }
 
-  // Phrase Scan (risk_phrases) - INSERT ONLY if no existing risk_reviews row for the same PK
-  const phraseInserted = await phraseScanAndInsertRisks({
+  
+// Phrase Scan (risk_phrases) - scan ONLY users_total.summarized_linked_talk (per requirement)
+const phraseSource = row.summarized_linked_talk ?? "";
+let phraseInserted = 0;
+if (String(phraseSource).trim()) {
+  phraseInserted = await phraseScanAndInsertRisks({
     id,
     time_key: lastSummaryAt,
     phone,
     name,
-    numberedText,
+    numberedText: phraseSource,
     activeRiskPhrases,
   });
+} else {
+  console.log(`[INFO] phone=${phone} phrase_scan skipped (summarized_linked_talk is empty)`);
+}
+
 
   if (phraseInserted > 0) {
     console.log(`[INFO] phone=${phone} phrase_scan inserted risk_reviews rows=${phraseInserted}`);
