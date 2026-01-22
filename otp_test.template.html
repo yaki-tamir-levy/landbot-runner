@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OTP ניסוי – Supabase</title>
+  <style>
+    :root{--bg:#f6f7fb;--card:#fff;--ink:#111827;--muted:#6b7280;--line:#e5e7eb;--ok:#065f46;--bad:#7f1d1d}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans Hebrew",sans-serif;color:var(--ink);display:flex;align-items:center;justify-content:center;padding:18px}
+    .card{width:min(720px,100%);background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 28px rgba(0,0,0,.06);padding:18px}
+    h1{margin:0 0 6px 0;font-size:18px}
+    p{margin:6px 0;color:var(--muted);line-height:1.4}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+    @media (max-width:640px){.grid{grid-template-columns:1fr}}
+    label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+    input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:12px;font-size:14px;outline:none}
+    input:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(147,197,253,.35)}
+    .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    button{cursor:pointer;border:1px solid var(--line);background:#111827;color:#fff;border-radius:12px;padding:10px 14px;font-weight:600}
+    button.secondary{background:#fff;color:#111827}
+    button:disabled{opacity:.55;cursor:not-allowed}
+    .msg{margin-top:12px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);background:#fafafa}
+    .msg.ok{border-color:rgba(6,95,70,.25);background:rgba(6,95,70,.06);color:var(--ok)}
+    .msg.bad{border-color:rgba(127,29,29,.25);background:rgba(127,29,29,.06);color:var(--bad)}
+    .small{font-size:12px;color:var(--muted)}
+    .sep{height:1px;background:var(--line);margin:14px 0}
+    code{background:#f3f4f6;border:1px solid var(--line);padding:2px 6px;border-radius:8px}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>בדיקת התחברות עם קוד במייל (OTP) – Supabase</h1>
+    <p>זה דף בדיקה מינימלי: “שלח קוד” → מקבלים במייל → “אמת קוד” → התחברות.</p>
+    <p class="small">שים לב: Supabase לרוב שולח קוד בן 6 ספרות (לא תמיד 5). כאן נדרש 4–8 ספרות כדי לא להיתקע בפורמט.</p>
+
+    <div class="grid">
+      <div>
+        <label for="phone">טלפון (לניסוי)</label>
+        <input id="phone" inputmode="tel" autocomplete="tel" value="0544973698" />
+      </div>
+      <div>
+        <label for="email">מייל (לניסוי)</label>
+        <input id="email" inputmode="email" autocomplete="email" value="yonatan10.bot@gmail.com" />
+      </div>
+    </div>
+
+    <div class="row">
+      <button id="btnSend">שלח קוד למייל</button>
+      <button id="btnClear" class="secondary" type="button">נקה הודעות</button>
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="grid">
+      <div>
+        <label for="otp">קוד שהתקבל במייל</label>
+        <input id="otp" inputmode="numeric" autocomplete="one-time-code" placeholder="לדוגמה: 123456" />
+      </div>
+      <div style="display:flex;align-items:end;gap:10px">
+        <button id="btnVerify" type="button">אמת קוד</button>
+        <button id="btnSignOut" class="secondary" type="button">התנתק</button>
+      </div>
+    </div>
+
+    <div id="msg" class="msg" style="display:none"></div>
+
+    <div class="sep"></div>
+    <p class="small">
+      הדף משתמש בערכים שהוזרקו ב-build: <code>SUPABASE_URL</code> ו-<code>SUPABASE_ANON_KEY</code>.
+      אם לא מוגדר Custom SMTP + תבנית OTP ב-Supabase, ייתכן שתקבל Magic Link במקום קוד.
+    </p>
+  </div>
+
+  <!-- Supabase JS (v2) via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // Injected by GitHub Actions from secrets:
+    const SUPABASE_URL = "__SUPABASE_URL__";
+    const SUPABASE_ANON_KEY = "__SUPABASE_ANON_KEY__";
+
+    const { createClient } = window.supabase;
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const elPhone = document.getElementById("phone");
+    const elEmail = document.getElementById("email");
+    const elOtp = document.getElementById("otp");
+
+    const btnSend = document.getElementById("btnSend");
+    const btnVerify = document.getElementById("btnVerify");
+    const btnClear = document.getElementById("btnClear");
+    const btnSignOut = document.getElementById("btnSignOut");
+
+    const elMsg = document.getElementById("msg");
+
+    function showMsg(text, kind) {
+      elMsg.style.display = "block";
+      elMsg.className = "msg" + (kind ? (" " + kind) : "");
+      elMsg.textContent = text;
+    }
+    function clearMsg() {
+      elMsg.style.display = "none";
+      elMsg.textContent = "";
+      elMsg.className = "msg";
+    }
+
+    function normalizeEmail(v) {
+      return (v || "").trim().toLowerCase();
+    }
+    function isOtpValid(v) {
+      const s = (v || "").trim();
+      return /^[0-9]{4,8}$/.test(s);
+    }
+
+    btnClear.addEventListener("click", clearMsg);
+
+    btnSend.addEventListener("click", async () => {
+      clearMsg();
+      const phone = (elPhone.value || "").trim();
+      const email = normalizeEmail(elEmail.value);
+
+      if (!phone) return showMsg("נא להזין טלפון (לניסוי).", "bad");
+      if (!email || !email.includes("@")) return showMsg("נא להזין מייל תקין.", "bad");
+
+      btnSend.disabled = true;
+      try {
+        // shouldCreateUser:false => לא ייווצר משתמש חדש אם המייל לא קיים במערכת
+        const { error } = await supabase.auth.signInWithOtp({
+          email,
+          options: { shouldCreateUser: false }
+        });
+
+        if (error) throw error;
+
+        showMsg("נשלח קוד למייל. בדוק בתיבת הדואר והזן את הקוד כאן.", "ok");
+      } catch (e) {
+        showMsg("שגיאה בשליחת קוד: " + (e?.message || String(e)), "bad");
+      } finally {
+        btnSend.disabled = false;
+      }
+    });
+
+    btnVerify.addEventListener("click", async () => {
+      clearMsg();
+      const email = normalizeEmail(elEmail.value);
+      const token = (elOtp.value || "").trim();
+
+      if (!email || !email.includes("@")) return showMsg("נא להזין מייל תקין.", "bad");
+      if (!isOtpValid(token)) return showMsg("נא להזין קוד ספרותי באורך 4–8 ספרות.", "bad");
+
+      btnVerify.disabled = true;
+      try {
+        // type: 'email' => אימות OTP שנשלח למייל
+        const { data, error } = await supabase.auth.verifyOtp({
+          email,
+          token,
+          type: "email"
+        });
+
+        if (error) throw error;
+
+        const userEmail = data?.user?.email || email;
+        showMsg("התחברת בהצלחה כ־" + userEmail, "ok");
+      } catch (e) {
+        showMsg("אימות נכשל: " + (e?.message || String(e)), "bad");
+      } finally {
+        btnVerify.disabled = false;
+      }
+    });
+
+    btnSignOut.addEventListener("click", async () => {
+      clearMsg();
+      try {
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+        showMsg("התנתקת.", "ok");
+      } catch (e) {
+        showMsg("שגיאה בהתנתקות: " + (e?.message || String(e)), "bad");
+      }
+    });
+  </script>
+</body>
+</html>
