@@ -1,7 +1,7 @@
 name: Process users_total (NEW → DONE/ERROR)
 
 on:
-  schedule:
+  #schedule:
     # כל 15 דקות עגולות (UTC) – אפשר לשנות
     # - cron: "*/15 * * * *"
   workflow_dispatch: {}
