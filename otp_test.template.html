@@ -80,7 +80,7 @@
     const SUPABASE_ANON_KEY = "__SUPABASE_ANON_KEY__";
 
     const { createClient } = window.supabase;
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const elPhone = document.getElementById("phone");
     const elEmail = document.getElementById("email");
@@ -125,7 +125,7 @@
       btnSend.disabled = true;
       try {
         // shouldCreateUser:false => לא ייווצר משתמש חדש אם המייל לא קיים במערכת
-        const { error } = await supabase.auth.signInWithOtp({
+        const { error } = await sb.auth.signInWithOtp({
           email,
           options: { shouldCreateUser: false }
         });
@@ -151,7 +151,7 @@
       btnVerify.disabled = true;
       try {
         // type: 'email' => אימות OTP שנשלח למייל
-        const { data, error } = await supabase.auth.verifyOtp({
+        const { data, error } = await sb.auth.verifyOtp({
           email,
           token,
           type: "email"
@@ -171,7 +171,7 @@
     btnSignOut.addEventListener("click", async () => {
       clearMsg();
       try {
-        const { error } = await supabase.auth.signOut();
+        const { error } = await sb.auth.signOut();
         if (error) throw error;
         showMsg("התנתקת.", "ok");
       } catch (e) {
