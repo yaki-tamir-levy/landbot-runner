@@ -93,6 +93,40 @@
 
     const elMsg = document.getElementById("msg");
 
+    // Cooldown to reduce "email rate limit exceeded" during tests
+    const SEND_COOLDOWN_SECONDS = 60;
+    let sendCooldownTimer = null;
+    let sendCooldownRemaining = 0;
+    const sendBtnLabel = btnSend.textContent;
+
+    function stopSendCooldown() {
+      if (sendCooldownTimer) clearInterval(sendCooldownTimer);
+      sendCooldownTimer = null;
+      sendCooldownRemaining = 0;
+      btnSend.textContent = sendBtnLabel;
+      btnSend.disabled = false;
+    }
+
+    function startSendCooldown(seconds) {
+      if (!Number.isFinite(seconds) || seconds <= 0) return stopSendCooldown();
+      if (sendCooldownTimer) clearInterval(sendCooldownTimer);
+
+      sendCooldownRemaining = Math.floor(seconds);
+      btnSend.disabled = true;
+
+      const tick = () => {
+        btnSend.textContent = `המתן ${sendCooldownRemaining} שנ׳`;
+        sendCooldownRemaining -= 1;
+
+        if (sendCooldownRemaining < 0) {
+          stopSendCooldown();
+        }
+      };
+
+      tick();
+      sendCooldownTimer = setInterval(tick, 1000);
+    }
+
     function showMsg(text, kind) {
       elMsg.style.display = "block";
       elMsg.className = "msg" + (kind ? (" " + kind) : "");
@@ -116,6 +150,9 @@
 
     btnSend.addEventListener("click", async () => {
       clearMsg();
+      if (sendCooldownRemaining > 0) {
+        return showMsg("נא להמתין לפני שליחה נוספת (מגבלת קצב).", "bad");
+      }
       const phone = (elPhone.value || "").trim();
       const email = normalizeEmail(elEmail.value);
 
@@ -124,19 +161,24 @@
 
       btnSend.disabled = true;
       try {
-        // shouldCreateUser:false => לא ייווצר משתמש חדש אם המייל לא קיים במערכת
+        // shouldCreateUser:true => ייווצר משתמש חדש אם המייל לא קיים במערכת
         const { error } = await sb.auth.signInWithOtp({
           email,
-          options: { shouldCreateUser: false }
+          options: { shouldCreateUser: true }
         });
 
         if (error) throw error;
 
         showMsg("נשלח קוד למייל. בדוק בתיבת הדואר והזן את הקוד כאן.", "ok");
+        startSendCooldown(SEND_COOLDOWN_SECONDS);
       } catch (e) {
         showMsg("שגיאה בשליחת קוד: " + (e?.message || String(e)), "bad");
       } finally {
-        btnSend.disabled = false;
+        // If cooldown started, keep disabled until it ends
+        if (!sendCooldownTimer) {
+          btnSend.disabled = false;
+          btnSend.textContent = sendBtnLabel;
+        }
       }
     });
 
