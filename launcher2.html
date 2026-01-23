@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>כניסה לשיחות המטפל הוירטואלי</title>
+  <style>
+    :root {
+      --bg:#f6f7fb;
+      --card:#ffffff;
+      --ink:#111827;
+      --muted:#6b7280;
+      --divider:#e5e7eb;
+      --danger:#7f1d1d;
+      --ok:#065f46;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:var(--bg);
+      color:var(--ink);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+    }
+    .card{
+      background:var(--card);
+      border:1px solid var(--divider);
+      border-radius:16px;
+      padding:24px 22px 20px;
+      max-width:360px;
+      width:100%;
+      box-shadow:0 10px 30px rgba(15,23,42,.08);
+    }
+    h1{
+      margin:0 0 8px 0;
+      font-size:1.4rem;
+      text-align:center;
+    }
+    p{
+      margin:0 0 16px 0;
+      font-size:.9rem;
+      color:var(--muted);
+      text-align:center;
+    }
+    label{
+      display:block;
+      font-size:.8rem;
+      color:var(--muted);
+      margin-bottom:4px;
+    }
+    input{
+      width:100%;
+      padding:10px 12px;
+      border-radius:10px;
+      border:1px solid var(--divider);
+      font-size:1rem;
+    }
+    button{
+      width:100%;
+      margin-top:12px;
+      padding:10px 12px;
+      border-radius:10px;
+      border:0;
+      cursor:pointer;
+      font-weight:600;
+      background:#4f46e5;
+      color:white;
+    }
+    button:disabled{
+      opacity:.6;
+      cursor:not-allowed;
+    }
+    .err{
+      margin-top:10px;
+      font-size:.85rem;
+      color:var(--danger);
+      text-align:center;
+    }
+    .ok{
+      margin-top:10px;
+      font-size:.85rem;
+      color:var(--ok);
+      text-align:center;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>כניסה למערכת</h1>
+    <p>הכנס סיסמה כדי להציג את שיחות המטפל הוירטואלי.</p>
+    <form id="loginForm">
+      <label for="pw">סיסמה</label>
+<input id="pw" type="text" autocomplete="off" />
+      <button type="submit">כניסה</button>
+      <div id="msg"></div>
+    </form>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      // *** שים לב: זאת אותה הסיסמה כמו בקובץ users_viewer_risk_prod.html ***
+      const APP_PASSWORD   = "yon1234";
+      const EXPECTED_TOKEN = "ok-" + btoa(APP_PASSWORD);
+      const STORAGE_KEY    = "riskAppAuth";
+
+      // Cache-busting: תמיד נטען את ה-Viewer ב-URL חדש (שלב ניסוי)
+      const VIEWER_FILE = "users_viewer_risk_prod.html";
+
+      var form = document.getElementById("loginForm");
+      var pw   = document.getElementById("pw");
+      var msg  = document.getElementById("msg");
+      var btn  = form.querySelector("button[type='submit']");
+
+      function showMsg(text, ok){
+        if (!msg) return;
+        msg.textContent = text || "";
+        msg.className = ok ? "ok" : "err";
+      }
+
+      function goToViewerWithCacheBust(){
+        var v = String(Date.now());
+        // שומר את ה-token לסשן הנוכחי ואז מפנה עם v כדי לעקוף קאש
+        window.location.href = VIEWER_FILE + "?v=" + encodeURIComponent(v);
+      }
+
+      form.addEventListener("submit", function (ev) {
+        ev.preventDefault();
+        var val = (pw.value || "").trim();
+        if (!val) {
+          showMsg("יש להזין סיסמה.", false);
+          return;
+        }
+        btn.disabled = true;
+
+        if (val === APP_PASSWORD) {
+          try {
+            sessionStorage.setItem(STORAGE_KEY, EXPECTED_TOKEN);
+          } catch (e) {
+            // אם אי אפשר להשתמש ב-sessionStorage – לא חוסמים, רק מזהירים
+            console.warn("sessionStorage error", e);
+          }
+          showMsg("מתחבר...", true);
+          goToViewerWithCacheBust();
+        } else {
+          showMsg("סיסמה שגויה.", false);
+          btn.disabled = false;
+          pw.focus();
+          pw.select();
+        }
+      });
+
+      // נוחות: אנטר בשדה מפעיל את הטופס
+      pw.addEventListener("keyup", function(ev){
+        if (ev.key === "Enter") {
+          form.dispatchEvent(new Event("submit", {cancelable:true}));
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
