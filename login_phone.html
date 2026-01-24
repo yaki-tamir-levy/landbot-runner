@@ -1,4 +1,4 @@
-<!doctype html> 
+<!doctype html>
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
@@ -123,9 +123,18 @@
     const btnWhoAmI = el("btnWhoAmI");
     const btnCooldown = el("btnCooldown");
 
-    const normalizePhone = (v) => String(v || "").replace(/\D/g, "");
+    const normalizePhone = (v) => {
+      // Normalize phone input to match DB format (e.g. 0541234567)
+      // - Trim whitespace
+      // - Remove any non-digit chars (spaces, dashes, parentheses, etc.)
+      // - Convert Israeli country code (972xxxxxxxxx) -> 0xxxxxxxxx
+      let s = String(v ?? "").trim();
+      let digits = s.replace(/\D/g, "");
+      if (digits.startsWith("972")) digits = "0" + digits.slice(3);
+      return digits;
+    };
 
-    function setStatus(target, kind, text) {
+function setStatus(target, kind, text) {
       target.style.display = "block";
       target.classList.remove("ok", "bad");
       if (kind === "ok") target.classList.add("ok");
@@ -175,13 +184,19 @@
 
     btnSend.addEventListener("click", async () => {
       sendStatus.style.display = "none";
-      const phone = normalizePhone(el("phone").value);
-      if (!phone || phone.length < 9) {
-        setStatus(sendStatus, "bad", "טלפון לא תקין. יש להזין 9–10 ספרות (לדוגמה: 0541234567).");
+      const rawPhone = el("phone").value;
+      const phone = normalizePhone(rawPhone);
+
+      if (!phone) {
+        setStatus(sendStatus, "bad", `טלפון חסר/לא תקין. נקלט: "${rawPhone}".`);
+        return;
+      }
+      if (phone.length < 9 || phone.length > 10) {
+        setStatus(sendStatus, "bad", `טלפון לא תקין. אחרי ניקוי נקלט: "${phone}" (${phone.length} ספרות). יש להזין 9–10 ספרות (לדוגמה: 0541234567).`);
         return;
       }
 
-      // simple client-side cooldown (does not replace server rate limits)
+// simple client-side cooldown (does not replace server rate limits)
       const key = `start_login_last_sent:${phone}`;
       const last = Number(localStorage.getItem(key) || "0");
       const now = Date.now();
