@@ -3,29 +3,8 @@
 <html lang="he" dir="rtl">
 <head>
   <script>
-  
+  // Version marker (no password gate – auth via Supabase session set in launcher.html)
   var APP_VERSION = 'STAGE3_FIX11';
-(function () {
-    // אותה הסיסמה כמו בקובץ launcher.html
-    const APP_PASSWORD   = "yon1234";
-    const EXPECTED_TOKEN = "ok-" + btoa(APP_PASSWORD);
-
-    try {
-      const token = sessionStorage.getItem("riskAppAuth");
-
-      // אם אין טוקן תקין – מחזירים למסך הכניסה
-      if (token !== EXPECTED_TOKEN) {
-        window.location.href = "launcher.html";
-        return;
-      }
-
-      // אם הגענו לכאן – הטוקן תקין עבור הכניסה הנוכחית.
-      // מנקים אותו מיד כדי שכל טעינה מחדש תדרוש סיסמה מחדש.
-      sessionStorage.removeItem("riskAppAuth");
-    } catch (e) {
-      window.location.href = "launcher.html";
-    }
-  })();
 </script>
 
   <meta charset="utf-8" />
@@ -187,7 +166,7 @@ function getReviewerName(ev){
 </div>
 
 <script>
-(function () {
+(async function () {
   "use strict";
 
   function flashClickedButton(ev){
@@ -310,6 +289,19 @@ function getReviewerName(ev){
     return;
   }
   var supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  // Auth gate: require active Supabase session (set by launcher.html via setSession)
+  try {
+    const s = await supa.auth.getSession();
+    if (!s || !s.data || !s.data.session) {
+      window.location.href = 'launcher.html';
+      return;
+    }
+  } catch (e) {
+    window.location.href = 'launcher.html';
+    return;
+  }
+
 
 
   // ------------------------------------------------------------
