@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>כניסה לשיחות המטפל הוירטואלי</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.1/dist/umd/supabase.js"></script>
   <style>
     :root {
       --bg:#f6f7fb;
@@ -30,7 +31,7 @@
       border:1px solid var(--divider);
       border-radius:16px;
       padding:24px 22px 20px;
-      max-width:360px;
+      max-width:380px;
       width:100%;
       box-shadow:0 10px 30px rgba(15,23,42,.08);
     }
@@ -44,6 +45,7 @@
       font-size:.9rem;
       color:var(--muted);
       text-align:center;
+      line-height:1.45;
     }
     label{
       display:block;
@@ -58,6 +60,10 @@
       border:1px solid var(--divider);
       font-size:1rem;
     }
+    .readonly{
+      background:#f9fafb;
+      color:#374151;
+    }
     button{
       width:100%;
       margin-top:12px;
@@ -65,9 +71,12 @@
       border-radius:10px;
       border:0;
       cursor:pointer;
-      font-weight:600;
+      font-weight:700;
       background:#4f46e5;
       color:white;
+    }
+    button.secondary{
+      background:#111827;
     }
     button:disabled{
       opacity:.6;
@@ -78,24 +87,45 @@
       font-size:.85rem;
       color:var(--danger);
       text-align:center;
+      white-space:pre-wrap;
     }
     .ok{
       margin-top:10px;
       font-size:.85rem;
       color:var(--ok);
       text-align:center;
+      white-space:pre-wrap;
+    }
+    .small{
+      margin-top:10px;
+      font-size:.78rem;
+      color:var(--muted);
+      text-align:center;
+      line-height:1.4;
     }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>כניסה למערכת</h1>
-    <p>הכנס סיסמה כדי להציג את שיחות המטפל הוירטואלי.</p>
-    <form id="loginForm">
-      <label for="pw">סיסמה</label>
-<input id="pw" type="text" autocomplete="off" />
-      <button type="submit">כניסה</button>
+    <p>
+      הזדהות באמצעות מספר טלפון קבוע ואימות קוד שנשלח למייל המשויך אליו במערכת.
+      <br/>
+      <b>אין צורך להזין מייל.</b>
+    </p>
+
+    <form id="frmSend" autocomplete="off">
+      <label for="phone">מספר טלפון</label>
+      <input id="phone" class="readonly" type="text" readonly />
+      <button id="btnSend" type="submit">שלח קוד למייל</button>
+    </form>
+
+    <form id="frmVerify" autocomplete="off" style="margin-top:14px;">
+      <label for="token">קוד (6 ספרות)</label>
+      <input id="token" inputmode="numeric" pattern="\\d*" maxlength="6" placeholder="הקלד/י 6 ספרות" />
+      <button id="btnVerify" class="secondary" type="submit">אמת קוד</button>
       <div id="msg"></div>
+      <div class="small" id="hint"></div>
     </form>
   </div>
 
@@ -103,18 +133,23 @@
     (function () {
       "use strict";
 
-      // *** שים לב: זאת אותה הסיסמה כמו בקובץ users_viewer_risk_prod.html ***
-      const APP_PASSWORD   = "yon1234";
-      const EXPECTED_TOKEN = "ok-" + btoa(APP_PASSWORD);
-      const STORAGE_KEY    = "riskAppAuth";
+      // Supabase project config (must match users_viewer_risk_prod.html)
+      var SUPABASE_URL      = "https://qcwimczsiuxkarwfiyai.supabase.co";
+      var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI";
+      var FIXED_PHONE = "0547558740";
 
-      // Cache-busting: תמיד נטען את ה-Viewer ב-URL חדש (שלב ניסוי)
-      const VIEWER_FILE = "users_viewer_risk_prod.html";
+      var supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-      var form = document.getElementById("loginForm");
-      var pw   = document.getElementById("pw");
-      var msg  = document.getElementById("msg");
-      var btn  = form.querySelector("button[type='submit']");
+      var frmSend   = document.getElementById("frmSend");
+      var frmVerify = document.getElementById("frmVerify");
+      var phoneEl   = document.getElementById("phone");
+      var tokenEl   = document.getElementById("token");
+      var btnSend   = document.getElementById("btnSend");
+      var btnVerify = document.getElementById("btnVerify");
+      var msg       = document.getElementById("msg");
+      var hint      = document.getElementById("hint");
+
+      phoneEl.value = FIXED_PHONE;
 
       function showMsg(text, ok){
         if (!msg) return;
@@ -122,44 +157,125 @@
         msg.className = ok ? "ok" : "err";
       }
 
-      function goToViewerWithCacheBust(){
-        var v = String(Date.now());
-        // שומר את ה-token לסשן הנוכחי ואז מפנה עם v כדי לעקוף קאש
-        window.location.href = VIEWER_FILE + "?v=" + encodeURIComponent(v);
+      function setHint(text){
+        if (!hint) return;
+        hint.textContent = text || "";
       }
 
-      form.addEventListener("submit", function (ev) {
+      function edgeCall(fnName, body){
+        return fetch(SUPABASE_URL + "/functions/v1/" + fnName, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + SUPABASE_ANON_KEY,
+            "apikey": SUPABASE_ANON_KEY
+          },
+          body: JSON.stringify(body || {})
+        }).then(async function(res){
+          var data = null;
+          try { data = await res.json(); } catch(e) {}
+          if (!res.ok) {
+            var errMsg = (data && (data.error || data.message)) ? (data.error || data.message) : ("HTTP " + res.status);
+            throw new Error(errMsg);
+          }
+          return data;
+        });
+      }
+
+      function goViewer(){
+        // Cache bust to avoid stale deploys
+        var v = String(Date.now());
+        window.location.href = "users_viewer_risk_prod.html?v=" + encodeURIComponent(v);
+      }
+
+      async function init(){
+        try{
+          var s = await supa.auth.getSession();
+          if (s && s.data && s.data.session) {
+            goViewer();
+            return;
+          }
+        }catch(e){}
+      }
+      init();
+
+      var lastSentAt = 0; // client-side cooldown (not a security feature)
+      var COOLDOWN_MS = 30 * 1000;
+
+      frmSend.addEventListener("submit", async function(ev){
         ev.preventDefault();
-        var val = (pw.value || "").trim();
-        if (!val) {
-          showMsg("יש להזין סיסמה.", false);
+        showMsg("", true);
+        setHint("");
+
+        var now = Date.now();
+        if (now - lastSentAt < COOLDOWN_MS) {
+          var left = Math.ceil((COOLDOWN_MS - (now - lastSentAt)) / 1000);
+          showMsg("נא להמתין " + left + " שניות לפני שליחה נוספת.", false);
           return;
         }
-        btn.disabled = true;
 
-        if (val === APP_PASSWORD) {
-          try {
-            sessionStorage.setItem(STORAGE_KEY, EXPECTED_TOKEN);
-          } catch (e) {
-            // אם אי אפשר להשתמש ב-sessionStorage – לא חוסמים, רק מזהירים
-            console.warn("sessionStorage error", e);
+        btnSend.disabled = true;
+        btnVerify.disabled = true;
+
+        try{
+          await edgeCall("start-login", { phone: FIXED_PHONE });
+          lastSentAt = Date.now();
+          showMsg("אם המספר קיים במערכת, נשלח קוד למייל המשויך אליו.", true);
+          setHint("הקלד/י את הקוד שקיבלת במייל (6 ספרות)." );
+          tokenEl.focus();
+        }catch(e){
+          // תשובה כללית גם במקרה שגיאה, כדי לא לחשוף מידע רגיש
+          console.warn("start-login error:", e);
+          showMsg("אם המספר קיים במערכת, נשלח קוד למייל המשויך אליו.", true);
+          setHint("אם לא קיבלת מייל, נסה/י שוב בעוד רגע.");
+        }finally{
+          btnSend.disabled = false;
+          btnVerify.disabled = false;
+        }
+      });
+
+      async function verifyToken(){
+        var token = (tokenEl.value || "").replace(/\\D/g, "").slice(0, 6);
+        if (token.length !== 6) {
+          showMsg("יש להזין 6 ספרות.", false);
+          return;
+        }
+
+        btnSend.disabled = true;
+        btnVerify.disabled = true;
+        showMsg("מאמת קוד...", true);
+        setHint("");
+
+        try{
+          var out = await edgeCall("verify-login", { phone: FIXED_PHONE, token: token });
+          if (!out || !out.access_token || !out.refresh_token) {
+            throw new Error("Missing tokens from verify-login");
           }
-          showMsg("מתחבר...", true);
-          goToViewerWithCacheBust();
-        } else {
-          showMsg("סיסמה שגויה.", false);
-          btn.disabled = false;
-          pw.focus();
-          pw.select();
+          await supa.auth.setSession({ access_token: out.access_token, refresh_token: out.refresh_token });
+          showMsg("התחברת בהצלחה. מעביר למסך הראשי...", true);
+          goViewer();
+        }catch(e){
+          console.warn("verify-login error:", e);
+          showMsg("קוד שגוי או שפג תוקפו. נסה/י שוב או שלח/י קוד מחדש.", false);
+          btnSend.disabled = false;
+          btnVerify.disabled = false;
+          tokenEl.focus();
+          tokenEl.select();
         }
+      }
+
+      frmVerify.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        verifyToken();
       });
 
-      // נוחות: אנטר בשדה מפעיל את הטופס
-      pw.addEventListener("keyup", function(ev){
-        if (ev.key === "Enter") {
-          form.dispatchEvent(new Event("submit", {cancelable:true}));
-        }
+      tokenEl.addEventListener("input", function(){
+        // auto verify when 6 digits entered
+        var v = (tokenEl.value || "").replace(/\\D/g, "");
+        if (v !== tokenEl.value) tokenEl.value = v;
+        if (v.length === 6) verifyToken();
       });
+
     })();
   </script>
 </body>
