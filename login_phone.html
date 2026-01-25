@@ -3,96 +3,42 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>כניסה לפי טלפון + אימות במייל (Supabase)</title>
+  <title>OTP מינימלי</title>
   <style>
-    :root {
-      --bg:#f6f7fb; --card:#fff; --ink:#111827; --muted:#6b7280; --line:#e5e7eb;
-      --ok:#065f46; --bad:#7f1d1d; --btn:#111827; --btn2:#374151;
-    }
+    :root { --bg:#f6f7fb; --card:#fff; --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --btn:#111827; }
     *{box-sizing:border-box}
     body{margin:0;min-height:100vh;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans Hebrew",sans-serif;color:var(--ink)}
-    .wrap{max-width:920px;margin:0 auto;padding:24px}
-    .grid{display:grid;gap:16px;grid-template-columns:1fr}
-    @media (min-width: 900px){ .grid{grid-template-columns: 1.05fr .95fr} }
-    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-    h1{margin:0 0 6px;font-size:20px}
-    h2{margin:0 0 10px;font-size:16px}
-    p{margin:0 0 10px;color:var(--muted);line-height:1.4}
-    label{display:block;margin:10px 0 6px;font-weight:600}
+    .wrap{max-width:720px;margin:0 auto;padding:24px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+    h1{margin:0 0 10px;font-size:18px}
+    label{display:block;margin:12px 0 6px;font-weight:600}
     input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:15px;outline:none}
-    input:focus{border-color:#9ca3af}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
     button{border:0;border-radius:10px;padding:10px 12px;font-size:14px;color:#fff;background:var(--btn);cursor:pointer}
-    button.secondary{background:var(--btn2)}
     button:disabled{opacity:.55;cursor:not-allowed}
-    .status{margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#fafafa;color:var(--ink);white-space:pre-wrap}
-    .status.ok{border-color:rgba(6,95,70,.35);background:rgba(6,95,70,.06)}
-    .status.bad{border-color:rgba(127,29,29,.35);background:rgba(127,29,29,.06)}
-    code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px}
-    .tiny{font-size:12px;color:var(--muted)}
-    .pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:#fff;font-size:12px;color:var(--muted)}
+    .msg{margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#fafafa;color:var(--muted);white-space:pre-wrap}
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="row" style="justify-content:space-between;margin-bottom:12px">
-      <h1>בדיקת כניסה: טלפון → שליחת קוד למייל → אימות קוד</h1>
-      <span class="pill">Project: qcwimczsiuxkarwfiyai</span>
-    </div>
+    <div class="card">
+      <h1>OTP מינימלי</h1>
 
-    <div class="grid">
-      <div class="card">
-        <h2>1) שליחת קוד לפי טלפון</h2>
-        <p>
-          הזן טלפון (בפורמט <b>0541234567</b>). השרת בודק בטבלה <code>public.users_information</code> את <code>phone</code> ואם יש <code>email</code> —
-          נשלח מייל עם קוד (וגם קישור).
-        </p>
+      <label for="phone">טלפון</label>
+      <input id="phone" inputmode="tel" placeholder="0541234567" autocomplete="tel" />
 
-        <label for="phone">טלפון</label>
-        <input id="phone" inputmode="tel" placeholder="0541234567" autocomplete="tel" />
-
-        <div class="row" style="margin-top:12px">
-          <button id="btnSend">שלח קוד למייל</button>
-          <button id="btnCooldown" class="secondary" disabled style="display:none">המתן…</button>
-        </div>
-
-        <div id="sendStatus" class="status" style="display:none"></div>
-
-        <div style="margin-top:14px" class="tiny">
-          הערה: הדף הזה משתמש ב-<code>anon key</code> לקריאה לפונקציית Edge (ולא ב-service_role).
-        </div>
+      <div class="row">
+        <button id="btnSend">שלח קוד</button>
       </div>
 
-      <div class="card">
-        <h2>2) אימות הקוד + Session</h2>
-        <p>
-          אחרי שהקוד הגיע למייל, הזן כאן את כתובת המייל שלך (אותה כתובת שמוגדרת אצלך במערכת) ואת הקוד,
-          ולחץ "אמת קוד".
-        </p>
+      <label for="token">קוד</label>
+      <input id="token" inputmode="numeric" placeholder="123456" />
 
-        <label for="email">מייל</label>
-        <input id="email" inputmode="email" placeholder="name@example.com" autocomplete="email" />
-
-        <label for="token">קוד (OTP)</label>
-        <input id="token" inputmode="numeric" placeholder="לדוגמה: 123456" />
-
-        <div class="row" style="margin-top:12px">
-          <button id="btnVerify">אמת קוד</button>
-          <button id="btnSignOut" class="secondary">התנתק</button>
-          <button id="btnWhoAmI" class="secondary">מי אני?</button>
-        </div>
-
-        <div id="verifyStatus" class="status" style="display:none"></div>
+      <div class="row">
+        <button id="btnVerify">אמת קוד</button>
       </div>
-    </div>
 
-    <div class="card" style="margin-top:16px">
-      <h2>מידע טכני</h2>
-      <div class="tiny">
-        <div><b>SUPABASE_URL:</b> <code id="infoUrl"></code></div>
-        <div><b>Edge Function:</b> <code id="infoFn"></code></div>
-        <div><b>Auth:</b> <code id="infoAuth"></code></div>
-      </div>
+      <div id="msg" class="msg" style="display:none"></div>
     </div>
   </div>
 
@@ -102,193 +48,91 @@
     const SUPABASE_URL = 'https://qcwimczsiuxkarwfiyai.supabase.co';
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI';
 
-    const FN_START_LOGIN = `${SUPABASE_URL}/functions/v1/start-login`;
+    const FN_START = `${SUPABASE_URL}/functions/v1/start-login`;
+    const FN_VERIFY = `${SUPABASE_URL}/functions/v1/verify-login`;
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     const el = (id) => document.getElementById(id);
-
-    const infoUrl = el("infoUrl");
-    const infoFn = el("infoFn");
-    const infoAuth = el("infoAuth");
-    infoUrl.textContent = SUPABASE_URL;
-    infoFn.textContent = FN_START_LOGIN;
-    infoAuth.textContent = "verifyOtp(type=email)";
-
-    const sendStatus = el("sendStatus");
-    const verifyStatus = el("verifyStatus");
+    const msg = el("msg");
     const btnSend = el("btnSend");
     const btnVerify = el("btnVerify");
-    const btnSignOut = el("btnSignOut");
-    const btnWhoAmI = el("btnWhoAmI");
-    const btnCooldown = el("btnCooldown");
 
-    const normalizePhone = (v) => {
-      // Normalize phone input to match DB format (e.g. 0541234567)
-      // - Trim whitespace
-      // - Remove any non-digit chars (spaces, dashes, parentheses, etc.)
-      // - Convert Israeli country code (972xxxxxxxxx) -> 0xxxxxxxxx
-      let s = String(v ?? "").trim();
-      let digits = s.replace(/\D/g, "");
-      if (digits.startsWith("972")) digits = "0" + digits.slice(3);
-      return digits;
-    };
-
-function setStatus(target, kind, text) {
-      target.style.display = "block";
-      target.classList.remove("ok", "bad");
-      if (kind === "ok") target.classList.add("ok");
-      if (kind === "bad") target.classList.add("bad");
-      target.textContent = text;
+    function show(text) {
+      msg.style.display = "";
+      msg.textContent = text;
     }
 
-    function startCooldown(seconds) {
-      btnSend.disabled = true;
-      btnCooldown.style.display = "";
-      btnCooldown.disabled = true;
-      let left = seconds;
-
-      const tick = () => {
-        btnCooldown.textContent = `המתן ${left} שניות…`;
-        left -= 1;
-        if (left < 0) {
-          btnSend.disabled = false;
-          btnCooldown.style.display = "none";
-          btnCooldown.textContent = "המתן…";
-          return;
-        }
-        window.setTimeout(tick, 1000);
-      };
-      tick();
+    function normalizePhone(input) {
+      let d = String(input || "").trim().replace(/\D/g, "");
+      if (d.startsWith("972") && d.length >= 11) d = "0" + d.slice(3);
+      return d;
     }
 
-    async function callStartLogin(phone) {
-      const res = await fetch(FN_START_LOGIN, {
+    async function postJson(url, body) {
+      const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "apikey": SUPABASE_ANON_KEY,
           "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
         },
-        body: JSON.stringify({ phone }),
+        body: JSON.stringify(body),
       });
-
       let data = null;
-      try { data = await res.json(); } catch { /* ignore */ }
-      if (!res.ok) {
-        const msg = data?.error ? `error=${data.error}` : `HTTP ${res.status}`;
-        throw new Error(msg);
-      }
+      try { data = await res.json(); } catch {}
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       return data;
     }
 
     btnSend.addEventListener("click", async () => {
-      sendStatus.style.display = "none";
-      const rawPhone = el("phone").value;
-      const phone = normalizePhone(rawPhone);
-
-      if (!phone) {
-        setStatus(sendStatus, "bad", `טלפון חסר/לא תקין. נקלט: "${rawPhone}".`);
-        return;
-      }
-      if (phone.length < 9 || phone.length > 10) {
-        setStatus(sendStatus, "bad", `טלפון לא תקין. אחרי ניקוי נקלט: "${phone}" (${phone.length} ספרות). יש להזין 9–10 ספרות (לדוגמה: 0541234567).`);
-        return;
-      }
-
-// simple client-side cooldown (does not replace server rate limits)
-      const key = `start_login_last_sent:${phone}`;
-      const last = Number(localStorage.getItem(key) || "0");
-      const now = Date.now();
-      const minIntervalMs = 60 * 1000;
-      if (now - last < minIntervalMs) {
-        const secLeft = Math.ceil((minIntervalMs - (now - last)) / 1000);
-        setStatus(sendStatus, "bad", `נשלח לאחרונה. נסה שוב בעוד ${secLeft} שניות.`);
-        startCooldown(secLeft);
+      msg.style.display = "none";
+      const phone = normalizePhone(el("phone").value);
+      if (!phone || phone.length < 9 || phone.length > 10) {
+        show("טלפון לא תקין");
         return;
       }
 
       btnSend.disabled = true;
       try {
-        const out = await callStartLogin(phone);
-        localStorage.setItem(key, String(Date.now()));
-        setStatus(sendStatus, "ok", out?.message || "נשלח (אם קיים מייל למספר).");
-        startCooldown(60);
+        await postJson(FN_START, { phone });
+        show("נשלח קוד");
       } catch (e) {
-        setStatus(sendStatus, "bad", `שגיאה בשליחה: ${e?.message || e}`);
-        btnSend.disabled = false;
+        show("שגיאה בשליחה");
+      } finally {
+        setTimeout(() => btnSend.disabled = false, 5000);
       }
     });
 
     btnVerify.addEventListener("click", async () => {
-      verifyStatus.style.display = "none";
-      const email = String(el("email").value || "").trim();
+      msg.style.display = "none";
+      const phone = normalizePhone(el("phone").value);
       const token = String(el("token").value || "").trim();
 
-      if (!email || !email.includes("@")) {
-        setStatus(verifyStatus, "bad", "מייל לא תקין.");
+      if (!phone || phone.length < 9 || phone.length > 10) {
+        show("טלפון לא תקין");
         return;
       }
       if (!token || token.length < 4) {
-        setStatus(verifyStatus, "bad", "קוד לא תקין.");
+        show("קוד לא תקין");
         return;
       }
 
       btnVerify.disabled = true;
       try {
-        const { data, error } = await supabase.auth.verifyOtp({
-          email,
-          token,
-          type: "email",
+        const out = await postJson(FN_VERIFY, { phone, token });
+
+        await supabase.auth.setSession({
+          access_token: out.access_token,
+          refresh_token: out.refresh_token,
         });
-        if (error) throw error;
 
-        const session = data?.session;
-        const user = data?.user;
-
-        const previewToken = session?.access_token
-          ? session.access_token.slice(0, 18) + "…" + session.access_token.slice(-8)
-          : "(no access_token)";
-
-        setStatus(
-          verifyStatus,
-          "ok",
-          "אימות הצליח!\n" +
-          `user.id: ${user?.id || "(none)"}\n` +
-          `email: ${user?.email || email}\n` +
-          `access_token: ${previewToken}\n` +
-          `expires_in: ${session?.expires_in ?? "(unknown)"}`
-        );
+        show("אומת");
       } catch (e) {
-        setStatus(verifyStatus, "bad", `אימות נכשל: ${e?.message || JSON.stringify(e)}`);
+        show("אימות נכשל");
       } finally {
         btnVerify.disabled = false;
       }
-    });
-
-    btnSignOut.addEventListener("click", async () => {
-      verifyStatus.style.display = "none";
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        setStatus(verifyStatus, "bad", `שגיאה בהתנתקות: ${error.message}`);
-      } else {
-        setStatus(verifyStatus, "ok", "התנתקת.");
-      }
-    });
-
-    btnWhoAmI.addEventListener("click", async () => {
-      verifyStatus.style.display = "none";
-      const { data, error } = await supabase.auth.getUser();
-      if (error) {
-        setStatus(verifyStatus, "bad", `שגיאה: ${error.message}`);
-        return;
-      }
-      const u = data?.user;
-      if (!u) {
-        setStatus(verifyStatus, "bad", "אין משתמש מחובר כרגע.");
-        return;
-      }
-      setStatus(verifyStatus, "ok", `מחובר כעת:\nuser.id: ${u.id}\nemail: ${u.email}`);
     });
   </script>
 </body>
