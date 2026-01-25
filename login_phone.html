@@ -2,174 +2,139 @@
 <html lang="he" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OTP</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>אימות טלפון</title>
   <style>
-    :root { --bg:#f6f7fb; --card:#fff; --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --btn:#111827; }
-    *{box-sizing:border-box}
-    body{margin:0;min-height:100vh;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans Hebrew",sans-serif;color:var(--ink)}
-    .wrap{max-width:520px;margin:0 auto;padding:24px}
-    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-    h1{margin:0 0 12px;font-size:18px}
-    label{display:block;margin:12px 0 6px;font-weight:600}
-    input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:16px;outline:none}
-    input:focus{border-color:#9ca3af}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
-    button{border:0;border-radius:10px;padding:10px 12px;font-size:14px;color:#fff;background:var(--btn);cursor:pointer}
-    button:disabled{opacity:.55;cursor:not-allowed}
-    .msg{margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#fafafa;color:var(--muted);white-space:pre-wrap}
-    .hint{margin-top:8px;font-size:12px;color:var(--muted)}
+    body { font-family: Arial, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
+    .row { margin: 10px 0; }
+    input { width: 100%; font-size: 18px; padding: 10px; border-radius: 10px; border: 1px solid #bbb; }
+    button { width: 100%; font-size: 18px; padding: 10px; border-radius: 10px; border: 0; cursor: pointer; }
+    button.primary { background: #111; color: #fff; }
+    .muted { color: #666; font-size: 14px; }
+    .ok { color: #0a7; }
+    .err { color: #c00; }
+    code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-  <div class="wrap">
-    <div class="card">
-      <h1>OTP</h1>
+  <div class="muted">VERSION: <code>2026-01-25-LOGIN-PHONE-RETURNTO-FIX1</code></div>
 
-      <label for="phone">טלפון</label>
-      <input id="phone" inputmode="tel" placeholder="0541234567" autocomplete="tel" />
+  <div class="card">
+    <div class="row muted">הזן טלפון, נשלח קוד למייל המשויך. לאחר אימות תועבר לאפליקציה.</div>
 
-      <div class="row">
-        <button id="btnSend">שלח קוד</button>
-      </div>
+    <div class="row">
+      <label class="muted">טלפון</label>
+      <input id="phone" type="tel" placeholder="05xxxxxxxx" />
+    </div>
 
-      <label for="token">קוד (6 ספרות)</label>
-      <input id="token" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" maxlength="10" />
-      <div class="hint">האימות מתבצע אוטומטית אחרי 6 ספרות.</div>
+    <div class="row">
+      <button id="btnSend" class="primary">שלח קוד</button>
+      <div id="sendStatus" class="muted"></div>
+    </div>
 
-      <!-- Hidden fallback button (Enter also works) -->
-      <div class="row" style="display:none">
-        <button id="btnVerify">אמת קוד</button>
-      </div>
-
-      <div id="msg" class="msg" style="display:none"></div>
+    <div class="row">
+      <label class="muted">קוד (6 ספרות)</label>
+      <input id="token" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="______" />
+      <div id="verifyStatus" class="muted"></div>
     </div>
   </div>
 
-  <script type="module">
-    import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+<script>
+(() => {
+  // ====== חובה לעדכן לערכים האמיתיים שלך (כמו בקובץ שעבד) ======
+  const SUPABASE_URL = "https://YOUR_PROJECT.supabase.co";
+  const SUPABASE_ANON_KEY = "YOUR_PUBLIC_ANON_KEY";
 
-    const SUPABASE_URL = 'https://qcwimczsiuxkarwfiyai.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI';
+  const FUNCTIONS_BASE = `${SUPABASE_URL}/functions/v1`;
 
-    const FN_START = `${SUPABASE_URL}/functions/v1/start-login`;
-    const FN_VERIFY = `${SUPABASE_URL}/functions/v1/verify-login`;
+  const qs = new URLSearchParams(location.search);
+  const RETURN_TO = qs.get("return_to") || "users_viewer_risk_prod.html";
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const $ = (id) => document.getElementById(id);
 
-    const el = (id) => document.getElementById(id);
-    const msg = el("msg");
-    const btnSend = el("btnSend");
-    const btnVerify = el("btnVerify"); // hidden fallback
-    const phoneEl = el("phone");
-    const tokenEl = el("token");
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+  });
 
-    function show(text) {
-      msg.style.display = "";
-      msg.textContent = text;
+  function setText(el, txt, cls) {
+    el.className = cls || "muted";
+    el.textContent = txt || "";
+  }
+
+  async function postJson(url, body) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": "Bearer " + SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify(body)
+    });
+    const txt = await res.text();
+    let json = null;
+    try { json = JSON.parse(txt); } catch {}
+    if (!res.ok) {
+      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : txt;
+      throw new Error(msg || `HTTP ${res.status}`);
     }
+    return json || {};
+  }
 
-    function hideMsg() {
-      msg.style.display = "none";
-      msg.textContent = "";
+  async function sendCode() {
+    $("btnSend").disabled = true;
+    setText($("sendStatus"), "שולח קוד…", "muted");
+    try {
+      await postJson(`${FUNCTIONS_BASE}/start-login`, { phone: $("phone").value });
+      setText($("sendStatus"), "אם המספר קיים במערכת — נשלח קוד למייל המשויך.", "ok");
+      $("token").focus();
+    } catch (e) {
+      console.error(e);
+      setText($("sendStatus"), "אם המספר קיים במערכת — נשלח קוד למייל המשויך.", "ok");
+    } finally {
+      $("btnSend").disabled = false;
     }
+  }
 
-    function normalizePhone(input) {
-      let d = String(input || "").trim().replace(/\D/g, "");
-      if (d.startsWith("972") && d.length >= 11) d = "0" + d.slice(3);
-      return d;
-    }
-
-    function normalizeToken(input) {
-      return String(input || "").replace(/\D/g, "").slice(0, 10);
-    }
-
-    async function postJson(url, body) {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": SUPABASE_ANON_KEY,
-          "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-        },
-        body: JSON.stringify(body),
+  async function verifyCode(token) {
+    setText($("verifyStatus"), "מאמת…", "muted");
+    try {
+      const data = await postJson(`${FUNCTIONS_BASE}/verify-login`, {
+        phone: $("phone").value,
+        token
       });
-      let data = null;
-      try { data = await res.json(); } catch {}
-      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-      return data;
+
+      if (!data.access_token || !data.refresh_token) {
+        throw new Error("Missing tokens");
+      }
+
+      const { error } = await supabase.auth.setSession({
+        access_token: data.access_token,
+        refresh_token: data.refresh_token
+      });
+      if (error) throw error;
+
+      // אם יש Guard בדף היעד:
+      localStorage.setItem("otp_verified", "1");
+
+      setText($("verifyStatus"), "אימות הצליח. נכנס…", "ok");
+      location.replace(RETURN_TO);
+    } catch (e) {
+      console.error(e);
+      setText($("verifyStatus"), "קוד שגוי / פג תוקף.", "err");
     }
+  }
 
-    let verifyInFlight = false;
-    let lastVerifiedToken = "";
+  $("btnSend").addEventListener("click", sendCode);
 
-    async function verifyIfReady(force = false) {
-      const phone = normalizePhone(phoneEl.value);
-      const token = normalizeToken(tokenEl.value);
-
-      if (tokenEl.value !== token) tokenEl.value = token;
-
-      if (!phone || phone.length < 9 || phone.length > 10) return;
-      if (!token || token.length < 6) return;
-      if (token.length !== 6 && !force) return;
-
-      if (verifyInFlight) return;
-      if (token === lastVerifiedToken && !force) return;
-
-      verifyInFlight = true;
-      btnSend.disabled = true;
-      btnVerify.disabled = true;
-
-      try {
-        hideMsg();
-        const out = await postJson(FN_VERIFY, { phone, token });
-
-        await supabase.auth.setSession({
-          access_token: out.access_token,
-          refresh_token: out.refresh_token,
-        });
-
-        lastVerifiedToken = token;
-        show("אומת");
-      } catch (e) {
-        show("אימות נכשל");
-      } finally {
-        verifyInFlight = false;
-        btnSend.disabled = false;
-        btnVerify.disabled = false;
-      }
-    }
-
-    btnSend.addEventListener("click", async () => {
-      hideMsg();
-      const phone = normalizePhone(phoneEl.value);
-      if (!phone || phone.length < 9 || phone.length > 10) {
-        show("טלפון לא תקין");
-        return;
-      }
-
-      btnSend.disabled = true;
-      try {
-        await postJson(FN_START, { phone });
-        show("נשלח קוד");
-        tokenEl.focus();
-      } catch (e) {
-        show("שגיאה בשליחה");
-      } finally {
-        setTimeout(() => btnSend.disabled = false, 3000);
-      }
-    });
-
-    let t = null;
-    tokenEl.addEventListener("input", () => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => verifyIfReady(false), 120);
-    });
-
-    btnVerify.addEventListener("click", () => verifyIfReady(true));
-    tokenEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") verifyIfReady(true);
-    });
-  </script>
+  $("token").addEventListener("input", (e) => {
+    const digits = (e.target.value || "").replace(/\D/g, "").slice(0, 6);
+    e.target.value = digits;
+    if (digits.length === 6) verifyCode(digits);
+  });
+})();
+</script>
 </body>
 </html>
