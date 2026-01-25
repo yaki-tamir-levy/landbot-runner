@@ -3,26 +3,28 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OTP מינימלי</title>
+  <title>OTP</title>
   <style>
     :root { --bg:#f6f7fb; --card:#fff; --ink:#111827; --muted:#6b7280; --line:#e5e7eb; --btn:#111827; }
     *{box-sizing:border-box}
     body{margin:0;min-height:100vh;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans Hebrew",sans-serif;color:var(--ink)}
-    .wrap{max-width:720px;margin:0 auto;padding:24px}
+    .wrap{max-width:520px;margin:0 auto;padding:24px}
     .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-    h1{margin:0 0 10px;font-size:18px}
+    h1{margin:0 0 12px;font-size:18px}
     label{display:block;margin:12px 0 6px;font-weight:600}
-    input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:15px;outline:none}
+    input{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:16px;outline:none}
+    input:focus{border-color:#9ca3af}
     .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}
     button{border:0;border-radius:10px;padding:10px 12px;font-size:14px;color:#fff;background:var(--btn);cursor:pointer}
     button:disabled{opacity:.55;cursor:not-allowed}
     .msg{margin-top:12px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:#fafafa;color:var(--muted);white-space:pre-wrap}
+    .hint{margin-top:8px;font-size:12px;color:var(--muted)}
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
-      <h1>OTP מינימלי</h1>
+      <h1>OTP</h1>
 
       <label for="phone">טלפון</label>
       <input id="phone" inputmode="tel" placeholder="0541234567" autocomplete="tel" />
@@ -31,10 +33,12 @@
         <button id="btnSend">שלח קוד</button>
       </div>
 
-      <label for="token">קוד</label>
-      <input id="token" inputmode="numeric" placeholder="123456" />
+      <label for="token">קוד (6 ספרות)</label>
+      <input id="token" inputmode="numeric" autocomplete="one-time-code" placeholder="123456" maxlength="10" />
+      <div class="hint">האימות מתבצע אוטומטית אחרי 6 ספרות.</div>
 
-      <div class="row">
+      <!-- Hidden fallback button (Enter also works) -->
+      <div class="row" style="display:none">
         <button id="btnVerify">אמת קוד</button>
       </div>
 
@@ -56,17 +60,28 @@
     const el = (id) => document.getElementById(id);
     const msg = el("msg");
     const btnSend = el("btnSend");
-    const btnVerify = el("btnVerify");
+    const btnVerify = el("btnVerify"); // hidden fallback
+    const phoneEl = el("phone");
+    const tokenEl = el("token");
 
     function show(text) {
       msg.style.display = "";
       msg.textContent = text;
     }
 
+    function hideMsg() {
+      msg.style.display = "none";
+      msg.textContent = "";
+    }
+
     function normalizePhone(input) {
       let d = String(input || "").trim().replace(/\D/g, "");
       if (d.startsWith("972") && d.length >= 11) d = "0" + d.slice(3);
       return d;
+    }
+
+    function normalizeToken(input) {
+      return String(input || "").replace(/\D/g, "").slice(0, 10);
     }
 
     async function postJson(url, body) {
@@ -85,9 +100,49 @@
       return data;
     }
 
+    let verifyInFlight = false;
+    let lastVerifiedToken = "";
+
+    async function verifyIfReady(force = false) {
+      const phone = normalizePhone(phoneEl.value);
+      const token = normalizeToken(tokenEl.value);
+
+      if (tokenEl.value !== token) tokenEl.value = token;
+
+      if (!phone || phone.length < 9 || phone.length > 10) return;
+      if (!token || token.length < 6) return;
+      if (token.length !== 6 && !force) return;
+
+      if (verifyInFlight) return;
+      if (token === lastVerifiedToken && !force) return;
+
+      verifyInFlight = true;
+      btnSend.disabled = true;
+      btnVerify.disabled = true;
+
+      try {
+        hideMsg();
+        const out = await postJson(FN_VERIFY, { phone, token });
+
+        await supabase.auth.setSession({
+          access_token: out.access_token,
+          refresh_token: out.refresh_token,
+        });
+
+        lastVerifiedToken = token;
+        show("אומת");
+      } catch (e) {
+        show("אימות נכשל");
+      } finally {
+        verifyInFlight = false;
+        btnSend.disabled = false;
+        btnVerify.disabled = false;
+      }
+    }
+
     btnSend.addEventListener("click", async () => {
-      msg.style.display = "none";
-      const phone = normalizePhone(el("phone").value);
+      hideMsg();
+      const phone = normalizePhone(phoneEl.value);
       if (!phone || phone.length < 9 || phone.length > 10) {
         show("טלפון לא תקין");
         return;
@@ -97,42 +152,23 @@
       try {
         await postJson(FN_START, { phone });
         show("נשלח קוד");
+        tokenEl.focus();
       } catch (e) {
         show("שגיאה בשליחה");
       } finally {
-        setTimeout(() => btnSend.disabled = false, 5000);
+        setTimeout(() => btnSend.disabled = false, 3000);
       }
     });
 
-    btnVerify.addEventListener("click", async () => {
-      msg.style.display = "none";
-      const phone = normalizePhone(el("phone").value);
-      const token = String(el("token").value || "").trim();
+    let t = null;
+    tokenEl.addEventListener("input", () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => verifyIfReady(false), 120);
+    });
 
-      if (!phone || phone.length < 9 || phone.length > 10) {
-        show("טלפון לא תקין");
-        return;
-      }
-      if (!token || token.length < 4) {
-        show("קוד לא תקין");
-        return;
-      }
-
-      btnVerify.disabled = true;
-      try {
-        const out = await postJson(FN_VERIFY, { phone, token });
-
-        await supabase.auth.setSession({
-          access_token: out.access_token,
-          refresh_token: out.refresh_token,
-        });
-
-        show("אומת");
-      } catch (e) {
-        show("אימות נכשל");
-      } finally {
-        btnVerify.disabled = false;
-      }
+    btnVerify.addEventListener("click", () => verifyIfReady(true));
+    tokenEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") verifyIfReady(true);
     });
   </script>
 </body>
