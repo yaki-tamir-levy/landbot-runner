@@ -1,212 +1,35 @@
 <!doctype html>
 <html lang="he" dir="rtl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>כניסה מאובטחת (OTP)</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Launcher</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
-    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
-    .row { margin: 10px 0; }
-    input { width: 100%; font-size: 18px; padding: 10px; border-radius: 10px; border: 1px solid #bbb; }
-    button { width: 100%; font-size: 18px; padding: 10px; border-radius: 10px; border: 0; cursor: pointer; }
-    button.primary { background: #111; color: #fff; }
-    button.secondary { background: #f2f2f2; }
-    .muted { color: #666; font-size: 14px; }
-    .ok { color: #0a7; }
-    .err { color: #c00; }
-    .topbar { display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; }
+    body { font-family: Arial, sans-serif; margin: 30px; }
+    .muted { color:#666; }
     code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
   </style>
-  <!-- Supabase JS (UMD) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // VERSION: 2026-01-25-LAUNCHER-REDIRECT-RETURNTO-FIX1
+    // מטרת ה-Launcher: להפנות למסך האימות, ולציין לאן חוזרים אחרי אימות.
+    // ברירת מחדל: Viewer
+    (function () {
+      const DEFAULT_RETURN_TO = "users_viewer_risk_prod.html";
+
+      // אם כבר הגיעו ל-Launcher עם return_to, נשמר אותו; אחרת משתמשים בברירת מחדל
+      const qs = new URLSearchParams(location.search);
+      const returnTo = qs.get("return_to") || DEFAULT_RETURN_TO;
+
+      // בונים URL למסך האימות עם return_to
+      const target = "login_phone.html?return_to=" + encodeURIComponent(returnTo);
+
+      // Redirect מיידי בלי לשמור היסטוריה
+      location.replace(target);
+    })();
+  </script>
 </head>
 <body>
-  <div class="topbar">
-    <div><strong>כניסה</strong></div>
-    <div class="muted">VERSION: <code>2026-01-25-OTP-GATE-FIX1</code></div>
-  </div>
-
-  <div class="card">
-    <div class="row muted">
-      כניסה באמצעות מספר טלפון קבוע ואימות מול המייל שמשויך אליו במערכת.
-    </div>
-
-    <div class="row">
-      <label class="muted">טלפון</label>
-      <input id="phone" type="text" value="0547558740" readonly />
-      <div class="muted">הטלפון נעול בקוד.</div>
-    </div>
-
-    <div class="row">
-      <button id="btnSend" class="primary">שלח קוד</button>
-      <div id="sendStatus" class="muted"></div>
-    </div>
-
-    <div class="row">
-      <label class="muted">קוד (6 ספרות)</label>
-      <input id="token" type="text" inputmode="numeric" autocomplete="one-time-code" placeholder="______" maxlength="6" />
-      <div id="verifyStatus" class="muted"></div>
-    </div>
-
-    <div class="row">
-      <button id="btnReset" class="secondary">איפוס (Sign out)</button>
-      <div id="resetStatus" class="muted"></div>
-    </div>
-
-    <div class="row muted">
-      הערה: אם נכנסת בעבר, הדף מבצע Sign out אוטומטי בטעינה כדי למנוע כניסה בלי OTP.
-    </div>
-  </div>
-
-<script>
-(() => {
-  // ====== CONFIG ======
-  // חובה להתאים לערכים שלך:
-  const SUPABASE_URL = window.SUPABASE_URL || "https://YOUR_PROJECT.supabase.co";
-  const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || "YOUR_SUPABASE_ANON_KEY";
-  // אם אתה עובד מאותו דומיין של Supabase, אין צורך לשנות. אחרת תשאיר כך.
-  const FUNCTIONS_BASE = `${SUPABASE_URL}/functions/v1`;
-
-  const FIXED_PHONE = "0547558740";
-  const VIEWER_URL = "users_viewer_risk_prod.html";
-
-  // חתימת גרסה למסך (כדי לוודא שאין Cache)
-  console.log("VERSION:", "2026-01-25-OTP-GATE-FIX1");
-
-  const $ = (id) => document.getElementById(id);
-
-  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true
-    }
-  });
-
-  function setText(el, txt, cls) {
-    el.className = cls ? cls : "muted";
-    el.textContent = txt || "";
-  }
-
-  async function hardReset() {
-    localStorage.removeItem("otp_verified");
-    sessionStorage.removeItem("otp_verified");
-    try {
-      await supabase.auth.signOut();
-      return true;
-    } catch (e) {
-      console.warn("signOut failed:", e);
-      return false;
-    }
-  }
-
-  // ====== STAGE 1 FIX: Sign out automatically on load to avoid stale sessions bypassing OTP ======
-  window.addEventListener("load", async () => {
-    $("phone").value = FIXED_PHONE;
-    setText($("sendStatus"), "", "muted");
-    setText($("verifyStatus"), "", "muted");
-    setText($("resetStatus"), "", "muted");
-
-    // אם היה Session ישן, הוא היה גורם לכניסה מיידית ב-Viewer.
-    // לכן אנחנו מנקים אותו באופן יזום.
-    await hardReset();
-  });
-
-  async function postJson(url, bodyObj) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(bodyObj)
-    });
-    const txt = await res.text();
-    let json = null;
-    try { json = JSON.parse(txt); } catch { json = null; }
-    if (!res.ok) {
-      const errMsg = (json && (json.error || json.message)) ? (json.error || json.message) : txt;
-      throw new Error(errMsg || `HTTP ${res.status}`);
-    }
-    return json ?? {};
-  }
-
-  async function sendCode() {
-    $("btnSend").disabled = true;
-    setText($("sendStatus"), "שולח קוד…", "muted");
-    try {
-      // תמיד מחזירים תשובה כללית — לא חושפים אם מספר קיים
-      await postJson(`${FUNCTIONS_BASE}/start-login`, { phone: FIXED_PHONE });
-      setText($("sendStatus"), "אם המספר קיים במערכת — נשלח קוד למייל המשויך.", "ok");
-      $("token").focus();
-    } catch (e) {
-      // גם בשגיאה: להציג משהו כללי, כדי לא לגלות מידע
-      console.error(e);
-      setText($("sendStatus"), "אם המספר קיים במערכת — נשלח קוד למייל המשויך.", "ok");
-    } finally {
-      $("btnSend").disabled = false;
-    }
-  }
-
-  async function verifyCode(token) {
-    $("token").disabled = true;
-    setText($("verifyStatus"), "מאמת…", "muted");
-    try {
-      const data = await postJson(`${FUNCTIONS_BASE}/verify-login`, {
-        phone: FIXED_PHONE,
-        token: token
-      });
-
-      // מצפים לקבל access_token + refresh_token (לפי הזרימה שכבר בנית)
-      const access_token = data.access_token;
-      const refresh_token = data.refresh_token;
-
-      if (!access_token || !refresh_token) {
-        throw new Error("Missing tokens from verify-login response");
-      }
-
-      const { data: setData, error: setErr } = await supabase.auth.setSession({
-        access_token,
-        refresh_token
-      });
-
-      if (setErr) throw setErr;
-
-      // דגל שמוכיח שבוצע verify-login עכשיו (ולא session ישן)
-      localStorage.setItem("otp_verified", "1");
-
-      setText($("verifyStatus"), "אימות הצליח. נכנס…", "ok");
-      // מעבר ל-Viewer
-      window.location.href = VIEWER_URL;
-    } catch (e) {
-      console.error(e);
-      setText($("verifyStatus"), "קוד שגוי / פג תוקף. נסה שוב.", "err");
-      $("token").select();
-    } finally {
-      $("token").disabled = false;
-    }
-  }
-
-  $("btnSend").addEventListener("click", sendCode);
-
-  $("btnReset").addEventListener("click", async () => {
-    $("btnReset").disabled = true;
-    setText($("resetStatus"), "מנקה Session…", "muted");
-    const ok = await hardReset();
-    setText($("resetStatus"), ok ? "בוצע." : "בוצע (ייתכן שהדפדפן חסם חלק מהפעולה).", "ok");
-    $("btnReset").disabled = false;
-  });
-
-  // אימות אוטומטי אחרי 6 ספרות
-  $("token").addEventListener("input", (e) => {
-    const raw = e.target.value || "";
-    const digits = raw.replace(/\D/g, "").slice(0, 6);
-    e.target.value = digits;
-    if (digits.length === 6) {
-      verifyCode(digits);
-    }
-  });
-})();
-</script>
+  <div class="muted">VERSION: <code>2026-01-25-LAUNCHER-REDIRECT-RETURNTO-FIX1</code></div>
+  <p>מעביר למסך כניסה…</p>
 </body>
 </html>
