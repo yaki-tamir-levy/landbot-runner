@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Viewer (Guard)</title>
+  <title>Viewer</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 30px; }
     .muted { color:#666; }
@@ -12,58 +12,29 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-  <div class="muted">VERSION: <code>2026-01-25-OTP-GATE-FIX1 123 </code></div>
+  <div class="muted">VERSION: <code>2026-01-25-LOOP-FIX2</code></div>
   <div id="status" class="muted">בודק הרשאה…</div>
-
-  <!--
-    חשוב:
-    מאחר ואין לי כאן את התוכן המקורי של users_viewer_risk_prod.html שלך מה־repo,
-    שמתי "שומר סף" (Guard) בראש הדף + נקודת חיבור (hook) לטעינת האפליקציה שלך.
-
-    אם אצלך ה־Viewer המקורי הוא קובץ HTML מלא עם UI/JS פנימי:
-    1) קח את בלוק ה-Guard (הסקריפט כאן) ושבץ אותו בתחילת הקובץ המקורי שלך.
-    2) השאר את שאר התוכן שלך כפי שהוא.
-
-    אם אצלך ה־Viewer נטען מסקריפט חיצוני (למשל app.js),
-    תוכל להוסיף כאן <script src="..."></script> אחרי שה-Guard מאשר.
-  -->
 
 <script>
 (async () => {
-  const SUPABASE_URL = window.SUPABASE_URL || "https://YOUR_PROJECT.supabase.co";
-  const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || "YOUR_SUPABASE_ANON_KEY";
+  // ====== חובה לעדכן לערכים האמיתיים שלך ====== const SUPABASE_URL = 'https://qcwimczsiuxkarwfiyai.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI';
+
   const LAUNCHER_URL = "launcher.html";
 
-  console.log("VERSION:", "2026-01-25-OTP-GATE-FIX1");
-
   const statusEl = document.getElementById("status");
-  function setStatus(t) { statusEl.textContent = t; }
-
-  // שכבת ההגנה הנוספת: לא נכנסים אם לא בוצע verify-login עכשיו
-  const otpFlag = localStorage.getItem("otp_verified");
-  if (otpFlag !== "1") {
-    setStatus("אין אישור OTP. חוזר לכניסה…");
-    window.location.replace(LAUNCHER_URL);
-    return;
-  }
+  const setStatus = (t) => statusEl.textContent = t;
 
   const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true
-    }
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
   });
 
   const { data, error } = await supabase.auth.getSession();
-  if (error) {
-    console.warn(error);
-  }
-  const session = data && data.session;
+  if (error) console.warn(error);
 
+  const session = data && data.session;
   if (!session) {
-    // אם אין session — חוזרים לכניסה (וגם מנקים דגל כדי שלא יישאר "מאומת" בטעות)
-    localStorage.removeItem("otp_verified");
+    // אין session => חוזרים לכניסה (ומשם ל-login_phone)
     setStatus("אין Session. חוזר לכניסה…");
     window.location.replace(LAUNCHER_URL);
     return;
@@ -71,12 +42,7 @@
 
   setStatus("הרשאה תקפה. טוען…");
 
-  // ====== כאן אמור להמשיך ה-Viewer שלך ======
-  // כרגע זו תצוגת placeholder כדי שהקובץ יהיה תקין.
-  const p = document.createElement("p");
-  p.textContent = "Guard עבר בהצלחה. כאן יש לשלב את UI ה-Viewer המקורי שלך.";
-  document.body.appendChild(p);
-
+  // כאן ממשיך ה-Viewer שלך (השאר את הקוד/טעינת ה-UI הקיימים אחרי ה-Guard הזה)
 })();
 </script>
 
