@@ -11,20 +11,20 @@
     input { width: 100%; font-size: 18px; padding: 10px; border-radius: 10px; border: 1px solid #bbb; }
     button { width: 100%; font-size: 18px; padding: 10px; border-radius: 10px; border: 0; cursor: pointer; }
     button.primary { background: #111; color: #fff; }
-    .muted { color: #666const SUPABASE_URL = 'https://qcwimczsiuxkarwfiyai.supabase.co';
-    const SUPABASE_ANON_KEY = const SUPABASE_URL = 'https://qcwimczsiuxkarwfiyai.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJp'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJp; font-size: 14px; }
+    .muted { color: #666; font-size: 14px; }
     .ok { color: #0a7; }
     .err { color: #c00; }
-    code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-  <div class="muted">VERSION: <code>2026-01-25-LOOP-FIX2</code></div>
 
   <div class="card">
-    <div class="row muted">הזן טלפון, נשלח קוד למייל המשויך. לאחר אימות תועבר לאפליקציה.</div>
+    <div class="row muted">
+      לכניסה – נא הזן את מספר הטלפון שלך,
+      ואז יישלח למייל שלך קוד לאימות.
+      בדוק גם בספאם
+    </div>
 
     <div class="row">
       <label class="muted">טלפון</label>
@@ -45,23 +45,20 @@
 
 <script>
 (() => {
-  // ====== חובה לעדכן לערכים האמיתיים שלך ======
-   const SUPABASE_URL = 'https://qcwimczsiuxkarwfiyai.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI';
+  const SUPABASE_URL = 'https://qcwimczsiuxkarwfiyai.supabase.co';
+  const SUPABASE_ANON_KEY = 'REDACTED';
 
   const FUNCTIONS_BASE = `${SUPABASE_URL}/functions/v1`;
 
-  // return_to מגיע מה-Launcher. אם מישהו העביר return_to לא תקין (למשל login/launcher) ננעל לברירת מחדל.
   const qs = new URLSearchParams(location.search);
   let returnTo = (qs.get("return_to") || "users_viewer_risk_prod.html").trim();
-  const bad = returnTo.includes("login_phone") || returnTo.includes("launcher");
-  if (bad) returnTo = "users_viewer_risk_prod.html";
+  if (returnTo.includes("login") || returnTo.includes("launcher")) {
+    returnTo = "users_viewer_risk_prod.html";
+  }
 
   const $ = (id) => document.getElementById(id);
 
-  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
-  });
+  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
   function setText(el, txt, cls) {
     el.className = cls || "muted";
@@ -81,69 +78,47 @@
     const txt = await res.text();
     let json = null;
     try { json = JSON.parse(txt); } catch {}
-    if (!res.ok) {
-      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : txt;
-      throw new Error(msg || `HTTP ${res.status}`);
-    }
+    if (!res.ok) throw new Error(txt);
     return json || {};
   }
 
   async function sendCode() {
     $("btnSend").disabled = true;
-    setText($("sendStatus"), "שולח קוד…", "muted");
+    setText($("sendStatus"), "שולח קוד…");
     try {
       await postJson(`${FUNCTIONS_BASE}/start-login`, { phone: $("phone").value });
       setText($("sendStatus"), "אם המספר קיים במערכת — נשלח קוד למייל המשויך.", "ok");
       $("token").focus();
-    } catch (e) {
-      console.error(e);
-      setText($("sendStatus"), "אם המספר קיים במערכת — נשלח קוד למייל המשויך.", "ok");
     } finally {
       $("btnSend").disabled = false;
     }
   }
 
   async function verifyCode(token) {
-    setText($("verifyStatus"), "מאמת…", "muted");
+    setText($("verifyStatus"), "מאמת…");
     try {
       const data = await postJson(`${FUNCTIONS_BASE}/verify-login`, {
         phone: $("phone").value,
         token
       });
 
-      if (!data.access_token || !data.refresh_token) {
-        throw new Error("Missing tokens");
-      }
-
-      const { error } = await supabase.auth.setSession({
+      await supabase.auth.setSession({
         access_token: data.access_token,
         refresh_token: data.refresh_token
       });
-      if (error) throw error;
-
-      // מאשרים שה-session באמת נשמר לפני redirect (מונע לולאת חזרה ל-login במקרה של race)
-      const { data: sessData } = await supabase.auth.getSession();
-      if (!sessData || !sessData.session) {
-        throw new Error("Session not persisted");
-      }
-
-      // אם יש Guard בצד ה-Viewer (אופציונלי בלבד)
-      localStorage.setItem("otp_verified", "1");
 
       setText($("verifyStatus"), "אימות הצליח. נכנס…", "ok");
       location.replace(returnTo);
-    } catch (e) {
-      console.error(e);
-      setText($("verifyStatus"), "קוד שגוי / פג תוקף / שגיאת Session. נסה שוב.", "err");
+    } catch {
+      setText($("verifyStatus"), "קוד שגוי או פג תוקף", "err");
     }
   }
 
   $("btnSend").addEventListener("click", sendCode);
-
   $("token").addEventListener("input", (e) => {
-    const digits = (e.target.value || "").replace(/\D/g, "").slice(0, 6);
-    e.target.value = digits;
-    if (digits.length === 6) verifyCode(digits);
+    const v = e.target.value.replace(/\D/g, "").slice(0,6);
+    e.target.value = v;
+    if (v.length === 6) verifyCode(v);
   });
 })();
 </script>
