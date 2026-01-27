@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 // 1. הגדרות - וודא שהפרמטרים תקינים בסביבה שלך
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "https://your-project.supabase.co";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "https://qcwimczsiuxkarwfiyai.supabase.co";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "your-service-key";
 const FIXED_PHONE = "99999999";
 
