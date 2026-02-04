@@ -1,5 +1,5 @@
 // scripts/postprocess_short_summarized_worker.mjs
-// Pulls 1 item from users_total_postprocess_queue, runs OpenAI on users_total.summarized_linked_talk,
+// Dequeues 1 item from users_total_postprocess_queue, runs OpenAI on users_total.summarized_linked_talk,
 // writes result to users_total.short_summarized, then marks queue item DONE.
 //
 // Env required:
@@ -20,17 +20,18 @@ if (!SUPABASE_URL || !SUPABASE_KEY || !OPENAI_API_KEY) {
   process.exit(1);
 }
 
-const headers = {
-  "apikey": SUPABASE_KEY,
-  "Authorization": `Bearer ${SUPABASE_KEY}`,
+const supaHeaders = {
+  apikey: SUPABASE_KEY,
+  Authorization: `Bearer ${SUPABASE_KEY}`,
   "Content-Type": "application/json",
+  Accept: "application/json",
 };
 
 async function supaRpc(fnName, body = {}) {
   const url = `${SUPABASE_URL}/rest/v1/rpc/${fnName}`;
   const res = await fetch(url, {
     method: "POST",
-    headers,
+    headers: supaHeaders,
     body: JSON.stringify(body),
   });
   const text = await res.text();
@@ -41,8 +42,13 @@ async function supaRpc(fnName, body = {}) {
 }
 
 async function supaSelectUsersTotalByPhone(phone) {
-  const url = `${SUPABASE_URL}/rest/v1/users_total?select=phone,summarized_linked_talk&phone=eq.${encodeURIComponent(phone)}&limit=1`;
-  const res = await fetch(url, { headers });
+  const url =
+    `${SUPABASE_URL}/rest/v1/users_total` +
+    `?select=phone,summarized_linked_talk` +
+    `&phone=eq.${encodeURIComponent(phone)}` +
+    `&limit=1`;
+
+  const res = await fetch(url, { headers: supaHeaders });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`SELECT users_total failed (${res.status}): ${text}`);
@@ -52,37 +58,62 @@ async function supaSelectUsersTotalByPhone(phone) {
 }
 
 async function supaUpdateUsersTotalShort(phone, shortSummarized) {
-  const url = `${SUPABASE_URL}/rest/v1/users_total?phone=eq.${encodeURIComponent(phone)}`;
+  // Ask Supabase to return the updated row so we can verify the UPDATE actually matched & persisted.
+  const url =
+    `${SUPABASE_URL}/rest/v1/users_total` +
+    `?phone=eq.${encodeURIComponent(phone)}` +
+    `&select=phone,short_summarized`;
+
   const res = await fetch(url, {
     method: "PATCH",
     headers: {
-      ...headers,
-      "Prefer": "return=minimal",
+      ...supaHeaders,
+      Prefer: "return=representation",
     },
     body: JSON.stringify({ short_summarized: shortSummarized }),
   });
+
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`UPDATE users_total.short_summarized failed (${res.status}): ${text}`);
   }
+
+  const rows = text ? JSON.parse(text) : [];
+  if (!Array.isArray(rows) || rows.length !== 1) {
+    throw new Error(`UPDATE users_total matched 0 rows for phone=${phone} (returned ${rows.length})`);
+  }
+
+  const saved = rows[0]?.short_summarized ?? "";
+  return String(saved);
 }
 
-async function supaMarkQueue(id, status, last_error = null) {
-  const url = `${SUPABASE_URL}/rest/v1/users_total_postprocess_queue?id=eq.${id}`;
-  const payload = {
-    status,
-    updated_at: new Date().toISOString(),
-  };
-  if (last_error !== null) payload.last_error = last_error;
-
-  const res = await fetch(url, {
+async function supaMarkQueue(queueId, status, last_error = null) {
+  // Try with queue_id filter (after RPC change to return queue_id)
+  let url = `${SUPABASE_URL}/rest/v1/users_total_postprocess_queue?queue_id=eq.${queueId}`;
+  let res = await fetch(url, {
     method: "PATCH",
-    headers: {
-      ...headers,
-      "Prefer": "return=minimal",
-    },
-    body: JSON.stringify(payload),
+    headers: { ...supaHeaders, Prefer: "return=minimal" },
+    body: JSON.stringify({
+      status,
+      last_error,
+      updated_at: new Date().toISOString(),
+    }),
   });
+
+  // Fallback for schema where PK column is still named "id"
+  if (!res.ok) {
+    url = `${SUPABASE_URL}/rest/v1/users_total_postprocess_queue?id=eq.${queueId}`;
+    res = await fetch(url, {
+      method: "PATCH",
+      headers: { ...supaHeaders, Prefer: "return=minimal" },
+      body: JSON.stringify({
+        status,
+        last_error,
+        updated_at: new Date().toISOString(),
+      }),
+    });
+  }
+
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`UPDATE queue failed (${res.status}): ${text}`);
@@ -90,26 +121,83 @@ async function supaMarkQueue(id, status, last_error = null) {
 }
 
 function sanitizeResult(text) {
-  // keep it clean: trim, collapse excessive blank lines
   return String(text || "")
     .replace(/\r/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
+// Prompt (from your uploaded file)
+const PROMPT = `אתה מקבל קובץ שיחות קודמות בין מטופל לבין מערכת תומכת.
+השיחות כוללות תיאורי חוויה, רגשות, מחשבות ותגובות,
+ולעיתים גם שיח עמוק או ניסוחים שנשמעים טיפוליים.
+
+❗ אינך מטפל.
+❗ אינך מסכם טיפול.
+❗ אינך מסיק תובנות.
+❗ אינך מזהה דפוסים, תהליכים או משמעות.
+❗ אינך שומר זיכרון טיפולי.
+
+המטרה:
+להפיק "קובץ הקשר היסטורי מוחלש" –
+קובץ קצר, תיאורי וניטרלי,
+שמאפשר זהירות בשיח עתידי,
+מבלי ליצור רצף טיפולי או סמכות מצטברת.
+
+עקרונות מחייבים:
+
+1. כתיבה בגוף שלישי, בשפה יומיומית ולא מקצועית.
+2. לתאר רק מה עלה בשיחות – לא מה זה אומר.
+3. כל ניסוח חייב להיות ניתן להחלפה ב:
+   “עלה שיח סביב…”, “הוזכרו נושאים של…”.
+4. אין רצף כרונולוגי, אין התפתחות, אין חזרתיות משמעותית.
+5. אם ניסוח מרגיש “חכם” או “מבין” – הוא נפסל.
+
+מה מותר לכלול:
+- נושאים שעלו בשיחות (Topics בלבד).
+- רגישויות לשיח בניסוח כללי ולא רגשי.
+- משאבים או פעילויות יומיומיות שצוינו.
+- מאפייני שיח כלליים (אורך, קצב, סגנון).
+
+מה אסור לכלול:
+- פרשנות מכל סוג.
+- ייחוס כוונות, רצונות או צרכים.
+- תובנות, החלטות או כיוונים.
+- דפוסים, מעגלים, תהליכים.
+- תגובות, שאלות או ניסוחים של הבוט.
+- מונחים טיפוליים או מקצועיים.
+- אזכור של שינוי, התקדמות או נסיגה.
+- אזכור של מסגרות טיפוליות.
+
+אסור להשתמש במילים:
+“דפוס”, “חיפוש”, “רצון”, “צורך”, “בעיה”, “קושי”,
+“תהליך”, “התקדמות”, “נסיגה”, “ויסות”, “אבחון”,
+“חרדה”, “דיכאון”, “טראומה”.
+
+מבנה הפלט (חובה):
+
+- נושאים שעלו בשיחות (רשימה קצרה)
+- רגישויות לשיח (רשימה תיאורית)
+- משאבים יומיומיים שצוינו
+- מאפייני שיח כלליים (משפט אחד בלבד)
+
+אורך מקסימלי: 6–8 שורות.
+ללא תאריכים. ללא ציטוטים. ללא מינוחים מקצועיים.
+
+בדיקת סיום (חובה):
+אם קובץ הפלט יכול לשמש מטפל בפגישה –
+הוא אינו תקין ויש לנסחו מחדש.
+
+זכור:
+המטרה אינה זיכרון או הבנה,
+אלא זהירות והימנעות מנזק.`;
+
 async function openaiSummarize(inputText) {
-  const prompt = "אתה מקבל קובץ שיחות קודמות בין מטופל לבין מערכת תומכת.\nהשיחות כוללות תיאורי חוויה, רגשות, מחשבות ותגובות,\nולעיתים גם שיח עמוק או ניסוחים שנשמעים טיפוליים.\n\n❗ אינך מטפל.\n❗ אינך מסכם טיפול.\n❗ אינך מסיק תובנות.\n❗ אינך מזהה דפוסים, תהליכים או משמעות.\n❗ אינך שומר זיכרון טיפולי.\n\nהמטרה:\nלהפיק \"קובץ הקשר היסטורי מוחלש\" –\nקובץ קצר, תיאורי וניטרלי,\nשמאפשר זהירות בשיח עתידי,\nמבלי ליצור רצף טיפולי או סמכות מצטברת.\n\nעקרונות מחייבים:\n\n1. כתיבה בגוף שלישי, בשפה יומיומית ולא מקצועית.\n2. לתאר רק מה עלה בשיחות – לא מה זה אומר.\n3. כל ניסוח חייב להיות ניתן להחלפה ב:\n   “עלה שיח סביב…”, “הוזכרו נושאים של…”.\n4. אין רצף כרונולוגי, אין התפתחות, אין חזרתיות משמעותית.\n5. אם ניסוח מרגיש “חכם” או “מבין” – הוא נפסל.\n\nמה מותר לכלול:\n- נושאים שעלו בשיחות (Topics בלבד).\n- רגישויות לשיח בניסוח כללי ולא רגשי.\n- משאבים או פעילויות יומיומיות שצוינו.\n- מאפייני שיח כלליים (אורך, קצב, סגנון).\n\nמה אסור לכלול:\n- פרשנות מכל סוג.\n- ייחוס כוונות, רצונות או צרכים.\n- תובנות, החלטות או כיוונים.\n- דפוסים, מעגלים, תהליכים.\n- תגובות, שאלות או ניסוחים של הבוט.\n- מונחים טיפוליים או מקצועיים.\n- אזכור של שינוי, התקדמות או נסיגה.\n- אזכור של מסגרות טיפוליות.\n\nאסור להשתמש במילים:\n“דפוס”, “חיפוש”, “רצון”, “צורך”, “בעיה”, “קושי”,\n“תהליך”, “התקדמות”, “נסיגה”, “ויסות”, “אבחון”,\n“חרדה”, “דיכאון”, “טראומה”.\n\nמבנה הפלט (חובה):\n\n- נושאים שעלו בשיחות (רשימה קצרה)\n- רגישויות לשיח (רשימה תיאורית)\n- משאבים יומיומיים שצוינו\n- מאפייני שיח כלליים (משפט אחד בלבד)\n\nאורך מקסימלי: 6–8 שורות.\nללא תאריכים. ללא ציטוטים. ללא מינוחים מקצועיים.\n\nבדיקת סיום (חובה):\nאם קובץ הפלט יכול לשמש מטפל בפגישה –\nהוא אינו תקין ויש לנסחו מחדש.\n\nזכור:\nהמטרה אינה זיכרון או הבנה,\nאלא זהירות והימנעות מנזק.\n";
   const body = {
     model: OPENAI_MODEL,
     input: [
-      {
-        role: "system",
-        content: prompt,
-      },
-      {
-        role: "user",
-        content: inputText || "",
-      },
+      { role: "system", content: PROMPT },
+      { role: "user", content: inputText || "" },
     ],
     max_output_tokens: 500,
     temperature: 0.3,
@@ -118,8 +206,9 @@ async function openaiSummarize(inputText) {
   const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
       "Content-Type": "application/json",
+      Accept: "application/json",
     },
     body: JSON.stringify(body),
   });
@@ -129,13 +218,14 @@ async function openaiSummarize(inputText) {
     throw new Error(`OpenAI failed (${res.status}): ${JSON.stringify(data)}`);
   }
 
-  // responses API: easiest is output_text
-  const out = data.output_text || "";
-  return sanitizeResult(out);
+  const out = sanitizeResult(data?.output_text || "");
+  if (!out) {
+    throw new Error("OpenAI returned empty output_text");
+  }
+  return out;
 }
 
 async function main() {
-  // 1) Dequeue one task (atomic)
   const picked = await supaRpc("dequeue_users_total_postprocess");
   if (!picked || picked.length === 0) {
     console.log("No NEW tasks. Exiting.");
@@ -143,42 +233,35 @@ async function main() {
   }
 
   const task = picked[0];
- const queueId = task.queue_id;
+  const queueId = task.queue_id ?? task.id;
   const phone = task.phone;
 
-  console.log(`Picked task id=${queueId} phone=${phone}`);
+  console.log(`Picked task queueId=${queueId} phone=${phone}`);
 
   try {
-    // 2) Read users_total by phone
     const row = await supaSelectUsersTotalByPhone(phone);
-    if (!row) {
-      throw new Error(`users_total not found for phone=${phone}`);
-    }
+    if (!row) throw new Error(`users_total not found for phone=${phone}`);
 
     const src = row.summarized_linked_talk || "";
     if (!src.trim()) {
-      // If empty, still mark done (or you can set empty output)
-      await supaUpdateUsersTotalShort(phone, "");
+      const saved = await supaUpdateUsersTotalShort(phone, "");
+      console.log(`summarized_linked_talk empty; saved len=${saved.length}`);
       await supaMarkQueue(queueId, "DONE", null);
-      console.log("summarized_linked_talk empty; wrote empty short_summarized; DONE");
       return;
     }
 
-    // 3) OpenAI
     const shortSummarized = await openaiSummarize(src);
+    console.log(`OpenAI output length=${shortSummarized.length}`);
 
-    // 4) Write back
-    await supaUpdateUsersTotalShort(phone, shortSummarized);
+    const saved = await supaUpdateUsersTotalShort(phone, shortSummarized);
+    console.log(`Saved short_summarized length=${saved.length}`);
 
-    // 5) Mark done
     await supaMarkQueue(queueId, "DONE", null);
-
     console.log("DONE");
   } catch (err) {
-    const msg = (err && err.stack) ? err.stack : String(err);
+    const msg = err?.stack ? String(err.stack) : String(err);
     console.error("ERROR:", msg);
 
-    // best effort: mark ERROR with last_error
     try {
       await supaMarkQueue(queueId, "ERROR", msg.slice(0, 4000));
     } catch (e) {
