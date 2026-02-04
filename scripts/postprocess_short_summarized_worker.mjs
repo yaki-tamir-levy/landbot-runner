@@ -57,6 +57,29 @@ async function supaSelectUsersTotalByPhone(phone) {
   return rows[0] || null;
 }
 
+async function supaSelectPromptUserText() {
+  // Prompt source per requirement:
+  // public.users_information where phone = 66666666, column user_text
+  const promptPhone = "66666666";
+  const url =
+    `${SUPABASE_URL}/rest/v1/users_information` +
+    `?select=user_text` +
+    `&phone=eq.${encodeURIComponent(promptPhone)}` +
+    `&limit=1`;
+
+  const res = await fetch(url, { headers: supaHeaders });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`SELECT users_information.user_text failed (${res.status}): ${text}`);
+  }
+  const rows = text ? JSON.parse(text) : [];
+  const userText = rows?.[0]?.user_text;
+
+  // If missing/empty, return literal "NONE" (as requested)
+  const prompt = typeof userText === "string" ? userText.trim() : "";
+  return prompt ? prompt : "NONE";
+}
+
 async function supaUpdateUsersTotalShort(phone, shortSummarized) {
   // Ask Supabase to return the updated row so we can verify the UPDATE actually matched & persisted.
   const url =
@@ -127,76 +150,11 @@ function sanitizeResult(text) {
     .trim();
 }
 
-// Prompt (from your uploaded file)
-const PROMPT = `אתה מקבל קובץ שיחות קודמות בין מטופל לבין מערכת תומכת.
-השיחות כוללות תיאורי חוויה, רגשות, מחשבות ותגובות,
-ולעיתים גם שיח עמוק או ניסוחים שנשמעים טיפוליים.
-
-❗ אינך מטפל.
-❗ אינך מסכם טיפול.
-❗ אינך מסיק תובנות.
-❗ אינך מזהה דפוסים, תהליכים או משמעות.
-❗ אינך שומר זיכרון טיפולי.
-
-המטרה:
-להפיק "קובץ הקשר היסטורי מוחלש" –
-קובץ קצר, תיאורי וניטרלי,
-שמאפשר זהירות בשיח עתידי,
-מבלי ליצור רצף טיפולי או סמכות מצטברת.
-
-עקרונות מחייבים:
-
-1. כתיבה בגוף שלישי, בשפה יומיומית ולא מקצועית.
-2. לתאר רק מה עלה בשיחות – לא מה זה אומר.
-3. כל ניסוח חייב להיות ניתן להחלפה ב:
-   “עלה שיח סביב…”, “הוזכרו נושאים של…”.
-4. אין רצף כרונולוגי, אין התפתחות, אין חזרתיות משמעותית.
-5. אם ניסוח מרגיש “חכם” או “מבין” – הוא נפסל.
-
-מה מותר לכלול:
-- נושאים שעלו בשיחות (Topics בלבד).
-- רגישויות לשיח בניסוח כללי ולא רגשי.
-- משאבים או פעילויות יומיומיות שצוינו.
-- מאפייני שיח כלליים (אורך, קצב, סגנון).
-
-מה אסור לכלול:
-- פרשנות מכל סוג.
-- ייחוס כוונות, רצונות או צרכים.
-- תובנות, החלטות או כיוונים.
-- דפוסים, מעגלים, תהליכים.
-- תגובות, שאלות או ניסוחים של הבוט.
-- מונחים טיפוליים או מקצועיים.
-- אזכור של שינוי, התקדמות או נסיגה.
-- אזכור של מסגרות טיפוליות.
-
-אסור להשתמש במילים:
-“דפוס”, “חיפוש”, “רצון”, “צורך”, “בעיה”, “קושי”,
-“תהליך”, “התקדמות”, “נסיגה”, “ויסות”, “אבחון”,
-“חרדה”, “דיכאון”, “טראומה”.
-
-מבנה הפלט (חובה):
-
-- נושאים שעלו בשיחות (רשימה קצרה)
-- רגישויות לשיח (רשימה תיאורית)
-- משאבים יומיומיים שצוינו
-- מאפייני שיח כלליים (משפט אחד בלבד)
-
-אורך מקסימלי: 6–8 שורות.
-ללא תאריכים. ללא ציטוטים. ללא מינוחים מקצועיים.
-
-בדיקת סיום (חובה):
-אם קובץ הפלט יכול לשמש מטפל בפגישה –
-הוא אינו תקין ויש לנסחו מחדש.
-
-זכור:
-המטרה אינה זיכרון או הבנה,
-אלא זהירות והימנעות מנזק.`;
-
-async function openaiSummarize(inputText) {
+async function openaiSummarize(promptText, inputText) {
   const body = {
     model: OPENAI_MODEL,
     input: [
-      { role: "system", content: PROMPT },
+      { role: "system", content: promptText },
       { role: "user", content: inputText || "" },
     ],
     max_output_tokens: 600,
@@ -235,7 +193,7 @@ async function openaiSummarize(inputText) {
         }
       }
     }
-out = sanitizeResult(parts.join("\\n"));
+    out = sanitizeResult(parts.join("\n"));
   }
 
   if (!out) {
@@ -276,7 +234,8 @@ async function main() {
       return;
     }
 
-    const shortSummarized = await openaiSummarize(src);
+    const promptText = await supaSelectPromptUserText();
+    const shortSummarized = await openaiSummarize(promptText, src);
     console.log(`OpenAI output length=${shortSummarized.length}`);
 
     const saved = await supaUpdateUsersTotalShort(phone, shortSummarized);
