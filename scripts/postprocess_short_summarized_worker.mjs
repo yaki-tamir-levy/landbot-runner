@@ -199,7 +199,7 @@ async function openaiSummarize(inputText) {
       { role: "system", content: PROMPT },
       { role: "user", content: inputText || "" },
     ],
-    max_output_tokens: 500,
+    max_output_tokens: 600,
     temperature: 0.3,
   };
 
@@ -218,10 +218,37 @@ async function openaiSummarize(inputText) {
     throw new Error(`OpenAI failed (${res.status}): ${JSON.stringify(data)}`);
   }
 
-  const out = sanitizeResult(data?.output_text || "");
+  // Robust text extraction across Responses API shapes
+  let out = sanitizeResult(data?.output_text || "");
   if (!out) {
-    throw new Error("OpenAI returned empty output_text");
+    const parts = [];
+    const outputArr = data?.output;
+    if (Array.isArray(outputArr)) {
+      for (const item of outputArr) {
+        const contentArr = item?.content;
+        if (Array.isArray(contentArr)) {
+          for (const c of contentArr) {
+            if (typeof c?.text === "string") parts.push(c.text);
+            else if (typeof c?.content === "string") parts.push(c.content);
+            else if (typeof c === "string") parts.push(c);
+          }
+        }
+      }
+    }
+    out = sanitizeResult(parts.join("
+"));
   }
+
+  if (!out) {
+    const dbg = {
+      id: data?.id,
+      model: data?.model,
+      output_len: Array.isArray(data?.output) ? data.output.length : null,
+      output_text_len: (data?.output_text || "").length,
+    };
+    throw new Error(`OpenAI returned empty text. Debug=${JSON.stringify(dbg)}`);
+  }
+
   return out;
 }
 
