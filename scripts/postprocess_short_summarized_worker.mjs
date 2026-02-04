@@ -235,8 +235,7 @@ async function openaiSummarize(inputText) {
         }
       }
     }
-    out = sanitizeResult(parts.join("
-"));
+out = sanitizeResult(parts.join("\\n"));
   }
 
   if (!out) {
