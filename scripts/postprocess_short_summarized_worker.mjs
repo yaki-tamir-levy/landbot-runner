@@ -143,6 +143,13 @@ async function supaMarkQueue(queueId, status, last_error = null) {
   }
 }
 
+function firstNLines(text, n = 2) {
+  const s = String(text || "").replace(/\r/g, "").trim();
+  if (!s) return "";
+  const lines = s.split("\n").map((l) => l.trim()).filter(Boolean);
+  return lines.slice(0, n).join("\n");
+}
+
 function sanitizeResult(text) {
   return String(text || "")
     .replace(/\r/g, "")
@@ -222,6 +229,12 @@ async function main() {
 
   console.log(`Picked task queueId=${queueId} phone=${phone}`);
 
+  // Prompt indicator bookkeeping (for queue.last_error):
+  // - "NONE" if prompt retrieval failed or returned empty
+  // - otherwise the first 1-2 lines of the prompt
+  let promptIndicator = null;
+  let promptFetchFailed = false;
+
   try {
     const row = await supaSelectUsersTotalByPhone(phone);
     if (!row) throw new Error(`users_total not found for phone=${phone}`);
@@ -234,21 +247,37 @@ async function main() {
       return;
     }
 
-    const promptText = await supaSelectPromptUserText();
+    // Prompt comes from users_information (phone=66666666). If fetch fails or is empty => "NONE".
+    // Per requirement: write to users_total_postprocess_queue.last_error either "NONE" or first 1-2 lines of the prompt.
+    let promptText = "NONE";
+    promptIndicator = "NONE";
+    try {
+      promptText = await supaSelectPromptUserText();
+      const snippet = firstNLines(promptText, 2);
+      promptIndicator = snippet ? snippet : "NONE";
+    } catch (_e) {
+      // Keep NONE as indicator; continue running with promptText="NONE"
+      promptText = "NONE";
+      promptIndicator = "NONE";
+      promptFetchFailed = true;
+    }
+
     const shortSummarized = await openaiSummarize(promptText, src);
     console.log(`OpenAI output length=${shortSummarized.length}`);
 
     const saved = await supaUpdateUsersTotalShort(phone, shortSummarized);
     console.log(`Saved short_summarized length=${saved.length}`);
 
-    await supaMarkQueue(queueId, "DONE", null);
+    await supaMarkQueue(queueId, "DONE", promptIndicator);
     console.log("DONE");
   } catch (err) {
     const msg = err?.stack ? String(err.stack) : String(err);
     console.error("ERROR:", msg);
 
     try {
-      await supaMarkQueue(queueId, "ERROR", msg.slice(0, 4000));
+      // If prompt fetch failed, user requested a deterministic indicator in last_error.
+      const lastErr = promptFetchFailed ? "NONE" : msg.slice(0, 4000);
+      await supaMarkQueue(queueId, "ERROR", lastErr);
     } catch (e) {
       console.error("Failed to mark ERROR:", e);
     }
