@@ -143,7 +143,7 @@ async function main() {
   }
 
   const task = picked[0];
-  const queueId = task.id;
+ const queueId = task.queue_id;
   const phone = task.phone;
 
   console.log(`Picked task id=${queueId} phone=${phone}`);
