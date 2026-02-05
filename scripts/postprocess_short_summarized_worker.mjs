@@ -143,13 +143,6 @@ async function supaMarkQueue(queueId, status, last_error = null) {
   }
 }
 
-function firstNLines(text, n = 2) {
-  const s = String(text || "").replace(/\r/g, "").trim();
-  if (!s) return "";
-  const lines = s.split("\n").map((l) => l.trim()).filter(Boolean);
-  return lines.slice(0, n).join("\n");
-}
-
 function sanitizeResult(text) {
   return String(text || "")
     .replace(/\r/g, "")
@@ -217,73 +210,62 @@ async function openaiSummarize(promptText, inputText) {
 }
 
 async function main() {
-  const picked = await supaRpc("dequeue_users_total_postprocess");
-  if (!picked || picked.length === 0) {
-    console.log("No NEW tasks. Exiting.");
-    return;
-  }
+  const MAX_TASKS_PER_RUN = 10;
+  let processed = 0;
 
-  const task = picked[0];
-  const queueId = task.queue_id ?? task.id;
-  const phone = task.phone;
-
-  console.log(`Picked task queueId=${queueId} phone=${phone}`);
-
-  // Prompt indicator bookkeeping (for queue.last_error):
-  // - "NONE" if prompt retrieval failed or returned empty
-  // - otherwise the first 1-2 lines of the prompt
-  let promptIndicator = null;
-  let promptFetchFailed = false;
-
-  try {
-    const row = await supaSelectUsersTotalByPhone(phone);
-    if (!row) throw new Error(`users_total not found for phone=${phone}`);
-
-    const src = row.summarized_linked_talk || "";
-    if (!src.trim()) {
-      const saved = await supaUpdateUsersTotalShort(phone, "");
-      console.log(`summarized_linked_talk empty; saved len=${saved.length}`);
-      await supaMarkQueue(queueId, "DONE", null);
+  while (processed < MAX_TASKS_PER_RUN) {
+    const picked = await supaRpc("dequeue_users_total_postprocess");
+    if (!picked || picked.length === 0) {
+      if (processed === 0) console.log("No NEW tasks. Exiting.");
+      else console.log(`No more tasks. Processed=${processed}. Exiting.`);
       return;
     }
 
-    // Prompt comes from users_information (phone=66666666). If fetch fails or is empty => "NONE".
-    // Per requirement: write to users_total_postprocess_queue.last_error either "NONE" or first 1-2 lines of the prompt.
-    let promptText = "NONE";
-    promptIndicator = "NONE";
-    try {
-      promptText = await supaSelectPromptUserText();
-      const snippet = firstNLines(promptText, 2);
-      promptIndicator = snippet ? snippet : "NONE";
-    } catch (_e) {
-      // Keep NONE as indicator; continue running with promptText="NONE"
-      promptText = "NONE";
-      promptIndicator = "NONE";
-      promptFetchFailed = true;
-    }
-
-    const shortSummarized = await openaiSummarize(promptText, src);
-    console.log(`OpenAI output length=${shortSummarized.length}`);
-
-    const saved = await supaUpdateUsersTotalShort(phone, shortSummarized);
-    console.log(`Saved short_summarized length=${saved.length}`);
-
-    await supaMarkQueue(queueId, "DONE", promptIndicator);
-    console.log("DONE");
-  } catch (err) {
-    const msg = err?.stack ? String(err.stack) : String(err);
-    console.error("ERROR:", msg);
+    const task = picked[0];
+    const queueId = task.queue_id ?? task.id;
+    const phone = task.phone;
+    console.log(`Picked task queueId=${queueId} phone=${phone}`);
 
     try {
-      // If prompt fetch failed, user requested a deterministic indicator in last_error.
-      const lastErr = promptFetchFailed ? "NONE" : msg.slice(0, 4000);
-      await supaMarkQueue(queueId, "ERROR", lastErr);
-    } catch (e) {
-      console.error("Failed to mark ERROR:", e);
+      const row = await supaSelectUsersTotalByPhone(phone);
+      if (!row) throw new Error(`users_total not found for phone=${phone}`);
+
+      const src = row.summarized_linked_talk || "";
+      if (!src.trim()) {
+        const saved = await supaUpdateUsersTotalShort(phone, "");
+        console.log(`summarized_linked_talk empty; saved len=${saved.length}`);
+        await supaMarkQueue(queueId, "DONE", null);
+        processed += 1;
+        continue;
+      }
+
+      const promptText = await supaSelectPromptUserText();
+      const shortSummarized = await openaiSummarize(promptText, src);
+      console.log(`OpenAI output length=${shortSummarized.length}`);
+
+      const saved = await supaUpdateUsersTotalShort(phone, shortSummarized);
+      console.log(`Saved short_summarized length=${saved.length}`);
+
+      await supaMarkQueue(queueId, "DONE", null);
+      console.log("DONE");
+    } catch (err) {
+      const msg = err?.stack ? String(err.stack) : String(err);
+      console.error("ERROR:", msg);
+
+      try {
+        await supaMarkQueue(queueId, "ERROR", msg.slice(0, 4000));
+      } catch (e) {
+        console.error("Failed to mark ERROR:", e);
+      }
+
+      // Keep running the batch, but signal failure to GitHub Actions.
+      process.exitCode = 1;
     }
 
-    process.exitCode = 1;
+    processed += 1;
   }
+
+  console.log(`Reached MAX_TASKS_PER_RUN=${MAX_TASKS_PER_RUN}. Processed=${processed}. Exiting.`);
 }
 
 main();
