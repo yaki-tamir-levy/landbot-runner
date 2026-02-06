@@ -37,7 +37,7 @@ const PROMPT10_COLUMN = "user_text";
 const RISK_SPLIT_DELIM = "===SPLIT_RISK_REASONS===";
 
 // Treat these as "new work" (NEW + IN_PROGRESS)
-const ELIGIBLE_PROCESSED_STATES = ["NEW", "IN_PROGRESS"];
+const ELIGIBLE_PROCESSED_STATES = ["NEW", "IN_PROGRESS", "ERROR"];
 
 // ---------- helpers ----------
 function mustEnv(name) {
@@ -237,15 +237,8 @@ async function supaGetEligibleRows(limit) {
       "summarized_linked_talk_risk",
       "risk_reasons",
       "talk_id",
-    ].join(",")
-  );
-
-  // Only NEW/IN_PROGRESS, optionally only a specific ID
-  // PostgREST: or=(processed.eq.NEW,processed.eq.IN_PROGRESS)
-  url.searchParams.set("or", "(processed.eq.NEW,processed.eq.IN_PROGRESS)");
-
-  if (ONLY_ID) {
-    url.searchParams.set("id", `eq.${ONLY_ID}`);
+// Only NEW / IN_PROGRESS / ERROR, optionally only a specific ID
+// PostgREST: or=(processed.eq.NEW,processed.eq.IN_PROGRESS,processed.eq.ERROR)_ID}`);
     url.searchParams.set("limit", "1");
   } else {
     url.searchParams.set("order", "phone.asc");
