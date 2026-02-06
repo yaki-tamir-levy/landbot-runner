@@ -5,8 +5,6 @@ on:
     workflows: ["Process Queue Worker (event-ish)"]
     types:
       - completed
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 jobs:
