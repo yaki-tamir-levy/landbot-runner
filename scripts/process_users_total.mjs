@@ -2,9 +2,9 @@
  * scripts/process_users_total.mjs
  *
  * Behaviors:
- * - Process rows where users_total.processed is NEW or IN_PROGRESS
- * - Optional: if ONLY_ID is set, process ONLY that users_total.id (and only if processed in NEW/IN_PROGRESS)
- * - Claim row: NEW/IN_PROGRESS -> processing -> DONE/ERROR
+ * - Process rows where users_total.processed is NEW / IN_PROGRESS / ERROR
+ * - Optional: if ONLY_ID is set, process ONLY that users_total.id (and only if processed is eligible)
+ * - Claim row: eligible -> processing -> DONE/ERROR
  * - Split OpenAI risk output by delimiter:
  *     ===SPLIT_RISK_REASONS===
  *   Before -> users_total.summarized_linked_talk_risk
@@ -19,7 +19,7 @@ const SUPABASE_SERVICE_ROLE_KEY = mustEnv("SUPABASE_SERVICE_ROLE_KEY");
 const OPENAI_API_KEY = mustEnv("OPENAI_API_KEY");
 
 const MAX_ITEMS = parseInt(process.env.MAX_ITEMS ?? "20", 10);
-// If set: process a single users_total row by ID (and only if processed in NEW/IN_PROGRESS)
+// If set: process a single users_total row by ID (and only if processed is eligible)
 const ONLY_ID = process.env.ONLY_ID ?? null;
 
 // If set to "1": run ONLY the phrase scan against users_total.summarized_linked_talk_num (no OpenAI, no users_total updates)
@@ -36,8 +36,9 @@ const PROMPT10_COLUMN = "user_text";
 
 const RISK_SPLIT_DELIM = "===SPLIT_RISK_REASONS===";
 
-// Treat these as "new work" (NEW + IN_PROGRESS)
+// Treat these as "new work"
 const ELIGIBLE_PROCESSED_STATES = ["NEW", "IN_PROGRESS", "ERROR"];
+const ELIGIBLE_OR_FILTER = `(${ELIGIBLE_PROCESSED_STATES.map((s) => `processed.eq.${s}`).join(",")})`;
 
 // ---------- helpers ----------
 function mustEnv(name) {
@@ -186,7 +187,9 @@ async function callOpenAI(body) {
   let json;
   try {
     json = JSON.parse(text);
-  } catch {}
+  } catch {
+    // ignore
+  }
 
   if (!res.ok) {
     const msg = json?.error?.message || text || `OpenAI error status ${res.status}`;
@@ -237,8 +240,15 @@ async function supaGetEligibleRows(limit) {
       "summarized_linked_talk_risk",
       "risk_reasons",
       "talk_id",
-// Only NEW / IN_PROGRESS / ERROR, optionally only a specific ID
-// PostgREST: or=(processed.eq.NEW,processed.eq.IN_PROGRESS,processed.eq.ERROR)_ID}`);
+    ].join(",")
+  );
+
+  // Only eligible processed states, optionally only a specific ID
+  // PostgREST: or=(processed.eq.NEW,processed.eq.IN_PROGRESS,processed.eq.ERROR)
+  url.searchParams.set("or", ELIGIBLE_OR_FILTER);
+
+  if (ONLY_ID) {
+    url.searchParams.set("id", `eq.${ONLY_ID}`);
     url.searchParams.set("limit", "1");
   } else {
     url.searchParams.set("order", "phone.asc");
@@ -250,19 +260,11 @@ async function supaGetEligibleRows(limit) {
   return await res.json();
 }
 
-
 async function supaGetRowById(id) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
   url.searchParams.set(
     "select",
-    [
-      "id",
-      "phone",
-      "name",
-      "processed",
-      "last_summary_at",
-      "summarized_linked_talk_num",
-    ].join(",")
+    ["id", "phone", "name", "processed", "last_summary_at", "summarized_linked_talk_num"].join(",")
   );
   url.searchParams.set("id", `eq.${id}`);
   url.searchParams.set("limit", "1");
@@ -272,11 +274,14 @@ async function supaGetRowById(id) {
   if (!res.ok) throw new Error(`Supabase GET users_total by id failed: ${res.status} ${text}`);
 
   let rows = [];
-  try { rows = JSON.parse(text); } catch { rows = []; }
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    rows = [];
+  }
   if (!Array.isArray(rows) || rows.length === 0) return null;
   return rows[0];
 }
-
 
 async function supaPatch(phone, patchObj, expectedProcessedStates = null) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
@@ -328,7 +333,6 @@ async function supaFetchActiveRiskPhrases() {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${RISK_PHRASES_TABLE}`);
   url.searchParams.set("select", "pattern");
   url.searchParams.set("is_active", "eq.true");
-  // Keep ordering stable (optional)
   url.searchParams.set("order", "pattern.asc");
 
   const res = await fetch(url, { headers: supaHeaders() });
@@ -346,7 +350,6 @@ async function supaFetchActiveRiskPhrases() {
     .map((r) => String(r?.pattern ?? "").trim())
     .filter((p) => p.length > 0);
 
-  // De-dup (case-insensitive)
   const seen = new Set();
   const out = [];
   for (const p of patterns) {
@@ -387,16 +390,6 @@ async function supaRiskReviewExists({ id, time_key, phone, line_num }) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
-
-function isPatientNumberedLineRaw(rawLine) {
-  // rawLine example: "-7- Q: ..." or "-7- שאלה: ..."
-  const s = String(rawLine ?? "").trimStart().toLowerCase();
-  const m = s.match(/^-\d+-\s*(.*)$/);
-  const body = (m ? m[1] : s).trimStart();
-  return body.startsWith("q:") || body.startsWith("שאלה:");
-}
-
-
 async function phraseScanAndInsertRisks({ id, time_key, phone, name, numberedText, activeRiskPhrases }) {
   if (!Array.isArray(activeRiskPhrases) || activeRiskPhrases.length === 0) return 0;
 
@@ -409,13 +402,10 @@ async function phraseScanAndInsertRisks({ id, time_key, phone, name, numberedTex
     const lineNum = ln.line_no;
     const lineText = ln.text ?? "";
 
+    // Scan patterns ONLY in patient lines (Q:/שאלה:)
+    const _t = String(lineText ?? "").trimStart().toLowerCase();
+    if (!(_t.startsWith("q:") || _t.startsWith("שאלה:"))) continue;
 
-// Scan patterns ONLY in patient lines (Q:/שאלה:)
-const _t = String(lineText ?? "").trimStart().toLowerCase();
-if (!(_t.startsWith("q:") || _t.startsWith("שאלה:"))) continue;
-
-
-    // Find first matching pattern for this line
     let matchedPattern = null;
     for (const pattern of activeRiskPhrases) {
       if (textContainsPattern(lineText, pattern)) {
@@ -423,17 +413,14 @@ if (!(_t.startsWith("q:") || _t.startsWith("שאלה:"))) continue;
         break;
       }
     }
-
     if (!matchedPattern) continue;
 
-    // Skip if ANY existing risk_reviews row exists for this PK (regardless of who inserted it)
     const exists = await supaRiskReviewExists({
       id,
       time_key,
       phone,
       line_num: lineNum,
     });
-
     if (exists) continue;
 
     await insertRiskReviewsRows([
@@ -499,7 +486,7 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     throw new Error("No talk text found in linked_talk or last_talk_tzvira");
   }
 
-  // Claim + move: allow claiming NEW/IN_PROGRESS
+  // Claim + move: allow claiming NEW/IN_PROGRESS/ERROR
   const movePatch =
     linkedTalk && linkedTalk.trim()
       ? { processed: "processing", last_talk_tzvira: linkedTalk, linked_talk: null }
@@ -541,7 +528,6 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     summarized_linked_talk: summarized,
   });
 
-  // Insert risks ONLY if risk_reasons is not empty
   const reasonsTrim = String(reasons ?? "").trim();
   if (reasonsTrim) {
     const riskLines = parseNumberedLines(String(risk ?? "").trim());
@@ -563,13 +549,10 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
       await insertRiskReviewsRows(reviewRows);
       console.log(`[INFO] phone=${phone} inserted risk_reviews rows=${reviewRows.length}`);
     } else {
-      console.log(
-        `[INFO] phone=${phone} risk_reasons present but no matched numbered lines; skipping risk_reviews insert.`
-      );
+      console.log(`[INFO] phone=${phone} risk_reasons present but no matched numbered lines; skipping risk_reviews insert.`);
     }
   }
 
-  // Phrase Scan (risk_phrases) - INSERT ONLY if no existing risk_reviews row for the same PK
   const phraseInserted = await phraseScanAndInsertRisks({
     id,
     time_key: lastSummaryAt,
@@ -600,7 +583,6 @@ async function markError(phone, err) {
   }
 }
 
-
 async function runPhraseScanOnly() {
   if (!ONLY_ID) throw new Error("PHRASE_SCAN_ONLY=1 requires ONLY_ID to be set (users_total.id)");
   console.log(`PHRASE_SCAN_ONLY=1 (ONLY_ID=${ONLY_ID})`);
@@ -617,7 +599,9 @@ async function runPhraseScanOnly() {
   const time_key = row.last_summary_at;
 
   if (!time_key || !String(time_key).trim()) {
-    throw new Error("users_total.last_summary_at is empty; cannot use as time_key for risk_reviews PK in PHRASE_SCAN_ONLY mode");
+    throw new Error(
+      "users_total.last_summary_at is empty; cannot use as time_key for risk_reviews PK in PHRASE_SCAN_ONLY mode"
+    );
   }
 
   const numberedText = row.summarized_linked_talk_num ?? "";
@@ -638,16 +622,16 @@ async function runPhraseScanOnly() {
   console.log(`[DONE] PHRASE_SCAN_ONLY phone=${phone} inserted=${phraseInserted} time_key=${time_key}`);
 }
 
-
 async function main() {
-
-if (PHRASE_SCAN_ONLY) {
-  await runPhraseScanOnly();
-  return;
-}
+  if (PHRASE_SCAN_ONLY) {
+    await runPhraseScanOnly();
+    return;
+  }
 
   const mode = ONLY_ID ? `ONLY_ID=${ONLY_ID}` : `limit=${MAX_ITEMS}`;
-  console.log(`Scanning ${USERS_TOTAL_TABLE} for processed in (NEW, IN_PROGRESS) (${mode})...`);
+  console.log(
+    `Scanning ${USERS_TOTAL_TABLE} for processed in (${ELIGIBLE_PROCESSED_STATES.join(", ")}) (${mode})...`
+  );
 
   const prompt10Text = await supaFetchPrompt10();
   console.log(
