@@ -59,8 +59,8 @@ async function supaSelectUsersTotalByPhone(phone) {
 
 async function supaSelectPromptUserText() {
   // Prompt source per requirement:
-  // public.users_information where phone = 66666666, column user_text
-  const promptPhone = "66666666";
+  // public.users_information where phone = 55555555, column user_text
+  const promptPhone = "55555555";
   const url =
     `${SUPABASE_URL}/rest/v1/users_information` +
     `?select=user_text` +
