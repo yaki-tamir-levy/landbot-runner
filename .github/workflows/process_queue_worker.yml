@@ -5,6 +5,8 @@ on:
   schedule:
     - cron: "*/6 * * * *"   # every minute (UTC)
   workflow_dispatch: {}
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
   group: process-queue-worker
@@ -16,10 +18,10 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "20"
 
