@@ -37,7 +37,7 @@ const CFG = {
   USERS_TABLE: process.env.USERS_TABLE || "users_tzvira",
   USERS_TEXT_FIELD: process.env.USERS_TEXT_FIELD || "last_talk_tzvira",
   USERS_PHONE_FIELD: process.env.USERS_PHONE_FIELD || "phone",
-  USERS_TIME_FIELD: process.env.USERS_TIME_FIELD || "time",
+  USERS_TIME_FIELD: process.env.USERS_TIME_FIELD || "time_key",
   USERS_NAME_FIELD: process.env.USERS_NAME_FIELD || "name",
   RISK_REVIEWS_TABLE: process.env.RISK_REVIEWS_TABLE || "risk_reviews",
 
