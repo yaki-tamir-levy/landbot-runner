@@ -5,8 +5,9 @@ on:
     workflows: ["Process Queue Worker (event-ish)"]
     types:
       - completed
-  workflow_dispatch: {}
-
+  workflow_dispatch: {} 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 jobs:
   worker:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
