@@ -11,6 +11,8 @@ jobs:
   worker:
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     timeout-minutes: 5
     steps:
       - name: Checkout
