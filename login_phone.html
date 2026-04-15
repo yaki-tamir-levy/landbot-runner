@@ -8,9 +8,10 @@
     body { font-family: Arial, sans-serif; max-width: 520px; margin: 40px auto; padding: 0 16px; }
     .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; }
     .row { margin: 10px 0; }
-    input { width: 100%; font-size: 18px; padding: 10px; border-radius: 10px; border: 1px solid #bbb; }
+    input { width: 100%; font-size: 18px; padding: 10px; border-radius: 10px; border: 1px solid #bbb; box-sizing: border-box; }
     button { width: 100%; font-size: 18px; padding: 10px; border-radius: 10px; border: 0; cursor: pointer; }
     button.primary { background: #111; color: #fff; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
     .muted { color: #666; font-size: 14px; }
     .ok { color: #0a7; }
     .err { color: #c00; }
@@ -20,95 +21,154 @@
 </head>
 <body>
 <div class="card">
-        <div class="row muted">הזן מספר טלפון. קוד אימות יישלח למייל המשויך. לאחר אימות תועבר לאפליקציה.<br>אם הקוד לא הגיע תוך דקה — בדוק גם בתיקיית <strong>ספאם</strong> או <strong>קידומי מכירות</strong>.</div>
-
-    <div class="row">
-      <label class="muted">טלפון</label>
-      <input id="phone" type="tel" placeholder="05xxxxxxxx" />
-    </div>
-
-    <div class="row">
-      <button id="btnSend" class="primary">שלח קוד</button>
-      <div id="sendStatus" class="muted"></div>
-    </div>
-
-    <div class="row">
-      <label class="muted">קוד (6 ספרות)</label>
-      <input id="token" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="______" />
-      <div id="verifyStatus" class="muted"></div>
-    </div>
+  <div class="row muted">
+    הזן מספר טלפון. קוד אימות יישלח למייל המשויך. לאחר אימות תועבר לאפליקציה.<br>
+    אם הקוד לא הגיע תוך דקה — בדוק גם בתיקיית <strong>ספאם</strong> או <strong>קידומי מכירות</strong>.
   </div>
+
+  <div class="row">
+    <label class="muted" for="phone">טלפון</label>
+    <input id="phone" type="tel" placeholder="05xxxxxxxx" autocomplete="tel" />
+  </div>
+
+  <div class="row">
+    <button id="btnSend" class="primary" type="button">שלח קוד</button>
+    <div id="sendStatus" class="muted"></div>
+  </div>
+
+  <div class="row">
+    <label class="muted" for="token">קוד (6 ספרות)</label>
+    <input id="token" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="______" />
+    <div id="verifyStatus" class="muted"></div>
+  </div>
+</div>
 
 <script>
 (() => {
-  // ====== חובה לעדכן לערכים האמיתיים שלך ======
-   const SUPABASE_URL = 'https://qcwimczsiuxkarwfiyai.supabase.co';
-    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI';
-
+  const SUPABASE_URL = 'https://qcwimczsiuxkarwfiyai.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI';
   const FUNCTIONS_BASE = `${SUPABASE_URL}/functions/v1`;
 
-  // return_to מגיע מה-Launcher. אם מישהו העביר return_to לא תקין (למשל login/launcher) ננעל לברירת מחדל.
   const qs = new URLSearchParams(location.search);
-  let returnTo = (qs.get("return_to") || "users_viewer_risk_prod.html").trim();
-  const bad = returnTo.includes("login_phone") || returnTo.includes("launcher");
-  if (bad) returnTo = "users_viewer_risk_prod.html";
+  let returnTo = (qs.get('return_to') || 'users_viewer_risk_prod.html').trim();
+  const bad = returnTo.includes('login_phone') || returnTo.includes('launcher');
+  if (bad) returnTo = 'users_viewer_risk_prod.html';
 
   const $ = (id) => document.getElementById(id);
-
-  const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
-  });
+  const phoneEl = $('phone');
+  const tokenEl = $('token');
+  const btnSendEl = $('btnSend');
+  const sendStatusEl = $('sendStatus');
+  const verifyStatusEl = $('verifyStatus');
 
   function setText(el, txt, cls) {
-    el.className = cls || "muted";
-    el.textContent = txt || "";
+    el.className = cls || 'muted';
+    el.textContent = txt || '';
+  }
+
+  function normalizePhone(value) {
+    return String(value || '').replace(/[^\d]/g, '').trim();
+  }
+
+  function validatePhone(rawPhone) {
+    const phone = normalizePhone(rawPhone);
+    if (!phone) return 'נא להזין מספר טלפון.';
+    if (!/^0\d{8,9}$/.test(phone)) return 'מספר הטלפון אינו תקין.';
+    return '';
+  }
+
+  function ensureSupabaseLoaded() {
+    if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+      const msg = 'ספריית Supabase לא נטענה. רענן את הדף ונסה שוב.';
+      console.error(msg);
+      setText(sendStatusEl, msg, 'err');
+      setText(verifyStatusEl, msg, 'err');
+      throw new Error(msg);
+    }
+  }
+
+  let supabase;
+  try {
+    ensureSupabaseLoaded();
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+    });
+  } catch (err) {
+    console.error('Supabase initialization failed:', err);
+    btnSendEl.disabled = true;
+    tokenEl.disabled = true;
+    return;
   }
 
   async function postJson(url, body) {
     const res = await fetch(url, {
-      method: "POST",
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "apikey": SUPABASE_ANON_KEY,
-        "Authorization": "Bearer " + SUPABASE_ANON_KEY
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY
       },
       body: JSON.stringify(body)
     });
+
     const txt = await res.text();
     let json = null;
-    try { json = JSON.parse(txt); } catch {}
-    if (!res.ok) {
-      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : txt;
-      throw new Error(msg || `HTTP ${res.status}`);
+    try {
+      json = JSON.parse(txt);
+    } catch (_err) {
+      json = null;
     }
+
+    if (!res.ok) {
+      const msg = (json && (json.error || json.message)) ? (json.error || json.message) : (txt || `HTTP ${res.status}`);
+      throw new Error(msg);
+    }
+
     return json || {};
   }
 
   async function sendCode() {
-    $("btnSend").disabled = true;
-    setText($("sendStatus"), "שולח קוד…", "muted");
+    const phoneError = validatePhone(phoneEl.value);
+    if (phoneError) {
+      setText(sendStatusEl, phoneError, 'err');
+      return;
+    }
+
+    btnSendEl.disabled = true;
+    tokenEl.disabled = false;
+    setText(sendStatusEl, 'שולח קוד…', 'muted');
+    setText(verifyStatusEl, '', 'muted');
+
     try {
-      await postJson(`${FUNCTIONS_BASE}/start-login`, { phone: $("phone").value });
-      setText($("sendStatus"), "אם המספר קיים במערכת — נשלח קוד למייל המשויך.", "ok");
-      $("token").focus();
-    } catch (e) {
-      console.error(e);
-      setText($("sendStatus"), "אם המספר קיים במערכת — נשלח קוד למייל המשויך.", "ok");
+      const payload = { phone: normalizePhone(phoneEl.value) };
+      await postJson(`${FUNCTIONS_BASE}/start-login`, payload);
+      setText(sendStatusEl, 'אם המספר קיים במערכת — נשלח קוד למייל המשויך.', 'ok');
+      tokenEl.focus();
+    } catch (err) {
+      console.error('start-login failed:', err);
+      setText(sendStatusEl, `שליחת הקוד נכשלה: ${err.message || 'שגיאה לא ידועה'}`, 'err');
     } finally {
-      $("btnSend").disabled = false;
+      btnSendEl.disabled = false;
     }
   }
 
   async function verifyCode(token) {
-    setText($("verifyStatus"), "מאמת…", "muted");
+    const phoneError = validatePhone(phoneEl.value);
+    if (phoneError) {
+      setText(verifyStatusEl, phoneError, 'err');
+      return;
+    }
+
+    setText(verifyStatusEl, 'מאמת…', 'muted');
+
     try {
       const data = await postJson(`${FUNCTIONS_BASE}/verify-login`, {
-        phone: $("phone").value,
+        phone: normalizePhone(phoneEl.value),
         token
       });
 
       if (!data.access_token || !data.refresh_token) {
-        throw new Error("Missing tokens");
+        throw new Error('Missing tokens');
       }
 
       const { error } = await supabase.auth.setSession({
@@ -117,29 +177,36 @@
       });
       if (error) throw error;
 
-      // מאשרים שה-session באמת נשמר לפני redirect (מונע לולאת חזרה ל-login במקרה של race)
-      const { data: sessData } = await supabase.auth.getSession();
+      const { data: sessData, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
       if (!sessData || !sessData.session) {
-        throw new Error("Session not persisted");
+        throw new Error('Session not persisted');
       }
 
-      // אם יש Guard בצד ה-Viewer (אופציונלי בלבד)
-      localStorage.setItem("otp_verified", "1");
-
-      setText($("verifyStatus"), "אימות הצליח. נכנס…", "ok");
+      localStorage.setItem('otp_verified', '1');
+      setText(verifyStatusEl, 'אימות הצליח. נכנס…', 'ok');
       location.replace(returnTo);
-    } catch (e) {
-      console.error(e);
-      setText($("verifyStatus"), "קוד שגוי / פג תוקף / שגיאת Session. נסה שוב.", "err");
+    } catch (err) {
+      console.error('verify-login failed:', err);
+      setText(verifyStatusEl, `האימות נכשל: ${err.message || 'שגיאה לא ידועה'}`, 'err');
     }
   }
 
-  $("btnSend").addEventListener("click", sendCode);
+  btnSendEl.addEventListener('click', sendCode);
 
-  $("token").addEventListener("input", (e) => {
-    const digits = (e.target.value || "").replace(/\D/g, "").slice(0, 6);
+  phoneEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      sendCode();
+    }
+  });
+
+  tokenEl.addEventListener('input', (e) => {
+    const digits = (e.target.value || '').replace(/\D/g, '').slice(0, 6);
     e.target.value = digits;
-    if (digits.length === 6) verifyCode(digits);
+    if (digits.length === 6) {
+      void verifyCode(digits);
+    }
   });
 })();
 </script>
