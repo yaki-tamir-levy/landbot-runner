@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- VERSION: 2026-01-16 STAGE3-FIX11 07-40 (RISK_REVIEWS + BUTTON CLICK BLUE) -->
+<!-- VERSION: 2026-05-04 STAGE3-FIX12 RISK-SCOPE-ID-TIME-PHONE -->
 <html lang="he" dir="rtl">
 <head>
   <script>
   // Version marker (no password gate – auth via Supabase session set in launcher.html)
-  var APP_VERSION = 'STAGE3_FIX11';
+  var APP_VERSION = 'STAGE3_FIX12_RISK_SCOPE_ID_TIME_PHONE';
 </script>
 
   <meta charset="utf-8" />
@@ -128,7 +128,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-01-16 STAGE3-FIX11 15-10 <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-04 STAGE3-FIX12 RISK-SCOPE-ID-TIME-PHONE <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -433,9 +433,9 @@ function getReviewerName(ev){
     allRows: [],
     flagsMap: new Map(),   // key(time,phone) -> {is_hidden}
     infoMap:  new Map(),   // phone -> {status}
-    riskMap:  new Map(),   // key(time,phone) -> [riskRows]
-    riskKeySet: new Set(), // ids that have any risk
-    riskForceKeySet: new Set() // ids that have risk in status NEW/REVIEWED (VIEWED legacy)
+    riskMap:  new Map(),   // key(id,time,phone) -> [riskRows]
+    riskKeySet: new Set(), // keys id+time_key+phone that have any risk
+    riskForceKeySet: new Set() // keys id+time_key+phone that have risk in status NEW/REVIEWED (VIEWED legacy)
   
   };
 
@@ -462,31 +462,36 @@ function getReviewerName(ev){
   }
 
   
+  function riskKey(id, time_key, phone){
+    return String(id||'') + '|' + String(time_key||'') + '|' + normPhone(phone);
+  }
+
   function buildRiskCache(allRisk){
-    CACHE.riskMap = new Map();   // id -> [riskRows]
-    CACHE.riskKeySet = new Set();    // ids that have any risk
-    CACHE.riskForceKeySet = new Set(); // ids that have risk in status NEW/REVIEWED (VIEWED legacy)
+    CACHE.riskMap = new Map();   // id+time_key+phone -> [riskRows]
+    CACHE.riskKeySet = new Set();    // keys that have any risk
+    CACHE.riskForceKeySet = new Set(); // keys that have risk in status NEW/REVIEWED (VIEWED legacy)
     (allRisk || []).forEach(function(rr){
-      var tid = rr && rr.id ? String(rr.id) : '';
-      if (!tid) return;
-      CACHE.riskKeySet.add(tid);
+      var k = riskKey(rr && rr.id, rr && rr.time_key, rr && rr.phone);
+      if (!String(rr && rr.id || '').trim()) return;
+      CACHE.riskKeySet.add(k);
       // _forceRisk should be true only if there is at least one unhandled/needs-attention risk
       // NEW or REVIEWED. VIEWED is treated as REVIEWED for backward compatibility.
       try{
         var st = String(rr.status || 'NEW').trim().toUpperCase();
-        if (st === 'NEW' || st === 'REVIEWED' || st === 'VIEWED') CACHE.riskForceKeySet.add(tid);
+        if (st === 'NEW' || st === 'REVIEWED' || st === 'VIEWED') CACHE.riskForceKeySet.add(k);
       }catch(e){}
-      var arr = CACHE.riskMap.get(tid);
-      if (!arr){ arr = []; CACHE.riskMap.set(tid, arr); }
+      var arr = CACHE.riskMap.get(k);
+      if (!arr){ arr = []; CACHE.riskMap.set(k, arr); }
       arr.push(rr);
     });
   }
 
   function markRowsWithRisk(){
     (CACHE.allRows || []).forEach(function(r){
-      r._hasRisk   = CACHE.riskKeySet.has(String(r.id||''));
+      var k = riskKey(r && r.id, r && r.time_key, r && r.phone);
+      r._hasRisk   = CACHE.riskKeySet.has(k);
       // _forceRisk: override client-side filters only when risk status is NEW/REVIEWED (VIEWED legacy).
-      r._forceRisk = CACHE.riskForceKeySet.has(String(r.id||''));
+      r._forceRisk = CACHE.riskForceKeySet.has(k);
     });
   }
 
@@ -818,15 +823,17 @@ function showInlineMsg(talkElem, msg){
   // RISK: מגיע רק מ-risk_reviews (בלי Regex)
   // -------------------------------
   
-  function loadRiskRows(talk_id){
+  function loadRiskRows(talk_id, time_key, phone){
     if (!talk_id) return Promise.resolve([]);
     if (CACHE && CACHE.loaded){
-      return Promise.resolve(CACHE.riskMap.get(String(talk_id)) || []);
+      return Promise.resolve(CACHE.riskMap.get(riskKey(talk_id, time_key, phone)) || []);
     }
     return supa.from(REVIEWS_TABLE)
       // NOTE: production schema uses LINE_NUM (no page_num)
       .select('id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
       .eq('id', talk_id)
+      .eq('time_key', time_key)
+      .eq('phone', phone)
       .then(function(res){
         if (res.error) return [];
         return res.data || [];
@@ -899,7 +906,7 @@ function showInlineMsg(talkElem, msg){
 
     return tryWithConstraintFallback().then(function(ok){
       if (ok && CACHE && CACHE.loaded){
-        var arr = CACHE.riskMap.get(String(talkId)) || [];
+        var arr = CACHE.riskMap.get(riskKey(talkId, timeKey, phone)) || [];
         for (var i=0;i<arr.length;i++){
           var rr = arr[i];
           var ln = (rr && rr.line_num);
@@ -938,7 +945,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       })
       .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
-          var arr = CACHE.riskMap.get(String(talkId)) || [];
+          var arr = CACHE.riskMap.get(riskKey(talkId, timeKey, phone)) || [];
           for (var i=0;i<arr.length;i++){
             var rr = arr[i];
             var ln = (rr && rr.line_num);
@@ -1281,7 +1288,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         // Anchor IDs are based on the original line numbers ("-1-", "-2-", ...)
         applyAnchorsToDialogLines(parsed.lines, talkDomId);
 
-        loadRiskRows(r.id).then(function(riskRows){
+        loadRiskRows(r.id, r.time_key, r.phone).then(function(riskRows){
           var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
           // open risks for alerts: status NEW or VIEWED (or REVIEWED) 
