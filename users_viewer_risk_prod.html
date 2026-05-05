@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- VERSION: 2026-05-04 STAGE3-FIX12 RISK-SCOPE-ID-TIME-PHONE -->
+<!-- VERSION: 2026-05-05 STAGE3-FIX13-RISK-PILL-OPENS -->
 <html lang="he" dir="rtl">
 <head>
   <script>
   // Version marker (no password gate – auth via Supabase session set in launcher.html)
-  var APP_VERSION = 'STAGE3_FIX12_RISK_SCOPE_ID_TIME_PHONE';
+  var APP_VERSION = 'STAGE3_FIX13_RISK_PILL_OPENS';
 </script>
 
   <meta charset="utf-8" />
@@ -63,6 +63,9 @@
     .alertitem{margin:6px 0;padding:8px 10px;border-radius:8px;background:#fff;border:1px dashed #fecaca}
     .alertitem .when{color:#7f1d1d;font-weight:700}
     .pill{ display:inline-block; padding:6px 12px; border-radius:999px; background:#ffe4e6; color:#000; font-size:16px; margin:2px 6px 2px 0; font-weight:900; border:1px solid #fecaca }
+    .pill[data-act="goto"]{ cursor:pointer; }
+    .pill[data-act="goto"]:hover{ filter:brightness(0.98); box-shadow:0 0 0 2px #fecaca inset; }
+    .pill[data-act="goto"]:focus{ outline:3px solid var(--hi); outline-offset:2px; }
     .btn-open-risk{ font-weight:900; background:#ffd1d6; border:2px solid #fca5a5; padding:6px 12px; border-radius:10px; }
     .btn-open-risk:hover{ filter:brightness(0.98) }
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -128,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-04 STAGE3-FIX12 RISK-SCOPE-ID-TIME-PHONE <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-05 STAGE3-FIX13-RISK-PILL-OPENS <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1236,12 +1239,10 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
               top.push('<div class="when">' + escapeHtml(AA.time) + '</div><div>');
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
-                top.push('<span class="pill mono" title="' + escapeHtml(it.text) +'">'+ escapeHtml(it.text) +'</span> ');
-
                 if (it.targetId){
-                  top.push('<button class="btn-open-risk" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">פתח את הסיכון</button> ');
+                  top.push('<span class="pill mono" title="הקש לפתיחת הסיכון" role="button" tabindex="0" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">' + escapeHtml(it.text) + '</span> ');
                 } else {
-                  top.push('<button class="btn-open-risk" disabled title="לא נמצא עוגן בטקסט">פתח את הסיכון</button> ');
+                  top.push('<span class="pill mono" title="לא נמצא עוגן בטקסט">' + escapeHtml(it.text) + '</span> ');
                 }
 
                 // Per-risk reviewer (unique per RISK). Display ONLY if it exists in DB.
@@ -1255,19 +1256,28 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
             }
             top.push('</div>');
             el.alertHost.innerHTML = top.join('');
-            el.alertHost.querySelectorAll('button[data-act="goto"]').forEach(function(btn){
-              btn.addEventListener('click', function(){
-                var id = btn.getAttribute('data-target');
-                var node = id ? document.getElementById(id) : null;
-                if (!node) return;
+            function openRiskTarget(targetId){
+              var node = targetId ? document.getElementById(targetId) : null;
+              if (!node) return;
 
-                // remove previous selection
-                document.querySelectorAll('.risk-selected').forEach(function(n){ n.classList.remove('risk-selected'); });
+              // remove previous selection
+              document.querySelectorAll('.risk-selected').forEach(function(n){ n.classList.remove('risk-selected'); });
 
-                node.scrollIntoView({behavior:'smooth', block:'center'});
-                node.classList.add('risk-selected');
-                node.classList.add('target-blink');
-                setTimeout(function(){ node.classList.remove('target-blink'); }, 1300);
+              node.scrollIntoView({behavior:'smooth', block:'center'});
+              node.classList.add('risk-selected');
+              node.classList.add('target-blink');
+              setTimeout(function(){ node.classList.remove('target-blink'); }, 1300);
+            }
+
+            el.alertHost.querySelectorAll('[data-act="goto"]').forEach(function(node){
+              node.addEventListener('click', function(){
+                openRiskTarget(node.getAttribute('data-target'));
+              });
+              node.addEventListener('keydown', function(ev){
+                if (ev.key === 'Enter' || ev.key === ' '){
+                  ev.preventDefault();
+                  openRiskTarget(node.getAttribute('data-target'));
+                }
               });
             });
           } else {
