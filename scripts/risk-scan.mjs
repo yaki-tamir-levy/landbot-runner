@@ -357,7 +357,7 @@ function findFirstRiskPattern(patientLine, patterns) {
 }
 
 async function main() {
-  console.log("RISK_SCAN_VERSION=2026-05-10-SCAN-ONLY-2026");
+  console.log("RISK_SCAN_VERSION=2026-05-10-SCAN-ONLY-2026  ");
 
   const patterns = await loadActivePatterns();
   console.log(`Loaded ${patterns.length} active patterns from ${CFG.RISK_PHRASES_TABLE}`);
