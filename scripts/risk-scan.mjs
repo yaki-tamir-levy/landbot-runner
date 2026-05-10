@@ -357,7 +357,7 @@ function findFirstRiskPattern(patientLine, patterns) {
 }
 
 async function main() {
-  console.log("RISK_SCAN_VERSION=2026-05-07-LINE-NUM-MATCH-METHOD-2");
+  console.log("RISK_SCAN_VERSION=2026-05-10-SCAN-ONLY-2026");
 
   const patterns = await loadActivePatterns();
   console.log(`Loaded ${patterns.length} active patterns from ${CFG.RISK_PHRASES_TABLE}`);
@@ -378,6 +378,7 @@ async function main() {
 
     const phone = String(row?.[CFG.USERS_PHONE_FIELD] ?? "").trim();
     const time_key = row?.[CFG.USERS_TIME_FIELD];
+    if (!String(time_key || "").startsWith("2026-")) continue;
     const name = String(row?.[CFG.USERS_NAME_FIELD] ?? "").trim();
     const talkRaw = row?.[CFG.USERS_TEXT_FIELD];
 
