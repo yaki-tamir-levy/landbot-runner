@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * risk-scan.mjs
- * VERSION: 2026-05-07-LINE-NUM-MATCH-METHOD-2
+ * VERSION: 2026-05-11-PARSER-LINE-PREFIX-YEAR-GTE-2026
  *
  * AGREED BEHAVIOR:
  * - NO hardcoded RISK words/regex in code.
@@ -115,20 +115,28 @@ function escapeRegExp(s) {
  */
 function buildSpeakerRegexes(patientName) {
   const name = patientName && String(patientName).trim() ? String(patientName).trim() : "";
+
+  // Supported line starts:
+  //   Q: ...
+  //   -1- Q: ...
+  //   [timestamp] Q: ...
+  //   [timestamp] -1- Q: ...
   const tsPrefix = String.raw`\s*(?:\[[^\]]*\]\s*)?`;
+  const lineNumPrefix = String.raw`(?:-\d+-\s*)?`;
+  const leadPrefix = tsPrefix + lineNumPrefix;
 
   const rxPatientName = name
-    ? new RegExp("^" + tsPrefix + escapeRegExp(name.toLowerCase()) + String.raw`:\s*`)
+    ? new RegExp("^" + leadPrefix + escapeRegExp(name.toLowerCase()) + String.raw`:\s*`)
     : null;
 
-  const rxTher = new RegExp("^" + tsPrefix + String.raw`המטפל:\s*`);
-  const rxQ = new RegExp("^" + tsPrefix + String.raw`q:\s*`, "i");
-  const rxA = new RegExp("^" + tsPrefix + String.raw`a:\s*`, "i");
-  const rxGenericPatient = new RegExp("^" + tsPrefix + String.raw`(?:המטופל|מטופל\/ת|מטופל):\s*`);
-  const rxGenericTher = new RegExp("^" + tsPrefix + String.raw`(?:המטפל):\s*`);
+  const rxTher = new RegExp("^" + leadPrefix + String.raw`המטפל:\s*`);
+  const rxQ = new RegExp("^" + leadPrefix + String.raw`q:\s*`, "i");
+  const rxA = new RegExp("^" + leadPrefix + String.raw`a:\s*`, "i");
+  const rxGenericPatient = new RegExp("^" + leadPrefix + String.raw`(?:המטופל|מטופל\/ת|מטופל):\s*`);
+  const rxGenericTher = new RegExp("^" + leadPrefix + String.raw`(?:המטפל):\s*`);
 
-  const rxHebQ = new RegExp("^" + String.raw`\s*שאלה:\s*`);
-  const rxHebA = new RegExp("^" + String.raw`\s*תשובה:\s*`);
+  const rxHebQ = new RegExp("^" + leadPrefix + String.raw`שאלה:\s*`);
+  const rxHebA = new RegExp("^" + leadPrefix + String.raw`תשובה:\s*`);
 
   return {
     rxPatientName,
@@ -356,8 +364,23 @@ function findFirstRiskPattern(patientLine, patterns) {
   return null;
 }
 
+function isTimeKeyYearAtLeast2026(timeKey) {
+  const raw = String(timeKey ?? "").trim();
+  const yearMatch = raw.match(/^(\d{4})/);
+
+  if (yearMatch) {
+    return Number(yearMatch[1]) >= 2026;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return false;
+
+  return parsed.getUTCFullYear() >= 2026;
+}
+
+
 async function main() {
-  console.log("RISK_SCAN_VERSION=2026-05-10-SCAN-ONLY-2026  ");
+  console.log("RISK_SCAN_VERSION=2026-05-11-PARSER-LINE-PREFIX-YEAR-GTE-2026");
 
   const patterns = await loadActivePatterns();
   console.log(`Loaded ${patterns.length} active patterns from ${CFG.RISK_PHRASES_TABLE}`);
@@ -378,7 +401,7 @@ async function main() {
 
     const phone = String(row?.[CFG.USERS_PHONE_FIELD] ?? "").trim();
     const time_key = row?.[CFG.USERS_TIME_FIELD];
-    if (!String(time_key || "").startsWith("2026-")) continue;
+    if (!isTimeKeyYearAtLeast2026(time_key)) continue;
     const name = String(row?.[CFG.USERS_NAME_FIELD] ?? "").trim();
     const talkRaw = row?.[CFG.USERS_TEXT_FIELD];
 
