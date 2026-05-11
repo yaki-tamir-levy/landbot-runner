@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /**
  * risk-scan.mjs
- * VERSION: BBB 2026-05-11-PARSER-LINE-PREFIX-YEAR-GTE-2026
+ * VERSION: 2026-05-11-PARSER-ID-LINE-PREFIX-YEAR-GTE-2026
  *
  * AGREED BEHAVIOR:
  * - NO hardcoded RISK words/regex in code.
  * - Load patterns ONLY from DB table: public.risk_phrases.
  * - Detection is substring-only on normalized text.
  * - Scan ONLY patient utterances, using the same speaker rules as the viewer.
- * - Attach each RISK row to users_tzvira by: time_key + phone + line_num.
+ * - Attach each RISK row to users_tzvira by: id + time_key + phone + line_num.
  * - If a row already exists in risk_reviews for the same time_key + phone + line_num: skip.
  * - If no row exists: insert into risk_reviews with match_method = "2" and status = "NEW".
  * - Do NOT use snippet_hash or pattern_key in risk_reviews.
@@ -67,20 +67,11 @@ function md5Hex(s) {
   return crypto.createHash("md5").update(String(s ?? ""), "utf8").digest("hex");
 }
 
-/**
- * Normalize with newlines:
- * - remove Hebrew niqqud/cantillation
- * - lowercase
- * - normalize CRLF -> LF
- * - collapse spaces/tabs per line, keep newlines
- */
 function normalizeTextKeepNewlines(s) {
   if (s == null) return "";
   let t = String(s);
 
-  // Hebrew diacritics: U+0591–U+05BD, U+05BF, U+05C1–U+05C2, U+05C4–U+05C7
   t = t.replace(/[\u0591-\u05BD\u05BF\u05C1-\u05C2\u05C4-\u05C7]/g, "");
-
   t = t.toLowerCase();
   t = t.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
@@ -93,7 +84,6 @@ function normalizeTextKeepNewlines(s) {
   return t;
 }
 
-/** Inline normalization for patterns and row matching. */
 function normalizeInline(s) {
   return normalizeTextKeepNewlines(s).replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -102,25 +92,9 @@ function escapeRegExp(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Speaker parsing: align with viewer's toDialogLines().
- *
- * Viewer rules summary:
- * - Optional WhatsApp timestamp prefix: "[...]" at start of line
- * - Patient line if starts with: "{patientName}:" OR "מטופל:"/"המטופל:"/"מטופל/ת:" (generic)
- * - Therapist line if starts with: "המטפל:"
- * - Q: is patient, A: is therapist
- * - "שאלה:" patient, "תשובה:" therapist
- * - Lines without a prefix belong to the last known speaker.
- */
 function buildSpeakerRegexes(patientName) {
   const name = patientName && String(patientName).trim() ? String(patientName).trim() : "";
 
-  // Supported line starts:
-  //   Q: ...
-  //   -1- Q: ...
-  //   [timestamp] Q: ...
-  //   [timestamp] -1- Q: ...
   const tsPrefix = String.raw`\s*(?:\[[^\]]*\]\s*)?`;
   const lineNumPrefix = String.raw`(?:-\d+-\s*)?`;
   const leadPrefix = tsPrefix + lineNumPrefix;
@@ -184,10 +158,6 @@ function stripSpeakerPrefixFromLine(line, rx, speakerType) {
   return { matched: false, speaker: speakerType, text: line.trim() };
 }
 
-/**
- * Return patient utterance lines with their 1-based source line number.
- * Empty lines are ignored, but line_num still reflects the physical source line position.
- */
 function extractPatientLinesByViewerRules(textNormWithNL, patientName) {
   const rx = buildSpeakerRegexes(patientName);
   const lines = textNormWithNL.split("\n");
@@ -197,7 +167,7 @@ function extractPatientLinesByViewerRules(textNormWithNL, patientName) {
 
   for (let i = 0; i < lines.length; i += 1) {
     const sourceLineNum = i + 1;
-    let line = lines[i];
+    const line = lines[i];
     if (!line) continue;
 
     const parsed = stripSpeakerPrefixFromLine(line, rx, speaker);
@@ -265,9 +235,9 @@ async function loadActivePatterns() {
     })
     .filter(Boolean);
 
-  // Deduplicate by normalized pattern.
   const seen = new Set();
   const uniq = [];
+
   for (const p of list) {
     if (seen.has(p.pattern_norm)) continue;
     seen.add(p.pattern_norm);
@@ -281,6 +251,7 @@ async function loadActivePatterns() {
 async function* fetchUsersRows(maxRows) {
   const table = CFG.USERS_TABLE;
   const select = [
+    "id",
     CFG.USERS_PHONE_FIELD,
     CFG.USERS_TIME_FIELD,
     CFG.USERS_NAME_FIELD,
@@ -331,10 +302,11 @@ async function riskReviewExists({ time_key, phone, line_num }) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
-async function insertRiskReview({ time_key, phone, name, line_num, short_risk, risk_reasons }) {
+async function insertRiskReview({ id, time_key, phone, name, line_num, short_risk, risk_reasons }) {
   const table = CFG.RISK_REVIEWS_TABLE;
 
   const row = {
+    id,
     time_key,
     phone,
     name: name || null,
@@ -378,9 +350,8 @@ function isTimeKeyYearAtLeast2026(timeKey) {
   return parsed.getUTCFullYear() >= 2026;
 }
 
-
 async function main() {
-  console.log("RISK_SCAN_VERSION=2026-05-11-PARSER-LINE-PREFIX-YEAR-GTE-2026");
+  console.log("RISK_SCAN_VERSION=QQQ 2026-05-11-PARSER-ID-LINE-PREFIX-YEAR-GTE-2026");
 
   const patterns = await loadActivePatterns();
   console.log(`Loaded ${patterns.length} active patterns from ${CFG.RISK_PHRASES_TABLE}`);
@@ -399,13 +370,16 @@ async function main() {
   for await (const row of fetchUsersRows(CFG.MAX_ROWS)) {
     scannedRows += 1;
 
+    const id = String(row?.id ?? "").trim();
     const phone = String(row?.[CFG.USERS_PHONE_FIELD] ?? "").trim();
     const time_key = row?.[CFG.USERS_TIME_FIELD];
+
     if (!isTimeKeyYearAtLeast2026(time_key)) continue;
+
     const name = String(row?.[CFG.USERS_NAME_FIELD] ?? "").trim();
     const talkRaw = row?.[CFG.USERS_TEXT_FIELD];
 
-    if (!phone || !time_key || !talkRaw) continue;
+    if (!id || !phone || !time_key || !talkRaw) continue;
 
     const talkNormWithNL = normalizeTextKeepNewlines(talkRaw);
     const patientLines = extractPatientLinesByViewerRules(talkNormWithNL, name);
@@ -430,6 +404,7 @@ async function main() {
       }
 
       await insertRiskReview({
+        id,
         time_key,
         phone,
         name,
