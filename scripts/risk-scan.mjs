@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * risk-scan.mjs
- * VERSION: 2026-05-11-PARSER-LINE-PREFIX-YEAR-GTE-2026
+ * VERSION: AAA 2026-05-11-PARSER-LINE-PREFIX-YEAR-GTE-2026
  *
  * AGREED BEHAVIOR:
  * - NO hardcoded RISK words/regex in code.
