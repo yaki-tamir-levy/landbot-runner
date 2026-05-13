@@ -188,6 +188,20 @@ def _supabase_get(
         return r.status_code, r.text, ctype
 
 
+def _print_subprocess_output(p: subprocess.CompletedProcess[str]) -> None:
+    """Print captured subprocess output so GitHub Actions logs include child-tool diagnostics."""
+    stdout = (p.stdout or "").strip()
+    stderr = (p.stderr or "").strip()
+
+    if stdout:
+        print("[INFO] tools/pushover_send.py stdout:")
+        print(stdout)
+
+    if stderr:
+        print("[INFO] tools/pushover_send.py stderr:", file=sys.stderr)
+        print(stderr, file=sys.stderr)
+
+
 def _send_pushover_via_tool(title: str, message: str, dry_run: bool) -> None:
     """Delegate sending to tools/pushover_send.py so existing env support stays consistent."""
 
@@ -200,12 +214,10 @@ def _send_pushover_via_tool(title: str, message: str, dry_run: bool) -> None:
         return
 
     p = subprocess.run(cmd, capture_output=True, text=True)
+    _print_subprocess_output(p)
+
     if p.returncode != 0:
         print("[ERROR] tools/pushover_send.py failed", file=sys.stderr)
-        if p.stdout:
-            print(p.stdout, file=sys.stderr)
-        if p.stderr:
-            print(p.stderr, file=sys.stderr)
         sys.exit(p.returncode)
 
 
