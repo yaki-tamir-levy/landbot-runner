@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- VERSION: 2026-05-05 STAGE3-FIX13-RISK-PILL-OPENS -->
+<!-- VERSION: 2026-05-13 STAGE3-FIX14-RISK-MATCH-TIME-PHONE -->
 <html lang="he" dir="rtl">
 <head>
   <script>
   // Version marker (no password gate – auth via Supabase session set in launcher.html)
-  var APP_VERSION = 'STAGE3_FIX13_RISK_PILL_OPENS';
+  var APP_VERSION = 'STAGE3_FIX14_RISK_MATCH_TIME_PHONE';
 </script>
 
   <meta charset="utf-8" />
@@ -131,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-05 STAGE3-FIX13-RISK-PILL-OPENS <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX14-RISK-MATCH-TIME-PHONE AAA <span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -436,9 +436,9 @@ function getReviewerName(ev){
     allRows: [],
     flagsMap: new Map(),   // key(time,phone) -> {is_hidden}
     infoMap:  new Map(),   // phone -> {status}
-    riskMap:  new Map(),   // key(id,time,phone) -> [riskRows]
-    riskKeySet: new Set(), // keys id+time_key+phone that have any risk
-    riskForceKeySet: new Set() // keys id+time_key+phone that have risk in status NEW/REVIEWED (VIEWED legacy)
+    riskMap:  new Map(),   // key(time,phone) -> [riskRows]
+    riskKeySet: new Set(), // keys time_key+phone that have any risk
+    riskForceKeySet: new Set() // keys time_key+phone that have risk in status NEW/REVIEWED (VIEWED legacy)
   
   };
 
@@ -466,11 +466,13 @@ function getReviewerName(ev){
 
   
   function riskKey(id, time_key, phone){
-    return String(id||'') + '|' + String(time_key||'') + '|' + normPhone(phone);
+    // RISK attachment key: time_key + normalized phone only.
+    // id is intentionally ignored because users_tzvira.id can repeat across talks.
+    return String(time_key||'') + '|' + normPhone(phone);
   }
 
   function buildRiskCache(allRisk){
-    CACHE.riskMap = new Map();   // id+time_key+phone -> [riskRows]
+    CACHE.riskMap = new Map();   // time_key+phone -> [riskRows]
     CACHE.riskKeySet = new Set();    // keys that have any risk
     CACHE.riskForceKeySet = new Set(); // keys that have risk in status NEW/REVIEWED (VIEWED legacy)
     (allRisk || []).forEach(function(rr){
@@ -827,14 +829,12 @@ function showInlineMsg(talkElem, msg){
   // -------------------------------
   
   function loadRiskRows(talk_id, time_key, phone){
-    if (!talk_id) return Promise.resolve([]);
     if (CACHE && CACHE.loaded){
       return Promise.resolve(CACHE.riskMap.get(riskKey(talk_id, time_key, phone)) || []);
     }
     return supa.from(REVIEWS_TABLE)
       // NOTE: production schema uses LINE_NUM (no page_num)
       .select('id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
-      .eq('id', talk_id)
       .eq('time_key', time_key)
       .eq('phone', phone)
       .then(function(res){
@@ -849,7 +849,7 @@ function showInlineMsg(talkElem, msg){
   // ------------------------------------------------------------
   function updateRiskReviewStatus(talkId, timeKey, phone, lineNum, newStatus, notes, reviewerName){
     var stUi = String(newStatus || '').trim();
-    if (!talkId || !lineNum || !stUi) return Promise.resolve(false);
+    if (!timeKey || !phone || !lineNum || !stUi) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
 
 
@@ -868,7 +868,6 @@ function showInlineMsg(talkElem, msg){
       upd[colName] = statusVal;
       return supa.from(REVIEWS_TABLE)
         .update(upd)
-        .eq('id', talkId)
         .eq('time_key', timeKey)
         .eq('phone', phone)
         .eq('line_num', lineNum)
@@ -926,7 +925,7 @@ function showInlineMsg(talkElem, msg){
   }
 
 function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerName){
-    if (!talkId || !lineNum) return Promise.resolve(false);
+    if (!timeKey || !phone || !lineNum) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
     var rn = String(reviewerName == null ? '' : reviewerName).trim();
     if (!rn){ throw new Error('חובה להזין שם מטפל'); }
@@ -935,7 +934,6 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
     // It must NOT change status/reviewed_at.
     return supa.from(REVIEWS_TABLE)
       .update({ review_notes: txt, reviewer: rn })
-      .eq('id', talkId)
       .eq('time_key', timeKey)
       .eq('phone', phone)
       .eq('line_num', lineNum)
