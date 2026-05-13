@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- VERSION: 2026-05-13 STAGE3-FIX14-RISK-MATCH-TIME-PHONE -->
+<!-- VERSION: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY -->
 <html lang="he" dir="rtl">
 <head>
   <script>
   // Version marker (no password gate – auth via Supabase session set in launcher.html)
-  var APP_VERSION = 'STAGE3_FIX14_RISK_MATCH_TIME_PHONE';
+  var APP_VERSION = 'STAGE3_FIX15_ISRAEL_TIME_DISPLAY';
 </script>
 
   <meta charset="utf-8" />
@@ -131,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX14-RISK-MATCH-TIME-PHONE AAA <span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB<span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -694,14 +694,45 @@ function stripAllHtml(raw){
   }
 
   function timeKeyToHuman(k){
-    var s = String(k||'');
-    var parts = s.split('-');
-    if (parts.length === 2){
-      var d = parts[0];
-      var hhmmssms = parts[1].replace(/\./g, ':');
-      return hhmmssms + '  ' + d;
+    // Display only: convert DB timestamps from UTC (+00) to Israel time.
+    // Does not change filtering, matching, Supabase queries, or stored data.
+    try{
+      var s = String(k || '').trim();
+      if (!s) return '';
+
+      var iso = s;
+
+      // PostgreSQL timestamptz example:
+      // 2026-05-11 07:00:54.680000+00
+      // JS Date needs ISO-like T and a timezone offset in +00:00 form.
+      iso = iso.replace(' ', 'T');
+      iso = iso.replace(/(\.\d{3})\d+/, '$1');
+      iso = iso.replace(/([+-]\d{2})$/, '$1:00');
+
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return s;
+
+      var parts = new Intl.DateTimeFormat('he-IL', {
+        timeZone: 'Asia/Jerusalem',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      }).formatToParts(d);
+
+      function part(type){
+        var item = parts.find(function(x){ return x.type === type; });
+        return item ? item.value : '';
+      }
+
+      return part('day') + '.' + part('month') + '.' + part('year') + ' ' +
+             part('hour') + ':' + part('minute') + ':' + part('second');
+    } catch(e){
+      return String(k || '');
     }
-    return s;
   }
 
   function escapeRegExp(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }
