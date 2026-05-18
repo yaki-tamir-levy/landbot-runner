@@ -1,0 +1,32 @@
+name: risk-scan V2
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run risk scan V2
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          USERS_TABLE: users_tzvira_v2
+          RISK_REVIEWS_TABLE: risk_reviews_v2
+          RISK_PHRASES_TABLE: risk_phrases
+        run: node ./scripts/risk-scan.mjs

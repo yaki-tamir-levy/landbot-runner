@@ -23,6 +23,7 @@
  *   USERS_TABLE                  default: users_tzvira
  *   USERS_TEXT_FIELD             default: last_talk_tzvira
  *   USERS_PHONE_FIELD            default: phone
+ *   USERS_PATIENT_CODE_FIELD     default: patient_code when using V2 tables
  *   USERS_TIME_FIELD             default: time_key
  *   USERS_NAME_FIELD             default: name
  *   RISK_REVIEWS_TABLE           default: risk_reviews
@@ -44,6 +45,7 @@ const CFG = {
   USERS_PHONE_FIELD: process.env.USERS_PHONE_FIELD || "phone",
   USERS_TIME_FIELD: process.env.USERS_TIME_FIELD || "time_key",
   USERS_NAME_FIELD: process.env.USERS_NAME_FIELD || "name",
+  USERS_PATIENT_CODE_FIELD: process.env.USERS_PATIENT_CODE_FIELD || "",
   RISK_REVIEWS_TABLE: process.env.RISK_REVIEWS_TABLE || "risk_reviews",
 
   MATCH_METHOD: String(process.env.MATCH_METHOD || "2"),
@@ -52,6 +54,12 @@ const CFG = {
   MAX_ROWS: Number(process.env.MAX_ROWS || 5000),
   PAGE_SIZE: Number(process.env.PAGE_SIZE || 1000),
 };
+
+const USER_PATIENT_CODE_FIELD = CFG.USERS_PATIENT_CODE_FIELD || "patient_code";
+const USE_PATIENT_CODE = Boolean(
+  String(CFG.USERS_TABLE || "").endsWith("_v2") &&
+  String(CFG.RISK_REVIEWS_TABLE || "").endsWith("_v2")
+);
 
 function die(msg) {
   console.error(`ERROR: ${msg}`);
@@ -250,13 +258,20 @@ async function loadActivePatterns() {
 
 async function* fetchUsersRows(maxRows) {
   const table = CFG.USERS_TABLE;
-  const select = [
+  const fields = [
     "id",
-    CFG.USERS_PHONE_FIELD,
     CFG.USERS_TIME_FIELD,
     CFG.USERS_NAME_FIELD,
     CFG.USERS_TEXT_FIELD,
-  ].join(",");
+  ];
+
+  if (USE_PATIENT_CODE) {
+    fields.splice(1, 0, USER_PATIENT_CODE_FIELD);
+  } else {
+    fields.splice(1, 0, CFG.USERS_PHONE_FIELD);
+  }
+
+  const select = fields.join(",");
 
   let fetched = 0;
   let offset = 0;
@@ -286,37 +301,50 @@ async function* fetchUsersRows(maxRows) {
   }
 }
 
-function buildRiskReviewExistsPath({ time_key, phone, line_num }) {
+function buildRiskReviewExistsPath({ id, time_key, phone, patient_code, line_num }) {
   const table = CFG.RISK_REVIEWS_TABLE;
   const params = new URLSearchParams();
   params.set("select", "id");
   params.set("time_key", `eq.${time_key}`);
-  params.set("phone", `eq.${phone}`);
-  params.set("line_num", `eq.${line_num}`);
+  if (USE_PATIENT_CODE) {
+    params.set("id", `eq.${id}`);
+    params.set("patient_code", `eq.${patient_code}`);
+    params.set("line_num", `eq.${line_num}`);
+  } else {
+    params.set("phone", `eq.${phone}`);
+    params.set("line_num", `eq.${line_num}`);
+  }
   params.set("limit", "1");
   return `/rest/v1/${table}?${params.toString()}`;
 }
 
-async function riskReviewExists({ time_key, phone, line_num }) {
-  const rows = await supabaseFetch(buildRiskReviewExistsPath({ time_key, phone, line_num }));
-  return Array.isArray(rows) && rows.length > 0;
+async function riskReviewExists({ id, time_key, phone, patient_code, line_num }) {
+  const path = buildRiskReviewExistsPath({ id, time_key, phone, patient_code, line_num });
+  const rows = await supabaseFetch(path);
+  const count = Array.isArray(rows) ? rows.length : 0;
+  console.log(`[DEBUG] riskReviewExists URL=${path} result_count=${count}`);
+  return count > 0;
 }
 
-async function insertRiskReview({ id, time_key, phone, name, line_num, short_risk, risk_reasons }) {
+async function insertRiskReview({ id, time_key, phone, patient_code, name, line_num, short_risk, risk_reasons }) {
   const table = CFG.RISK_REVIEWS_TABLE;
 
   const row = {
     id,
     time_key,
-    phone,
-    name: name || null,
     line_num,
     status: "NEW",
     severity: CFG.DEFAULT_SEVERITY,
     match_method: CFG.MATCH_METHOD,
     short_risk: short_risk || null,
     risk_reasons: risk_reasons || null,
+    name: name || null,
+    phone: phone || null,
   };
+
+  if (USE_PATIENT_CODE) {
+    row.patient_code = patient_code || null;
+  }
 
   await supabaseFetch(`/rest/v1/${table}`, {
     method: "POST",
@@ -366,12 +394,14 @@ async function main() {
   let matchesFound = 0;
   let insertedRows = 0;
   let skippedExistingRows = 0;
+  const v2RuntimeDedupe = new Set();
 
   for await (const row of fetchUsersRows(CFG.MAX_ROWS)) {
     scannedRows += 1;
 
     const id = String(row?.id ?? "").trim();
     const phone = String(row?.[CFG.USERS_PHONE_FIELD] ?? "").trim();
+    const patient_code = USE_PATIENT_CODE ? String(row?.[USER_PATIENT_CODE_FIELD] ?? "").trim() : "";
     const time_key = row?.[CFG.USERS_TIME_FIELD];
 
     if (!isTimeKeyYearAtLeast2026(time_key)) continue;
@@ -379,7 +409,14 @@ async function main() {
     const name = String(row?.[CFG.USERS_NAME_FIELD] ?? "").trim();
     const talkRaw = row?.[CFG.USERS_TEXT_FIELD];
 
-    if (!id || !phone || !time_key || !talkRaw) continue;
+    if (!id || !time_key || !talkRaw) continue;
+    if (USE_PATIENT_CODE && !patient_code) {
+      console.warn(
+        `[WARN] Skipping row id=${id} time_key=${time_key} missing ${USER_PATIENT_CODE_FIELD} in V2 mode`
+      );
+      continue;
+    }
+    if (!USE_PATIENT_CODE && !phone) continue;
 
     const talkNormWithNL = normalizeTextKeepNewlines(talkRaw);
     const patientLines = extractPatientLinesByViewerRules(talkNormWithNL, name);
@@ -392,9 +429,27 @@ async function main() {
 
       matchesFound += 1;
 
+      if (USE_PATIENT_CODE) {
+        const pkDedupeKey = JSON.stringify([
+          id,
+          time_key,
+          patient_code,
+          patientLine.line_num,
+        ]);
+        if (v2RuntimeDedupe.has(pkDedupeKey)) {
+          console.warn(
+            `[WARN] Runtime duplicate skipped for pk=${pkDedupeKey} patient_code=${patient_code} time_key=${time_key} line_num=${patientLine.line_num}`
+          );
+          continue;
+        }
+        v2RuntimeDedupe.add(pkDedupeKey);
+      }
+
       const alreadyExists = await riskReviewExists({
+        id,
         time_key,
         phone,
+        patient_code,
         line_num: patientLine.line_num,
       });
 
@@ -403,10 +458,21 @@ async function main() {
         continue;
       }
 
+      const debugDedupeKey = JSON.stringify([
+        id,
+        time_key,
+        patient_code,
+        patientLine.line_num,
+      ]);
+      console.log(
+        `[DEBUG] About to insert risk review with runtimePK=${debugDedupeKey} short_risk=${patientLine.text}`
+      );
+
       await insertRiskReview({
         id,
         time_key,
         phone,
+        patient_code,
         name,
         line_num: patientLine.line_num,
         short_risk: patientLine.text,
