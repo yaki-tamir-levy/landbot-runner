@@ -1,6 +1,8 @@
 name: risk-scan V2
 
 on:
+  schedule:
+    - cron: "*/15 * * * *"
   workflow_dispatch: {}
 
 permissions:
