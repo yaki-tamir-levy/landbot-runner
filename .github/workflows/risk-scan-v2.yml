@@ -27,6 +27,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           USERS_TABLE: users_tzvira_v2
+          USERS_PATIENT_CODE_FIELD: patient_code
           RISK_REVIEWS_TABLE: risk_reviews_v2
           RISK_PHRASES_TABLE: risk_phrases
         run: node ./scripts/risk-scan.mjs
