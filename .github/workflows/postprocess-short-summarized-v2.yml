@@ -1,6 +1,10 @@
 name: Postprocess short_summarized V2
 
 on:
+  workflow_run:
+    workflows: ["Process Queue Worker V2 (event-ish)"]
+    types:
+      - completed
   workflow_dispatch: {}
 
 env:
@@ -11,6 +15,7 @@ permissions:
 
 jobs:
   worker:
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
