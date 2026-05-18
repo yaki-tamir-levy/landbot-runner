@@ -40,13 +40,13 @@ const CFG = {
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY || "",
 
   RISK_PHRASES_TABLE: process.env.RISK_PHRASES_TABLE || "risk_phrases",
-  USERS_TABLE: process.env.USERS_TABLE || "users_tzvira",
+  USERS_TABLE: process.env.USERS_TABLE || "",
   USERS_TEXT_FIELD: process.env.USERS_TEXT_FIELD || "last_talk_tzvira",
   USERS_PHONE_FIELD: process.env.USERS_PHONE_FIELD || "phone",
   USERS_TIME_FIELD: process.env.USERS_TIME_FIELD || "time_key",
   USERS_NAME_FIELD: process.env.USERS_NAME_FIELD || "name",
   USERS_PATIENT_CODE_FIELD: process.env.USERS_PATIENT_CODE_FIELD || "",
-  RISK_REVIEWS_TABLE: process.env.RISK_REVIEWS_TABLE || "risk_reviews",
+  RISK_REVIEWS_TABLE: process.env.RISK_REVIEWS_TABLE || "",
 
   MATCH_METHOD: String(process.env.MATCH_METHOD || "2"),
   DEFAULT_SEVERITY: process.env.DEFAULT_SEVERITY || "medium",
@@ -68,6 +68,8 @@ function die(msg) {
 
 if (!CFG.SUPABASE_URL) die("SUPABASE_URL is missing");
 if (!CFG.SUPABASE_SERVICE_ROLE_KEY) die("SUPABASE_SERVICE_ROLE_KEY is missing");
+if (!CFG.USERS_TABLE) die("USERS_TABLE is missing");
+if (!CFG.RISK_REVIEWS_TABLE) die("RISK_REVIEWS_TABLE is missing");
 if (!Number.isFinite(CFG.MAX_ROWS) || CFG.MAX_ROWS <= 0) die("MAX_ROWS must be a positive number");
 if (!Number.isFinite(CFG.PAGE_SIZE) || CFG.PAGE_SIZE <= 0) die("PAGE_SIZE must be a positive number");
 
