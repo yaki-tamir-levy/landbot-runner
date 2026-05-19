@@ -54,6 +54,77 @@ const RISK_SPLIT_DELIM = "===SPLIT_RISK_REASONS===";
 const ELIGIBLE_PROCESSED_STATES = ["NEW", "IN_PROGRESS", "ERROR"];
 const ELIGIBLE_OR_FILTER = `(${ELIGIBLE_PROCESSED_STATES.map((s) => `processed.eq.${s}`).join(",")})`;
 
+
+
+async function rebuildUsersTotalRiskFieldsFromRiskReviews({ id, patient_code }) {
+  if (!id || !patient_code) {
+    throw new Error("rebuildUsersTotalRiskFieldsFromRiskReviews requires id and patient_code");
+  }
+
+  const url = new URL(`${SUPABASE_URL.replace(/\/$/, "")}/rest/v1/${RISK_REVIEWS_TABLE}`);
+
+  url.searchParams.set("select", "line_num,short_risk,risk_reasons");
+  url.searchParams.set("id", `eq.${id}`);
+  url.searchParams.set("patient_code", `eq.${patient_code}`);
+  url.searchParams.set("order", "line_num.asc");
+
+  const res = await fetch(url, { headers: supaHeaders() });
+  const text = await res.text();
+
+  if (!res.ok) {
+    throw new Error(`risk_reviews_v2 aggregation failed: ${res.status} ${text}`);
+  }
+
+  let rows = [];
+
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    rows = [];
+  }
+
+  rows.sort((a, b) => Number(a.line_num ?? 0) - Number(b.line_num ?? 0));
+
+  const uniqueRiskReasons = new Set();
+  const uniqueShortRisks = new Set();
+
+  const riskReasons = rows
+    .filter(r => r.line_num != null && String(r.risk_reasons ?? "").trim())
+    .map(r => `-${r.line_num}- | ${String(r.risk_reasons).trim()}`)
+    .filter(v => {
+      if (uniqueRiskReasons.has(v)) {
+        return false;
+      }
+      uniqueRiskReasons.add(v);
+      return true;
+    })
+    .join("\n");
+
+  const summarizedLinkedTalkRisk = rows
+    .filter(r => r.line_num != null && String(r.short_risk ?? "").trim())
+    .map(r => `-${r.line_num}- ${String(r.short_risk).trim()}`)
+    .filter(v => {
+      if (uniqueShortRisks.has(v)) {
+        return false;
+      }
+      uniqueShortRisks.add(v);
+      return true;
+    })
+    .join("\n");
+
+  await supaPatch(
+    patient_code,
+    {
+      risk_reasons: riskReasons,
+      summarized_linked_talk_risk: summarizedLinkedTalkRisk
+    },
+    ["processing"]
+  );
+
+  console.log(`[INFO] rebuilt aggregated risk fields for patient_code=${patient_code}`);
+}
+
+
 // ---------- helpers ----------
 function mustEnv(name) {
   const v = process.env[name];
@@ -730,6 +801,8 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     console.log(`[INFO] patient_code=${patient_code} phrase_scan inserted risk_reviews_v2 rows=${phraseInserted}`);
   }
 
+  await rebuildUsersTotalRiskFieldsFromRiskReviews({ id, patient_code });
+
   await supaPatch(
     patient_code,
     {
@@ -838,4 +911,6 @@ main().catch((e) => {
   console.error("Fatal error:", e?.message ?? e);
   process.exit(1);
 });
+
+
 
