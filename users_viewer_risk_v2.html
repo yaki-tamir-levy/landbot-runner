@@ -131,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-011</div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-012</div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -904,7 +904,7 @@ function showInlineMsg(talkElem, msg){
     }
     return supa.from(REVIEWS_TABLE)
       // NOTE: production schema uses LINE_NUM (no page_num)
-      .select('id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
+      .select('id, patient_code, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
       .eq('time_key', time_key)
       .eq('patient_code', patient_code)
       .then(function(res){
@@ -1801,6 +1801,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
 
 
 
