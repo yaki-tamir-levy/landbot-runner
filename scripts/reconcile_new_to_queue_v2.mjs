@@ -22,18 +22,46 @@ async function main() {
     .in("processed", TARGET_PROCESSED_VALUES)
     .limit(500);
 
-  if (error) throw new Error(`users_total_v2 select failed: ${error.message}`);
+  if (error) {
+    throw new Error(`users_total_v2 select failed: ${error.message}`);
+  }
+
+  console.log(
+    "DEBUG_ROWS=" +
+      JSON.stringify(
+        (rows || []).map((r) => ({
+          id: r.id,
+          patient_code: r.patient_code,
+          processed: r.processed,
+        }))
+      )
+  );
 
   let inserted = 0;
   let skipped = 0;
 
   for (const r of rows || []) {
     try {
-      await supabase
+      const { error: insertError } = await supabase
         .from("process_queue_v2")
-        .insert({ users_total_v2_id: r.id, patient_code: r.patient_code, status: "NEW" });
+        .insert({
+          users_total_v2_id: r.id,
+          patient_code: r.patient_code,
+          status: "NEW",
+        });
+
+      if (insertError) {
+        throw insertError;
+      }
+
       inserted += 1;
     } catch (e) {
+      console.error("INSERT_FAILED", {
+        id: r.id,
+        patient_code: r.patient_code,
+        error: e?.message || e,
+      });
+
       skipped += 1;
     }
   }
