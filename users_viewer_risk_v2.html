@@ -504,10 +504,10 @@ function getReviewerName(ev){
 
 
   
-  function riskKey(id, time_key, phone){
+  function riskKey(id, time_key, patient_code){
     // RISK attachment key: time_key + normalized phone only.
     // id is intentionally ignored because users_tzvira.id can repeat across talks.
-    return String(time_key||'') + '|' + normPhone(phone);
+    return String(time_key||'') + '|' + String(patient_code||'');
   }
 
   function buildRiskCache(allRisk){
@@ -515,7 +515,7 @@ function getReviewerName(ev){
     CACHE.riskKeySet = new Set();    // keys that have any risk
     CACHE.riskForceKeySet = new Set(); // keys that have risk in status NEW/REVIEWED (VIEWED legacy)
     (allRisk || []).forEach(function(rr){
-      var k = riskKey(rr && rr.id, rr && rr.time_key, rr && rr.phone);
+      var k = riskKey(rr && rr.id, rr && rr.time_key, rr && rr.patient_code);
       if (!String(rr && rr.id || '').trim()) return;
       CACHE.riskKeySet.add(k);
       // _forceRisk should be true only if there is at least one unhandled/needs-attention risk
@@ -532,7 +532,7 @@ function getReviewerName(ev){
 
   function markRowsWithRisk(){
     (CACHE.allRows || []).forEach(function(r){
-      var k = riskKey(r && r.id, r && r.time_key, r && r.phone);
+      var k = riskKey(r && r.id, r && r.time_key, r && r.patient_code);
       r._hasRisk   = CACHE.riskKeySet.has(k);
       // _forceRisk: override client-side filters only when risk status is NEW/REVIEWED (VIEWED legacy).
       r._forceRisk = CACHE.riskForceKeySet.has(k);
@@ -551,11 +551,11 @@ function getReviewerName(ev){
     CACHE.riskKeySet = new Set();
     CACHE.riskForceKeySet = new Set();
 
-    return fetchAllPaged(TABLE, 'id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk', 'time_key')
+    return fetchAllPaged(TABLE, 'id, patient_code, time_key, phone, name, last_talk_tzvira, summarized_linked_talk', 'time_key')
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
-        return fetchAllPaged(REVIEWS_TABLE, 'id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk', 'id');
+        return fetchAllPaged(REVIEWS_TABLE, 'id, patient_code, time_key, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk', 'id');
       })
       .then(function(allRisk){
         buildRiskCache(allRisk || []);
@@ -802,7 +802,7 @@ function stripAllHtml(raw){
     return d;
   }
 
-function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(phone); }
+function keyOf(time_key, patient_code){ return String(time_key||'') + '|' + String(patient_code||''); }
 
   
   function keyOfId(id){ return String(id||''); }
@@ -898,15 +898,15 @@ function showInlineMsg(talkElem, msg){
   // RISK: מגיע רק מ-risk_reviews (בלי Regex)
   // -------------------------------
   
-  function loadRiskRows(talk_id, time_key, phone){
+  function loadRiskRows(talk_id, time_key, patient_code){
     if (CACHE && CACHE.loaded){
-      return Promise.resolve(CACHE.riskMap.get(riskKey(talk_id, time_key, phone)) || []);
+      return Promise.resolve(CACHE.riskMap.get(riskKey(talk_id, time_key, patient_code)) || []);
     }
     return supa.from(REVIEWS_TABLE)
       // NOTE: production schema uses LINE_NUM (no page_num)
       .select('id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
       .eq('time_key', time_key)
-      .eq('phone', phone)
+      .eq('patient_code', patient_code)
       .then(function(res){
         if (res.error) return [];
         return res.data || [];
@@ -939,7 +939,7 @@ function showInlineMsg(talkElem, msg){
       return supa.from(REVIEWS_TABLE)
         .update(upd)
         .eq('time_key', timeKey)
-        .eq('phone', phone)
+        .eq('patient_code', patient_code)
         .eq('line_num', lineNum)
         .select('id')
         .then(function(res){
@@ -978,11 +978,11 @@ function showInlineMsg(talkElem, msg){
 
     return tryWithConstraintFallback().then(function(ok){
       if (ok && CACHE && CACHE.loaded){
-        var arr = CACHE.riskMap.get(riskKey(talkId, timeKey, phone)) || [];
+        var arr = CACHE.riskMap.get(riskKey(talkId, timeKey, patient_code)) || [];
         for (var i=0;i<arr.length;i++){
           var rr = arr[i];
           var ln = (rr && rr.line_num);
-          if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.phone||'') === String(phone||'')){
+          if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'') === String(patient_code||'')){
             rr.status = stDb;
             rr.review_notes = txt;
             rr.reviewed_at = nowISO();
@@ -1005,7 +1005,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
     return supa.from(REVIEWS_TABLE)
       .update({ review_notes: txt, reviewer: rn })
       .eq('time_key', timeKey)
-      .eq('phone', phone)
+      .eq('patient_code', patient_code)
       .eq('line_num', lineNum)
       .select('id')
       .then(function(res){
@@ -1016,11 +1016,11 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       })
       .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
-          var arr = CACHE.riskMap.get(riskKey(talkId, timeKey, phone)) || [];
+          var arr = CACHE.riskMap.get(riskKey(talkId, timeKey, patient_code)) || [];
           for (var i=0;i<arr.length;i++){
             var rr = arr[i];
             var ln = (rr && rr.line_num);
-            if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.phone||'') === String(phone||'')){
+            if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'') === String(patient_code||'')){
               rr.review_notes = txt;
               rr.reviewer = rn;
             }
@@ -1366,7 +1366,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         // Anchor IDs are based on the original line numbers ("-1-", "-2-", ...)
         applyAnchorsToDialogLines(parsed.lines, talkDomId);
 
-        loadRiskRows(r.id, r.time_key, r.phone).then(function(riskRows){
+        loadRiskRows(r.id, r.time_key, r.patient_code).then(function(riskRows){
           var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
           // open risks for alerts: status NEW or VIEWED (or REVIEWED) 
@@ -1376,7 +1376,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
             if (st === 'NEW' || st === 'VIEWED' || st === 'REVIEWED') notRev.push(hits[h]);
           }
 
-          var k = keyOf(r.time_key, r.phone);
+          var k = keyOf(r.time_key, r.patient_code);
           var flag = flagsMap.get(k);
           var isHidden = !!(flag && flag.is_hidden);
 
@@ -1448,7 +1448,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
           if (canToggle) {
             headParts.push(
               '<button class="btn-toggle btn-state-active" data-time="', escapeHtml(r.time_key),
-              '" data-phone="', escapeHtml(r.phone||''),
+              '" data-patient_code="', escapeHtml(r.phone||''),
               '" data-name="', escapeHtml(r.name||''),
               '" data-hidden="', (isHidden?'1':'0'),
               '" data-notrev="', (notRev.length), '">', btnLabel, '</button>'
@@ -1473,7 +1473,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
           headParts.push('<button class="btn-home" title="חזרה למסך הראשון">חזרה למסך הראשון</button>');
           headParts.push('</div>');
 
-          parts.push('<div class="talk" data-id="' + escapeHtml(r.id||'') + '" data-time_key="' + escapeHtml(r.time_key||'') + '" data-time="' + escapeHtml(r.time_key||'') + '" data-phone="' + escapeHtml(r.phone||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
+          parts.push('<div class="talk" data-id="' + escapeHtml(r.id||'') + '" data-time_key="' + escapeHtml(r.time_key||'') + '" data-time="' + escapeHtml(r.time_key||'') + '" data-patient_code="' + escapeHtml(r.patient_code||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
           parts.push(headParts.join(''));
 
           if (isHidden){
@@ -1516,7 +1516,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
     if (btnToggle){
       var talkElem = btnToggle.closest('.talk');
       var time_key = btnToggle.getAttribute('data-time');
-      var phone    = btnToggle.getAttribute('data-phone');
+      var patient_code = btnToggle.getAttribute('data-patient_code');
       var name     = btnToggle.getAttribute('data-name') || null;
       var isHidden = btnToggle.getAttribute('data-hidden') === '1';
       var notRevCount = parseInt(btnToggle.getAttribute('data-notrev')||'0',10);
@@ -1536,7 +1536,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
               return;
             }
             if (CACHE && CACHE.loaded){
-              CACHE.flagsMap.set(keyOf(time_key, phone), { is_hidden: !isHidden });
+              CACHE.flagsMap.set(keyOf(time_key, patient_code), { is_hidden: !isHidden });
               rerenderFromCache();
             } else {
               queryPage(true);
@@ -1608,14 +1608,14 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       try{
         var talkElN = btnRiskNoteSave.closest('.talk');
         timeKeyN = talkElN ? (talkElN.getAttribute('data-time_key') || talkElN.getAttribute('data-time') || null) : null;
-        phoneN = talkElN ? (talkElN.getAttribute('data-phone') || null) : null;
+        phoneN = talkElN ? (talkElN.getAttribute('data-patient_code') || null) : null;
       }catch(e){}
       var lnN = boxN ? parseInt(boxN.getAttribute('data-ln')||'0',10) : 0;
       var taN = boxN ? boxN.querySelector('textarea[data-act="risk-note"]') : null;
       var txtN = taN ? (taN.value || '') : '';
       var talkElemN = btnRiskNoteSave.closest('.talk');
       var timeKeyN = talkElemN ? (talkElemN.getAttribute('data-time_key') || talkElemN.getAttribute('data-time') || '') : '';
-      var phoneN = talkElemN ? (talkElemN.getAttribute('data-phone') || '') : '';
+      var patient_codeN = talkElemN ? (talkElemN.getAttribute('data-patient_code') || '') : '';
 
       // Require explanation note (min 10 chars) before saving notes
       var noteTrimN = String(txtN || '').trim();
@@ -1660,13 +1660,13 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       try{
         var talkElX = btnRiskStatus.closest('.talk');
         timeKeyX = talkElX ? (talkElX.getAttribute('data-time_key') || talkElX.getAttribute('data-time') || null) : null;
-        phoneX = talkElX ? (talkElX.getAttribute('data-phone') || null) : null;
+        phoneX = talkElX ? (talkElX.getAttribute('data-patient_code') || null) : null;
       }catch(e){}
       var ln = box ? parseInt(box.getAttribute('data-ln')||'0',10) : 0;
       var newStatus = btnRiskStatus.getAttribute('data-status') || '';
       var talkElemX = btnRiskStatus.closest('.talk');
       var timeKeyX = talkElemX ? (talkElemX.getAttribute('data-time_key') || talkElemX.getAttribute('data-time') || '') : '';
-      var phoneX = talkElemX ? (talkElemX.getAttribute('data-phone') || '') : '';
+      var patient_codeX = talkElemX ? (talkElemX.getAttribute('data-patient_code') || '') : '';
 
       // Require explanation note (min 10 chars) for both actions
       var taReq = box ? box.querySelector('textarea[data-act="risk-note"]') : null;
@@ -1780,6 +1780,9 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
+
+
 
 
 
