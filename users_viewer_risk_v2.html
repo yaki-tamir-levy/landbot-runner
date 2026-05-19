@@ -1056,7 +1056,13 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       // Production schema uses LINE_NUM
       var rawLn = (rr && rr.line_num);
       var ln = rawLn != null ? parseInt(rawLn, 10) : NaN;
-      if (!isFinite(ln) || ln < 1) ln = -1;
+            // V2 fallback:
+      // Some talks no longer contain embedded "-1-" line markers.
+      // In that case attach the risk to line 1 so the standard
+      // rendering pipeline still shows badges/alerts/controls.
+      if (!isFinite(ln) || ln < 1) {
+        ln = 1;
+      }
 
       hits.push({
         id: rr.id || null,
@@ -1797,6 +1803,8 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
+
 
 
 
