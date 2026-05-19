@@ -131,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-009</div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-010</div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1396,7 +1396,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 
         loadRiskRows(rowR.id, rowR.time_key, rowR.patient_code).then(function(riskRows){
           try {
-            console.log('RISK DEBUG BBB-009', {
+            console.log('RISK DEBUG BBB-010', {
               name: r.name,
               phone: r.phone,
               time_key: r.time_key,
@@ -1810,6 +1810,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
 
 
 
