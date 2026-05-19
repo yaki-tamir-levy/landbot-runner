@@ -131,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-002<span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-003<span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1390,6 +1390,16 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         applyAnchorsToDialogLines(parsed.lines, talkDomId);
 
         loadRiskRows(r.id, r.time_key, r.patient_code).then(function(riskRows){
+          try {
+            console.log('RISK DEBUG BBB-003', {
+              name: r.name,
+              phone: r.phone,
+              time_key: r.time_key,
+              patient_code: r.patient_code,
+              riskRowsLength: riskRows ? riskRows.length : null,
+              riskRows: riskRows
+            });
+          } catch(e) {}
           var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
           // open risks for alerts: status NEW or VIEWED (or REVIEWED) 
@@ -1803,6 +1813,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
 
 
 
