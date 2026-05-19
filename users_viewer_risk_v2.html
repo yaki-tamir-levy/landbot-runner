@@ -131,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-006<span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-007<span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -504,7 +504,7 @@ function getReviewerName(ev){
 
 
   
-  function riskKey(id, time_key, patient_code){
+  function riskKey(time_key, patient_code){
     // RISK attachment key: time_key + normalized phone only.
     // id is intentionally ignored because users_tzvira.id can repeat across talks.
     return String(time_key||'') + '|' + String(patient_code||'');
@@ -532,7 +532,7 @@ function getReviewerName(ev){
 
   function markRowsWithRisk(){
     (CACHE.allRows || []).forEach(function(r){
-      var k = riskKey(r && r.id, r && r.time_key, r && r.patient_code);
+      var k = riskKey(r && r.time_key, r && r.patient_code);
       r._hasRisk   = CACHE.riskKeySet.has(k);
       // _forceRisk: override client-side filters only when risk status is NEW/REVIEWED (VIEWED legacy).
       r._forceRisk = CACHE.riskForceKeySet.has(k);
@@ -900,7 +900,7 @@ function showInlineMsg(talkElem, msg){
   
   function loadRiskRows(talk_id, time_key, patient_code){
     if (CACHE && CACHE.loaded){
-      return Promise.resolve(CACHE.riskMap.get(riskKey(talk_id, time_key, patient_code)) || []);
+      return Promise.resolve(CACHE.riskMap.get(riskKey(time_key, patient_code)) || []);
     }
     return supa.from(REVIEWS_TABLE)
       // NOTE: production schema uses LINE_NUM (no page_num)
@@ -978,7 +978,7 @@ function showInlineMsg(talkElem, msg){
 
     return tryWithConstraintFallback().then(function(ok){
       if (ok && CACHE && CACHE.loaded){
-        var arr = CACHE.riskMap.get(riskKey(talkId, timeKey, patient_code)) || [];
+        var arr = CACHE.riskMap.get(riskKey(timeKey, patient_code)) || [];
         for (var i=0;i<arr.length;i++){
           var rr = arr[i];
           var ln = (rr && rr.line_num);
@@ -1016,7 +1016,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       })
       .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
-          var arr = CACHE.riskMap.get(riskKey(talkId, timeKey, patient_code)) || [];
+          var arr = CACHE.riskMap.get(riskKey(timeKey, patient_code)) || [];
           for (var i=0;i<arr.length;i++){
             var rr = arr[i];
             var ln = (rr && rr.line_num);
@@ -1396,7 +1396,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 
         loadRiskRows(rowR.id, rowR.time_key, rowR.patient_code).then(function(riskRows){
           try {
-            console.log('RISK DEBUG BBB-006', {
+            console.log('RISK DEBUG BBB-007', {
               name: r.name,
               phone: r.phone,
               time_key: r.time_key,
@@ -1818,6 +1818,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
 
 
 
