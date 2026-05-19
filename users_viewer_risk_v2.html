@@ -1448,7 +1448,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
           if (canToggle) {
             headParts.push(
               '<button class="btn-toggle btn-state-active" data-time="', escapeHtml(r.time_key),
-              '" data-patient_code="', escapeHtml(r.phone||''),
+              '" data-patient_code="', escapeHtml(r.patient_code||''),
               '" data-name="', escapeHtml(r.name||''),
               '" data-hidden="', (isHidden?'1':'0'),
               '" data-notrev="', (notRev.length), '">', btnLabel, '</button>'
@@ -1780,6 +1780,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
 
 
 
