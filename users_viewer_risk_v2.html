@@ -1395,16 +1395,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         applyAnchorsToDialogLines(rowParsed.lines, rowTalkDomId);
 
         loadRiskRows(rowR.id, rowR.time_key, rowR.patient_code).then(function(riskRows){
-          try {
-            console.log('RISK DEBUG BBB-010', {
-              name: r.name,
-              phone: r.phone,
-              time_key: r.time_key,
-              patient_code: r.patient_code,
-              riskRowsLength: riskRows ? riskRows.length : null,
-              riskRows: riskRows
-            });
-          } catch(e) {}
+           
           var hits = bindRiskToDialog(rowParsed.lines, rowTalkDomId, riskRows);
 
           // open risks for alerts: status NEW or VIEWED (or REVIEWED) 
