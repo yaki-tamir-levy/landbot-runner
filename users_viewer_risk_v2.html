@@ -131,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-007<span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-008</div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1396,7 +1396,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 
         loadRiskRows(rowR.id, rowR.time_key, rowR.patient_code).then(function(riskRows){
           try {
-            console.log('RISK DEBUG BBB-007', {
+            console.log('RISK DEBUG BBB-008', {
               name: r.name,
               phone: r.phone,
               time_key: r.time_key,
@@ -1798,15 +1798,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
   updateTitlesFromStatus();
 
 
-  // Cache-busting badge: show ?v=... near the version label (testing visibility)
-  (function(){
-    try{
-      var sp = new URLSearchParams(window.location.search || "");
-      var v = sp.get("v");
-      var badge = document.getElementById("vBadge");
-      if (badge && v){ badge.textContent = " · v=" + String(v); }
-    }catch(e){}
-  })();
+  
 
   // init אחרי שה-DOM מוכן (למקרה של race)
   if (document.readyState === 'loading'){
@@ -1818,6 +1810,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
 
 
 
