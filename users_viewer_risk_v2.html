@@ -1127,6 +1127,23 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       var n = (lnObj && lnObj._lineNum != null) ? parseInt(lnObj._lineNum, 10) : NaN;
       var hit = (isFinite(n) && n >= 1) ? hitByLine.get(n) : null;
 
+      // V2 fallback:
+      // If dialog text has no embedded line numbers like "-1-",
+      // attach the first open risk to the first rendered line so RISK is still visible.
+      if (!hit && (!isFinite(n) || n < 1)) {
+        try {
+          if (hits && hits.length) {
+            for (var fh = 0; fh < hits.length; fh++) {
+              var fst = String(hits[fh].status || 'NEW').trim();
+              if (fst === 'NEW' || fst === 'VIEWED' || fst === 'REVIEWED') {
+                hit = hits[fh];
+                break;
+              }
+            }
+          }
+        } catch(e){}
+      }
+
       if (lnObj && lnObj._anchorId){
         attrs += ' id="' + escapeHtml(lnObj._anchorId) + '"';
       }
@@ -1780,6 +1797,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
 
 
 
