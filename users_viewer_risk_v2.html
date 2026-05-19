@@ -131,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-003<span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-004<span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1386,12 +1386,17 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         var parsed = toDialogLines(r.name, talkClean);
         var talkDomId = (r.time_key || '').replace(/[^0-9]/g,'') || Math.random().toString(36).slice(2);
 
-        // Anchor IDs are based on the original line numbers ("-1-", "-2-", ...)
-        applyAnchorsToDialogLines(parsed.lines, talkDomId);
+        // Freeze row state before async operations
+        var rowR = r;
+        var rowParsed = parsed;
+        var rowTalkDomId = talkDomId;
 
-        loadRiskRows(r.id, r.time_key, r.patient_code).then(function(riskRows){
+        // Anchor IDs are based on the original line numbers ("-1-", "-2-", ...)
+        applyAnchorsToDialogLines(rowParsed.lines, rowTalkDomId);
+
+        loadRiskRows(rowR.id, rowR.time_key, rowR.patient_code).then(function(riskRows){
           try {
-            console.log('RISK DEBUG BBB-003', {
+            console.log('RISK DEBUG BBB-004', {
               name: r.name,
               phone: r.phone,
               time_key: r.time_key,
@@ -1400,7 +1405,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
               riskRows: riskRows
             });
           } catch(e) {}
-          var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
+          var hits = bindRiskToDialog(rowParsed.lines, rowTalkDomId, riskRows);
 
           // open risks for alerts: status NEW or VIEWED (or REVIEWED) 
           var notRev = [];
@@ -1813,6 +1818,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
 
 
 
