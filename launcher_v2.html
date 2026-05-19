@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Launcher</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 30px; }
+    .muted { color:#666; }
+    code { background:#f6f6f6; padding:2px 6px; border-radius:6px; }
+  </style>
+  <script>
+    // VERSION: 2026-01-25-LAUNCHER-REDIRECT-RETURNTO-FIX1
+    // מטרת ה-Launcher: להפנות למסך האימות, ולציין לאן חוזרים אחרי אימות.
+    // ברירת מחדל: Viewer
+    (function () {
+      const DEFAULT_RETURN_TO = "users_viewer_risk_v2.html";
+
+      // אם כבר הגיעו ל-Launcher עם return_to, נשמר אותו; אחרת משתמשים בברירת מחדל
+      const qs = new URLSearchParams(location.search);
+      const returnTo = qs.get("return_to") || DEFAULT_RETURN_TO;
+
+      // בונים URL למסך האימות עם return_to
+      const target = "login_phone_v2.html?return_to=" + encodeURIComponent(returnTo);
+
+      // Redirect מיידי בלי לשמור היסטוריה
+      location.replace(target);
+    })();
+  </script>
+</head>
+<body>
+  <div class="muted">VERSION: <code>2026-01-25-LAUNCHER-REDIRECT-RETURNTO-FIX1</code></div>
+  <p>מעביר למסך כניסה…</p>
+</body>
+</html>
+
