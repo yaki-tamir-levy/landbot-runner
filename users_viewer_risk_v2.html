@@ -1,21 +1,16 @@
 <!doctype html>
-<!-- VERSION: 2026-05-13 STAGE3-FIX16-ISRAEL-TIME-DISPLAY -->
+<!-- VERSION: 2026-06-15 V2-PATIENT-CODE-ONLY -->
 <html lang="he" dir="rtl">
 <head>
   <script>
   // Version marker (no password gate – auth via Supabase session set in launcher.html)
-  var APP_VERSION = 'STAGE3_FIX16_ISRAEL_TIME_DISPLAY';
+  var APP_VERSION = 'V2_PATIENT_CODE_ONLY';
 </script>
 
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>כל הסוגים</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.1/dist/umd/supabase.js"></script>
-
-<script>
-window.CACHE = window.CACHE || null;
-</script>
-
   <style>
     :root { --bg:#f6f7fb; --card:#ffffff; --ink:#111827; --muted:#6b7280; --divider:#e5e7eb; --danger:#7f1d1d; --ok:#065f46; --hi:#fde68a; }
     *{box-sizing:border-box}
@@ -136,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB-012</div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-06-15 V2-PATIENT-CODE-ONLY V01<span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -147,7 +142,7 @@ function getReviewerName(ev){
       <div class="hint old-hint-warn" id="oldHint" style="margin-top:6px;">שורות מעל חודש - לא מוצגות</div>
     </div>
     <div class="row">
-      <div><label>Phone<br /><input id="fPhone" placeholder="+9725..." /></label></div>
+      <div><label>Patient code<br /><input id="fPhone" placeholder="patient_code" /></label></div>
       <div><label>Name<br /><input id="fName" placeholder="שם" /></label></div>
       <div><label>From (YYYY.MM.DD)<br /><input id="fFrom" placeholder="2025.11.01" /></label></div>
       <div><label>To (YYYY.MM.DD)<br /><input id="fTo" placeholder="2025.11.30" /></label></div>
@@ -206,49 +201,29 @@ function getReviewerName(ev){
   var SHOW_OLD = false;
   var OLD_DAYS = 30;
 
-  function _parseTimeKeyToMs(timeKey){
-    try {
+  function _parseTimeKeyToDayMs(timeKey){
+    // Date-only parsing (ignore time): supports
+    // - '2026-01-16 19:01:00.720000+00'
+    // - '2026-01-16T19:01:00.720000+00:00'
+    // - '2025.11.03 20:27:50:264910'
+    try{
       var s = String(timeKey || '').trim();
       if (!s) return null;
 
-      // Legacy V1 format: YYYY.MM.DD-HH.mm.ss.micro
-      var oldFormat = s.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2})\.(\d+)$/);
-      if (oldFormat){
-        var y = parseInt(oldFormat[1], 10);
-        var mo = parseInt(oldFormat[2], 10);
-        var d = parseInt(oldFormat[3], 10);
-        var h = parseInt(oldFormat[4], 10);
-        var mi = parseInt(oldFormat[5], 10);
-        var se = parseInt(oldFormat[6], 10);
-        var frac = String(oldFormat[7] || '0').slice(0, 3).padEnd(3, '0');
-        var ms = parseInt(frac, 10);
-        if ([y, mo, d, h, mi, se].some(function(v){ return !isFinite(v); })) return null;
-        return Date.UTC(y, mo - 1, d, h, mi, se, ms);
-      }
+      // Capture leading date only: YYYY-MM-DD or YYYY.MM.DD
+      var m = s.match(/^(\d{4})[\.-](\d{2})[\.-](\d{2})/);
+      if (!m) return null;
 
-      // New V2 format: YYYY-MM-DD HH:MM:SS.micro+00
-      var newFormat = s.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d+)\+00$/);
-      if (newFormat){
-        var iso = newFormat[1] + '-' + newFormat[2] + '-' + newFormat[3] +
-                  'T' + newFormat[4] + ':' + newFormat[5] + ':' + newFormat[6] +
-                  '.' + String(newFormat[7]).slice(0, 3).padEnd(3, '0') + 'Z';
-        var d = new Date(iso);
-        if (!isNaN(d.getTime())) return d.getTime();
-        return null;
-      }
+      var y = parseInt(m[1], 10);
+      var mo = parseInt(m[2], 10);
+      var d = parseInt(m[3], 10);
+      if (!isFinite(y) || !isFinite(mo) || !isFinite(d)) return null;
 
-      var fallback = new Date(s);
-      return isNaN(fallback.getTime()) ? null : fallback.getTime();
+      // Local midnight for the extracted date.
+      return new Date(y, mo - 1, d).getTime();
     } catch(e){
       return null;
     }
-  }
-
-  function _parseTimeKeyToDayMs(timeKey){
-    var ms = _parseTimeKeyToMs(timeKey);
-    if (ms == null) return null;
-    var d = new Date(ms);
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   }
 
   function _isTooOld(timeKey){
@@ -307,8 +282,8 @@ function getReviewerName(ev){
   /* Supabase */
   var SUPABASE_URL      = "https://qcwimczsiuxkarwfiyai.supabase.co";
   var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI";
-  var TABLE = "rpc_get_users_tzvira_v2_viewer";
-  var REVIEWS_TABLE = "risk_reviews_v2";
+  var TABLE             = "users_tzvira_v2";
+  var REVIEWS_TABLE     = "risk_reviews_v2";
   var FLAGS_TABLE       = "talk_read_flags";
   var USERS_INFO_TABLE  = "users_information";
 
@@ -322,11 +297,11 @@ function getReviewerName(ev){
   try {
     const s = await supa.auth.getSession();
     if (!s || !s.data || !s.data.session) {
-      window.location.href = 'launcher.html?return_to=' + encodeURIComponent('users_viewer_risk_prod.html' + (window.location.search || ''));
+      window.location.href = 'launcher.html?return_to=' + encodeURIComponent('users_viewer_risk_v2.html' + (window.location.search || ''));
       return;
     }
   } catch (e) {
-    window.location.href = 'launcher.html?return_to=' + encodeURIComponent('users_viewer_risk_prod.html' + (window.location.search || ''));
+    window.location.href = 'launcher.html?return_to=' + encodeURIComponent('users_viewer_risk_v2.html' + (window.location.search || ''));
     return;
   }
 
@@ -459,84 +434,45 @@ function getReviewerName(ev){
   var CACHE = {
     loaded: false,
     allRows: [],
-    flagsMap: new Map(),   // key(time,phone) -> {is_hidden}
+    flagsMap: new Map(),   // key(time_key,patient_code) -> {is_hidden}
     infoMap:  new Map(),   // phone -> {status}
-    riskMap:  new Map(),   // key(time,phone) -> [riskRows]
-    riskKeySet: new Set(), // keys time_key+phone that have any risk
-    riskForceKeySet: new Set() // keys time_key+phone that have risk in status NEW/REVIEWED (VIEWED legacy)
+    riskMap:  new Map(),   // key(time_key,patient_code) -> [riskRows]
+    riskKeySet: new Set(), // keys time_key+patient_code that have any risk
+    riskForceKeySet: new Set() // keys time_key+patient_code that have risk in status NEW/REVIEWED (VIEWED legacy)
   
   };
 
   function fetchAllPaged(tableName, selectCols, orderCol){
+    var pageSize = 1000;
+    var out = [];
+    var offset = 0;
 
-  if (tableName === TABLE){
-
-    return supa.rpc(TABLE).then(function(res){
-
-      if (res.error){
-        throw new Error(
-          "Fetch failed for " + tableName + ": " +
-          (res.error.message || "unknown")
-        );
-      }
-
-      return res.data || [];
-    });
-  }
-
-  var pageSize = 1000;
-  var out = [];
-  var offset = 0;
-
-  function step(){
-
-    var q = supa
-      .from(tableName)
-      .select(selectCols);
-
-    if (orderCol){
-      q = q.order(orderCol, { ascending: true });
+    function step(){
+      var q = supa.from(tableName).select(selectCols);
+      if (orderCol) q = q.order(orderCol, { ascending: true });
+      return q.range(offset, offset + pageSize - 1).then(function(res){
+        if (res.error){
+          throw new Error('Fetch failed for ' + tableName + ': ' + (res.error.message || 'unknown'));
+        }
+        var data = res.data || [];
+        out = out.concat(data);
+        if (data.length < pageSize) return out;
+        offset += pageSize;
+        return step();
+      });
     }
-
-    q = q.range(offset, offset + pageSize - 1);
-
-    return q.then(function(res){
-
-      if (res.error){
-        throw new Error(
-          "Fetch failed for " + tableName + ": " +
-          (res.error.message || "unknown")
-        );
-      }
-
-      var data = res.data || [];
-
-      out = out.concat(data);
-
-      if (data.length < pageSize){
-        return out;
-      }
-
-      offset += pageSize;
-
-      return step();
-    });
+    return step();
   }
-
-  return step();
-}
-
-
 
   
   function riskKey(time_key, patient_code){
-    // RISK attachment key: time_key + normalized phone only.
-    // id is intentionally ignored because users_tzvira.id can repeat across talks.
+    // RISK attachment key for V2: time_key + patient_code.
+    // phone is intentionally not used for V2 risk matching.
     return String(time_key||'') + '|' + String(patient_code||'');
   }
 
   function buildRiskCache(allRisk){
-    CACHE.riskMap = new Map();   // time_key+phone -> [riskRows]
+    CACHE.riskMap = new Map();   // time_key+patient_code -> [riskRows]
     CACHE.riskKeySet = new Set();    // keys that have any risk
     CACHE.riskForceKeySet = new Set(); // keys that have risk in status NEW/REVIEWED (VIEWED legacy)
     (allRisk || []).forEach(function(rr){
@@ -586,11 +522,11 @@ function getReviewerName(ev){
         buildRiskCache(allRisk || []);
         markRowsWithRisk();
         setStatusOk('RISK נטען (צמדים=' + CACHE.riskKeySet.size + '). טוען דגלי הסתרה…');
-        return fetchAllPaged(FLAGS_TABLE, 'time_key, phone, is_hidden', 'time_key');
+        return fetchAllPaged(FLAGS_TABLE, 'time_key, patient_code, is_hidden', 'time_key');
       })
       .then(function(allFlags){
         (allFlags || []).forEach(function(fr){
-          CACHE.flagsMap.set(keyOf(fr.time_key, fr.phone), { is_hidden: !!fr.is_hidden });
+          CACHE.flagsMap.set(keyOf(fr.time_key, fr.patient_code), { is_hidden: !!fr.is_hidden });
         });
         setStatusOk('דגלי הסתרה נטענו (' + CACHE.flagsMap.size + '). טוען סטטוסים…');
         return fetchAllPaged(USERS_INFO_TABLE, 'phone, status', 'phone');
@@ -614,8 +550,8 @@ function getReviewerName(ev){
     var f = (el.fFrom.value || '').trim();
     var t = (el.fTo.value   || '').trim();
 
-    var fromTimeMs = isYL(f) ? _parseTimeKeyToMs(f + '-00.00.00') : null;
-    var toTimeMs   = isYL(t) ? _parseTimeKeyToMs(t + '-23.59.59') : null;
+    var fromTime = isYL(f) ? (f + '-00.00.00') : null;
+    var toTime   = isYL(t) ? (t + '-23.59.59') : null;
 
     var pnLow = phoneNeedle ? phoneNeedle.toLowerCase() : '';
     var nnLow = nameNeedle  ? nameNeedle.toLowerCase()  : '';
@@ -626,34 +562,19 @@ function getReviewerName(ev){
 
       if (!SHOW_OLD && _isTooOld(r.time_key)) return;
 
-      if (pnLow && String(r.phone || '').toLowerCase().indexOf(pnLow) === -1) return;
+      if (pnLow && String(r.patient_code || '').toLowerCase().indexOf(pnLow) === -1) return;
       if (nnLow && String(r.name  || '').toLowerCase().indexOf(nnLow) === -1) return;
-
-      var rowTimeMs = _parseTimeKeyToMs(r.time_key);
-      if (fromTimeMs != null && (rowTimeMs == null || rowTimeMs < fromTimeMs)) return;
-      if (toTimeMs   != null && (rowTimeMs == null || rowTimeMs > toTimeMs))   return;
+      if (fromTime && String(r.time_key||'') < fromTime) return;
+      if (toTime   && String(r.time_key||'') > toTime)   return;
 
       out.push(r);
     });
 
     out.sort(function(a,b){
-      var ma = _parseTimeKeyToMs(a.time_key);
-      var mb = _parseTimeKeyToMs(b.time_key);
-      if (ma == null && mb == null){
-        ma = String(a.time_key||'');
-        mb = String(b.time_key||'');
-        if (ma < mb) return -1;
-        if (ma > mb) return 1;
-      } else if (ma == null){
-        return 1;
-      } else if (mb == null){
-        return -1;
-      } else if (ma < mb){
-        return -1;
-      } else if (ma > mb){
-        return 1;
-      }
-      var pa = String(a.phone||''), pb = String(b.phone||'');
+      var ta = String(a.time_key||''), tb = String(b.time_key||'');
+      if (ta < tb) return -1;
+      if (ta > tb) return 1;
+      var pa = String(a.patient_code||''), pb = String(b.patient_code||'');
       if (pa < pb) return -1;
       if (pa > pb) return 1;
       return 0;
@@ -935,7 +856,7 @@ function showInlineMsg(talkElem, msg){
   }
 
   // -------------------------------
-  // RISK: מגיע רק מ-risk_reviews (בלי Regex)
+  // RISK: מגיע רק מ-risk_reviews_v2 (בלי Regex)
   // -------------------------------
   
   function loadRiskRows(talk_id, time_key, patient_code){
@@ -943,8 +864,8 @@ function showInlineMsg(talkElem, msg){
       return Promise.resolve(CACHE.riskMap.get(riskKey(time_key, patient_code)) || []);
     }
     return supa.from(REVIEWS_TABLE)
-      // NOTE: production schema uses LINE_NUM (no page_num)
-      .select('id, patient_code, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
+      // V2 schema: match RISK by time_key + patient_code.
+      .select('id, patient_code, time_key, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
       .eq('time_key', time_key)
       .eq('patient_code', patient_code)
       .then(function(res){
@@ -957,9 +878,9 @@ function showInlineMsg(talkElem, msg){
   // ------------------------------------------------------------
   // RISK REVIEW UI: update status / notes (Hebrew statuses)
   // ------------------------------------------------------------
-  function updateRiskReviewStatus(talkId, timeKey, phone, lineNum, newStatus, notes, reviewerName){
+  function updateRiskReviewStatus(talkId, timeKey, patientCode, lineNum, newStatus, notes, reviewerName){
     var stUi = String(newStatus || '').trim();
-    if (!timeKey || !phone || !lineNum || !stUi) return Promise.resolve(false);
+    if (!timeKey || !patientCode || !lineNum || !stUi) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
 
 
@@ -979,7 +900,7 @@ function showInlineMsg(talkElem, msg){
       return supa.from(REVIEWS_TABLE)
         .update(upd)
         .eq('time_key', timeKey)
-        .eq('patient_code', patient_code)
+        .eq('patient_code', patientCode)
         .eq('line_num', lineNum)
         .select('id')
         .then(function(res){
@@ -1018,11 +939,11 @@ function showInlineMsg(talkElem, msg){
 
     return tryWithConstraintFallback().then(function(ok){
       if (ok && CACHE && CACHE.loaded){
-        var arr = CACHE.riskMap.get(riskKey(timeKey, patient_code)) || [];
+        var arr = CACHE.riskMap.get(riskKey(timeKey, patientCode)) || [];
         for (var i=0;i<arr.length;i++){
           var rr = arr[i];
           var ln = (rr && rr.line_num);
-          if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'') === String(patient_code||'')){
+          if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'') === String(patientCode||'')){
             rr.status = stDb;
             rr.review_notes = txt;
             rr.reviewed_at = nowISO();
@@ -1034,8 +955,8 @@ function showInlineMsg(talkElem, msg){
     });
   }
 
-function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerName){
-    if (!timeKey || !phone || !lineNum) return Promise.resolve(false);
+function updateRiskReviewNotes(talkId, timeKey, patientCode, lineNum, notes, reviewerName){
+    if (!timeKey || !patientCode || !lineNum) return Promise.resolve(false);
     var txt = (notes == null) ? '' : String(notes);
     var rn = String(reviewerName == null ? '' : reviewerName).trim();
     if (!rn){ throw new Error('חובה להזין שם מטפל'); }
@@ -1045,7 +966,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
     return supa.from(REVIEWS_TABLE)
       .update({ review_notes: txt, reviewer: rn })
       .eq('time_key', timeKey)
-      .eq('patient_code', patient_code)
+      .eq('patient_code', patientCode)
       .eq('line_num', lineNum)
       .select('id')
       .then(function(res){
@@ -1056,11 +977,11 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       })
       .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
-          var arr = CACHE.riskMap.get(riskKey(timeKey, patient_code)) || [];
+          var arr = CACHE.riskMap.get(riskKey(timeKey, patientCode)) || [];
           for (var i=0;i<arr.length;i++){
             var rr = arr[i];
             var ln = (rr && rr.line_num);
-            if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'') === String(patient_code||'')){
+            if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'') === String(patientCode||'')){
               rr.review_notes = txt;
               rr.reviewer = rn;
             }
@@ -1096,18 +1017,12 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       // Production schema uses LINE_NUM
       var rawLn = (rr && rr.line_num);
       var ln = rawLn != null ? parseInt(rawLn, 10) : NaN;
-            // V2 fallback:
-      // Some talks no longer contain embedded "-1-" line markers.
-      // In that case attach the risk to line 1 so the standard
-      // rendering pipeline still shows badges/alerts/controls.
-      if (!isFinite(ln) || ln < 1) {
-        ln = 1;
-      }
+      if (!isFinite(ln) || ln < 1) ln = -1;
 
       hits.push({
         id: rr.id || null,
         time_key: rr.time_key || '',
-        phone: rr.phone || '',
+        patient_code: rr.patient_code || '',
         line_num: ln,
         targetId: (ln >= 1 ? ('ln-' + talkDomId + '-' + ln) : ''),
         status: rr.status || 'NEW',
@@ -1172,23 +1087,6 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       var cls = 'line speaker';
       var n = (lnObj && lnObj._lineNum != null) ? parseInt(lnObj._lineNum, 10) : NaN;
       var hit = (isFinite(n) && n >= 1) ? hitByLine.get(n) : null;
-
-      // V2 fallback:
-      // If dialog text has no embedded line numbers like "-1-",
-      // attach the first open risk to the first rendered line so RISK is still visible.
-      if (!hit && (!isFinite(n) || n < 1)) {
-        try {
-          if (hits && hits.length) {
-            for (var fh = 0; fh < hits.length; fh++) {
-              var fst = String(hits[fh].status || 'NEW').trim();
-              if (fst === 'NEW' || fst === 'VIEWED' || fst === 'REVIEWED') {
-                hit = hits[fh];
-                break;
-              }
-            }
-          }
-        } catch(e){}
-      }
 
       if (lnObj && lnObj._anchorId){
         attrs += ' id="' + escapeHtml(lnObj._anchorId) + '"';
@@ -1426,17 +1324,11 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         var parsed = toDialogLines(r.name, talkClean);
         var talkDomId = (r.time_key || '').replace(/[^0-9]/g,'') || Math.random().toString(36).slice(2);
 
-        // Freeze row state before async operations
-        var rowR = r;
-        var rowParsed = parsed;
-        var rowTalkDomId = talkDomId;
-
         // Anchor IDs are based on the original line numbers ("-1-", "-2-", ...)
-        applyAnchorsToDialogLines(rowParsed.lines, rowTalkDomId);
+        applyAnchorsToDialogLines(parsed.lines, talkDomId);
 
-        loadRiskRows(rowR.id, rowR.time_key, rowR.patient_code).then(function(riskRows){
-           
-          var hits = bindRiskToDialog(rowParsed.lines, rowTalkDomId, riskRows);
+        loadRiskRows(r.id, r.time_key, r.patient_code).then(function(riskRows){
+          var hits = bindRiskToDialog(parsed.lines, talkDomId, riskRows);
 
           // open risks for alerts: status NEW or VIEWED (or REVIEWED) 
           var notRev = [];
@@ -1542,14 +1434,14 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
           headParts.push('<button class="btn-home" title="חזרה למסך הראשון">חזרה למסך הראשון</button>');
           headParts.push('</div>');
 
-          parts.push('<div class="talk" data-id="' + escapeHtml(r.id||'') + '" data-time_key="' + escapeHtml(r.time_key||'') + '" data-time="' + escapeHtml(r.time_key||'') + '" data-patient_code="' + escapeHtml(r.patient_code||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
+          parts.push('<div class="talk" data-id="' + escapeHtml(r.id||'') + '" data-time_key="' + escapeHtml(r.time_key||'') + '" data-time="' + escapeHtml(r.time_key||'') + '" data-phone="' + escapeHtml(r.phone||'') + '" data-patient_code="' + escapeHtml(r.patient_code||'') + '" data-name="'+escapeHtml(r.name||'')+'">');
           parts.push(headParts.join(''));
 
           if (isHidden){
             hiddenCount++;
           } else {
             shownCount++;
-            if (r.phone) patientsShown.add(String(r.phone).trim());
+            if (r.patient_code) patientsShown.add(String(r.patient_code).trim());
 
             var dialogHtml = renderDialogHtml(parsed.patient, parsed.lines, hits);
             dialogHtml = dialogHtml.replace(/__TALKDOM__-/g, 'ln-' + talkDomId + '-');
@@ -1595,10 +1487,10 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         return;
       }
 
-      var payload = { time_key: time_key, phone: phone, is_hidden: !isHidden, toggled_by: 'viewer_default', patient_name: name };
+      var payload = { time_key: time_key, patient_code: patient_code, is_hidden: !isHidden, toggled_by: 'viewer_default', patient_name: name };
 
       supa.from(FLAGS_TABLE)
-          .upsert(payload, { onConflict: 'time_key,phone' })
+          .upsert(payload, { onConflict: 'time_key,patient_code' })
           .then(function(res2){
             if (res2.error){
               showInlineMsg(talkElem, 'שגיאה בעדכון מצב השיחה: ' + (res2.error.message || 'unknown'));
@@ -1684,7 +1576,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       var txtN = taN ? (taN.value || '') : '';
       var talkElemN = btnRiskNoteSave.closest('.talk');
       var timeKeyN = talkElemN ? (talkElemN.getAttribute('data-time_key') || talkElemN.getAttribute('data-time') || '') : '';
-      var patient_codeN = talkElemN ? (talkElemN.getAttribute('data-patient_code') || '') : '';
+      var phoneN = talkElemN ? (talkElemN.getAttribute('data-patient_code') || '') : '';
 
       // Require explanation note (min 10 chars) before saving notes
       var noteTrimN = String(txtN || '').trim();
@@ -1735,7 +1627,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       var newStatus = btnRiskStatus.getAttribute('data-status') || '';
       var talkElemX = btnRiskStatus.closest('.talk');
       var timeKeyX = talkElemX ? (talkElemX.getAttribute('data-time_key') || talkElemX.getAttribute('data-time') || '') : '';
-      var patient_codeX = talkElemX ? (talkElemX.getAttribute('data-patient_code') || '') : '';
+      var phoneX = talkElemX ? (talkElemX.getAttribute('data-patient_code') || '') : '';
 
       // Require explanation note (min 10 chars) for both actions
       var taReq = box ? box.querySelector('textarea[data-act="risk-note"]') : null;
@@ -1829,7 +1721,15 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
   updateTitlesFromStatus();
 
 
-  
+  // Cache-busting badge: show ?v=... near the version label (testing visibility)
+  (function(){
+    try{
+      var sp = new URLSearchParams(window.location.search || "");
+      var v = sp.get("v");
+      var badge = document.getElementById("vBadge");
+      if (badge && v){ badge.textContent = " · v=" + String(v); }
+    }catch(e){}
+  })();
 
   // init אחרי שה-DOM מוכן (למקרה של race)
   if (document.readyState === 'loading'){
@@ -1841,26 +1741,3 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
