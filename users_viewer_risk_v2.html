@@ -206,29 +206,49 @@ function getReviewerName(ev){
   var SHOW_OLD = false;
   var OLD_DAYS = 30;
 
-  function _parseTimeKeyToDayMs(timeKey){
-    // Date-only parsing (ignore time): supports
-    // - '2026-01-16 19:01:00.720000+00'
-    // - '2026-01-16T19:01:00.720000+00:00'
-    // - '2025.11.03 20:27:50:264910'
-    try{
+  function _parseTimeKeyToMs(timeKey){
+    try {
       var s = String(timeKey || '').trim();
       if (!s) return null;
 
-      // Capture leading date only: YYYY-MM-DD or YYYY.MM.DD
-      var m = s.match(/^(\d{4})[\.-](\d{2})[\.-](\d{2})/);
-      if (!m) return null;
+      // Legacy V1 format: YYYY.MM.DD-HH.mm.ss.micro
+      var oldFormat = s.match(/^(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2})\.(\d+)$/);
+      if (oldFormat){
+        var y = parseInt(oldFormat[1], 10);
+        var mo = parseInt(oldFormat[2], 10);
+        var d = parseInt(oldFormat[3], 10);
+        var h = parseInt(oldFormat[4], 10);
+        var mi = parseInt(oldFormat[5], 10);
+        var se = parseInt(oldFormat[6], 10);
+        var frac = String(oldFormat[7] || '0').slice(0, 3).padEnd(3, '0');
+        var ms = parseInt(frac, 10);
+        if ([y, mo, d, h, mi, se].some(function(v){ return !isFinite(v); })) return null;
+        return Date.UTC(y, mo - 1, d, h, mi, se, ms);
+      }
 
-      var y = parseInt(m[1], 10);
-      var mo = parseInt(m[2], 10);
-      var d = parseInt(m[3], 10);
-      if (!isFinite(y) || !isFinite(mo) || !isFinite(d)) return null;
+      // New V2 format: YYYY-MM-DD HH:MM:SS.micro+00
+      var newFormat = s.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d+)\+00$/);
+      if (newFormat){
+        var iso = newFormat[1] + '-' + newFormat[2] + '-' + newFormat[3] +
+                  'T' + newFormat[4] + ':' + newFormat[5] + ':' + newFormat[6] +
+                  '.' + String(newFormat[7]).slice(0, 3).padEnd(3, '0') + 'Z';
+        var d = new Date(iso);
+        if (!isNaN(d.getTime())) return d.getTime();
+        return null;
+      }
 
-      // Local midnight for the extracted date.
-      return new Date(y, mo - 1, d).getTime();
+      var fallback = new Date(s);
+      return isNaN(fallback.getTime()) ? null : fallback.getTime();
     } catch(e){
       return null;
     }
+  }
+
+  function _parseTimeKeyToDayMs(timeKey){
+    var ms = _parseTimeKeyToMs(timeKey);
+    if (ms == null) return null;
+    var d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   }
 
   function _isTooOld(timeKey){
@@ -594,8 +614,8 @@ function getReviewerName(ev){
     var f = (el.fFrom.value || '').trim();
     var t = (el.fTo.value   || '').trim();
 
-    var fromTime = isYL(f) ? (f + '-00.00.00') : null;
-    var toTime   = isYL(t) ? (t + '-23.59.59') : null;
+    var fromTimeMs = isYL(f) ? _parseTimeKeyToMs(f + '-00.00.00') : null;
+    var toTimeMs   = isYL(t) ? _parseTimeKeyToMs(t + '-23.59.59') : null;
 
     var pnLow = phoneNeedle ? phoneNeedle.toLowerCase() : '';
     var nnLow = nameNeedle  ? nameNeedle.toLowerCase()  : '';
@@ -608,16 +628,31 @@ function getReviewerName(ev){
 
       if (pnLow && String(r.phone || '').toLowerCase().indexOf(pnLow) === -1) return;
       if (nnLow && String(r.name  || '').toLowerCase().indexOf(nnLow) === -1) return;
-      if (fromTime && String(r.time_key||'') < fromTime) return;
-      if (toTime   && String(r.time_key||'') > toTime)   return;
+
+      var rowTimeMs = _parseTimeKeyToMs(r.time_key);
+      if (fromTimeMs != null && (rowTimeMs == null || rowTimeMs < fromTimeMs)) return;
+      if (toTimeMs   != null && (rowTimeMs == null || rowTimeMs > toTimeMs))   return;
 
       out.push(r);
     });
 
     out.sort(function(a,b){
-      var ta = String(a.time_key||''), tb = String(b.time_key||'');
-      if (ta < tb) return -1;
-      if (ta > tb) return 1;
+      var ma = _parseTimeKeyToMs(a.time_key);
+      var mb = _parseTimeKeyToMs(b.time_key);
+      if (ma == null && mb == null){
+        ma = String(a.time_key||'');
+        mb = String(b.time_key||'');
+        if (ma < mb) return -1;
+        if (ma > mb) return 1;
+      } else if (ma == null){
+        return 1;
+      } else if (mb == null){
+        return -1;
+      } else if (ma < mb){
+        return -1;
+      } else if (ma > mb){
+        return 1;
+      }
       var pa = String(a.phone||''), pb = String(b.phone||'');
       if (pa < pb) return -1;
       if (pa > pb) return 1;
