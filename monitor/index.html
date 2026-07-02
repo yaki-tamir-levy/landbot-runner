@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BOT Monitor</title>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: #eee;
+      font-family: Arial, sans-serif;
+      font-size: 16px;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      background: #111;
+      padding: 16px;
+      border-bottom: 1px solid #333;
+      z-index: 10;
+    }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 22px;
+    }
+    .meta {
+      color: #aaa;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    main {
+      padding: 12px;
+    }
+    .card {
+      border: 1px solid #333;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      padding: 14px;
+      background: #1b1b1b;
+    }
+    .card.completed {
+      border-left: 5px solid #2ecc71;
+    }
+    .card.running {
+      border-left: 5px solid #f39c12;
+    }
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .conv {
+      font-weight: bold;
+      font-size: 18px;
+    }
+    .status {
+      color: #ccc;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .event {
+      padding: 8px 0;
+      border-top: 1px solid #2c2c2c;
+    }
+    small {
+      color: #999;
+      font-size: 12px;
+    }
+    .error {
+      border: 1px solid #c0392b;
+      background: #2a1515;
+      border-radius: 12px;
+      padding: 14px;
+      color: #ffd6d6;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>BOT Monitor</h1>
+    <div class="meta" id="meta">Loading...</div>
+  </header>
+
+  <main id="app"></main>
+
+  <script>
+    const API_URL = "https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/bot-monitor";
+    const REFRESH_MS = 10000;
+
+    function formatTime(value) {
+      const date = value ? new Date(value) : new Date();
+      return date.toLocaleTimeString("he-IL");
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function render(data) {
+      const meta = document.getElementById("meta");
+      const app = document.getElementById("app");
+
+      meta.textContent = `Conversation Trace - Version ${data.version} - Last refresh: ${formatTime(data.refreshed_at)}`;
+
+      if (!data.conversations || data.conversations.length === 0) {
+        app.innerHTML = "<p>No events found.</p>";
+        return;
+      }
+
+      app.innerHTML = data.conversations.map((conversation) => `
+        <section class="card ${conversation.completed ? "completed" : "running"}">
+          <div class="card-head">
+            <div class="conv">Conversation ${escapeHtml(conversation.conversation_suffix)}</div>
+            <div class="status">${escapeHtml(conversation.status)}</div>
+          </div>
+          <div class="events">
+            ${conversation.events.map((event) => `
+              <div class="event">
+                <div>${escapeHtml(event.event_title)}</div>
+                <small>${escapeHtml(event.source_table)}</small>
+              </div>
+            `).join("")}
+          </div>
+        </section>
+      `).join("");
+    }
+
+    async function loadMonitor() {
+      const app = document.getElementById("app");
+
+      try {
+        const response = await fetch(`${API_URL}?t=${Date.now()}`, {
+          method: "GET",
+          cache: "no-store",
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        render(data);
+      } catch (error) {
+        app.innerHTML = `<div class="error">Failed to load BOT Monitor: ${escapeHtml(error.message)}</div>`;
+      }
+    }
+
+    loadMonitor();
+    setInterval(loadMonitor, REFRESH_MS);
+  </script>
+</body>
+</html>
