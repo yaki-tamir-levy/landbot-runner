@@ -2,7 +2,7 @@ name: Process Queue Worker V2 (event-ish)
 
 on:
   schedule:
-    - cron: "*/6 * * * *"
+    - cron: "*0 * * * *"
   workflow_dispatch: {}
 
 env:
