@@ -117,7 +117,10 @@
       app.innerHTML = data.conversations.map((conversation) => `
         <section class="card ${conversation.completed ? "completed" : "running"}">
           <div class="card-head">
-            <div class="conv">Conversation ${escapeHtml(conversation.conversation_suffix)}</div>
+            <div>
+              <div class="conv">Conversation ${escapeHtml(conversation.conversation_suffix)}</div>
+              <small>${escapeHtml(conversation.events[0]?.phone_masked ?? "")}</small>
+            </div>
             <div class="status">${escapeHtml(conversation.status)}</div>
           </div>
           <div class="events">
