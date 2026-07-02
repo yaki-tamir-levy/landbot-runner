@@ -44,6 +44,7 @@ const USERS_TOTAL_TABLE = "users_total_v2";
 const USERS_TZVIRA_TABLE = "users_tzvira_v2";
 const RISK_REVIEWS_TABLE = "risk_reviews_v2";
 const RISK_PHRASES_TABLE = "risk_phrases";
+const CONVERSATION_EVENTS_TABLE = "conversation_events_v2";
 
 const USERS_INFORMATION_TABLE = "users_information";
 const PROMPT10_PHONE = "77777777";
@@ -314,6 +315,7 @@ async function supaGetEligibleRows(limit) {
     "select",
     [
       "id",
+      "conversation_id",
       "patient_code",
       "phone",
       "name",
@@ -672,6 +674,60 @@ async function supaUpsert(table, payload, onConflict) {
   return await supaInsert(table, payload, { onConflict, operation: "UPSERT" });
 }
 
+
+async function supaInsertRaw(table, payload, operation = "INSERT") {
+  if (DRY_RUN) {
+    console.log(`[DRY_RUN][${operation}] table=${table} payload=${JSON.stringify(payload)}`);
+    return;
+  }
+
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${table}`);
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...supaHeaders(),
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await res.text();
+
+  if (!res.ok) {
+    throw new Error(
+      `Supabase ${operation} into ${table} failed: ${res.status} ${text}`
+    );
+  }
+}
+
+async function logUsersTzviraUpdatedEvent({ conversation_id, id, patient_code, time_key }) {
+  if (!conversation_id) {
+    throw new Error("logUsersTzviraUpdatedEvent requires conversation_id");
+  }
+  if (!id) {
+    throw new Error("logUsersTzviraUpdatedEvent requires id");
+  }
+  if (!patient_code) {
+    throw new Error("logUsersTzviraUpdatedEvent requires patient_code");
+  }
+
+  await supaInsertRaw(
+    CONVERSATION_EVENTS_TABLE,
+    {
+      conversation_id,
+      patient_code,
+      event_name: "users_tzvira_updated",
+      source_table: USERS_TZVIRA_TABLE,
+      source_id: id,
+      details: {
+        time_key,
+      },
+    },
+    "INSERT users_tzvira_updated event"
+  );
+}
+
 async function insertUsersTzviraRow({ id, time_key, patient_code, phone, name, last_talk_tzvira, summarized_linked_talk }) {
   // V2: include patient_code as primary identity and keep phone/name as shadow fields
   await supaUpsert(
@@ -703,6 +759,7 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
   const patient_code = row.patient_code;
   if (!patient_code) throw new Error("Row missing patient_code");
 
+  const conversation_id = row.conversation_id ?? null;
   const phone = row.phone ?? null; // shadow/debug
   const id = row.id;
   if (!id) throw new Error(`Row missing id for patient_code=${patient_code}`);
@@ -759,6 +816,13 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     name,
     last_talk_tzvira: numberedText,
     summarized_linked_talk: summarized,
+  });
+
+  await logUsersTzviraUpdatedEvent({
+    conversation_id,
+    id,
+    patient_code,
+    time_key: lastSummaryAt,
   });
 
   const reasonsTrim = String(reasons ?? "").trim();
