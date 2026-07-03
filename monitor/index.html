@@ -167,7 +167,7 @@
       const meta = document.getElementById("meta");
       const app = document.getElementById("app");
 
-      meta.textContent = `Conversation Trace - Version ${data.version} - Last refresh: ${formatTime(data.refreshed_at)}`;
+      meta.textContent = `Conversation Trace - Version 1.2 ${data.version} - Last refresh: ${formatTime(data.refreshed_at)}`;
 
       if (!data.conversations || data.conversations.length === 0) {
         app.innerHTML = "<p>No events found.</p>";
