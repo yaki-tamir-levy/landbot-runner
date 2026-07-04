@@ -728,13 +728,14 @@ async function logUsersTzviraUpdatedEvent({ conversation_id, id, patient_code, t
   );
 }
 
-async function insertUsersTzviraRow({ id, time_key, patient_code, phone, name, last_talk_tzvira, summarized_linked_talk }) {
+async function insertUsersTzviraRow({ id, time_key, conversation_id, patient_code, phone, name, last_talk_tzvira, summarized_linked_talk }) {
   // V2: include patient_code as primary identity and keep phone/name as shadow fields
   await supaUpsert(
     USERS_TZVIRA_TABLE,
     {
       id,
       time_key,
+      conversation_id,
       patient_code,
       phone,
       name,
@@ -811,6 +812,7 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
   await insertUsersTzviraRow({
     id,
     time_key: lastSummaryAt,
+    conversation_id,
     patient_code,
     phone,
     name,
