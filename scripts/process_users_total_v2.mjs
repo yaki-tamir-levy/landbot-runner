@@ -348,7 +348,7 @@ async function supaGetEligibleRows(limit) {
 
 async function supaGetRowById(id) {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_TOTAL_TABLE}`);
-  url.searchParams.set("select", ["id", "patient_code", "phone", "name", "processed", "last_summary_at", "summarized_linked_talk_num"].join(","));
+  url.searchParams.set("select", ["id", "patient_code", "phone", "name", "conversation_id", "processed", "last_summary_at", "summarized_linked_talk_num"].join(","));
   url.searchParams.set("id", `eq.${id}`);
   url.searchParams.set("limit", "1");
 
@@ -561,7 +561,7 @@ async function supaRiskReviewExists({ id, time_key, patient_code, line_num }) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
-async function phraseScanAndInsertRisks({ id, time_key, patient_code, phone, name, numberedText, activeRiskPhrases }) {
+async function phraseScanAndInsertRisks({ id, time_key, patient_code, phone, name, conversation_id, numberedText, activeRiskPhrases }) {
   if (!Array.isArray(activeRiskPhrases) || activeRiskPhrases.length === 0) return 0;
 
   const lines = parseNumberedLines(numberedText);
@@ -600,6 +600,7 @@ async function phraseScanAndInsertRisks({ id, time_key, patient_code, phone, nam
         patient_code,
         phone,
         name,
+        conversation_id,
         line_num: lineNum,
         short_risk: lineText,
         risk_reasons: matchedPattern,
@@ -860,6 +861,7 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     patient_code,
     phone,
     name,
+    conversation_id,
     numberedText,
     activeRiskPhrases,
   });
@@ -909,8 +911,8 @@ async function runPhraseScanOnly() {
   const patient_code = row.patient_code;
   const phone = row.phone;
   const name = row.name ?? null;
+  const conversation_id = row.conversation_id ?? null;
   const time_key = row.last_summary_at;
-
   if (!time_key || !String(time_key).trim()) {
     throw new Error(
       "users_total_v2.last_summary_at is empty; cannot use as time_key for risk_reviews_v2 PK in PHRASE_SCAN_ONLY mode"
@@ -929,6 +931,7 @@ async function runPhraseScanOnly() {
     patient_code,
     phone,
     name,
+    conversation_id,
     numberedText,
     activeRiskPhrases,
   });
@@ -978,6 +981,3 @@ main().catch((e) => {
   console.error("Fatal error:", e?.message ?? e);
   process.exit(1);
 });
-
-
-
