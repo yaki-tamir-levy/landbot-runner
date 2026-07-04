@@ -284,7 +284,7 @@ function getReviewerName(ev){
   var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI";
   var TABLE             = "users_tzvira_v2";
   var REVIEWS_TABLE     = "risk_reviews_v2";
-  var FLAGS_TABLE       = "talk_read_flags_v2";
+  var FLAGS_TABLE       = "talk_read_flags";
   var USERS_INFO_TABLE  = "users_information";
 
   if (!window.supabase || !window.supabase.createClient){
@@ -1741,5 +1741,6 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 </script>
 </body>
 </html>
+
 
 
