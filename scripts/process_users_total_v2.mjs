@@ -838,6 +838,7 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
         id,
         time_key: lastSummaryAt,
         patient_code,
+        conversation_id,
         phone,
         name,
         line_num: rl.line_no,
