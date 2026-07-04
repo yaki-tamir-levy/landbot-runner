@@ -262,6 +262,7 @@ async function* fetchUsersRows(maxRows) {
   const table = CFG.USERS_TABLE;
   const fields = [
     "id",
+    "conversation_id",
     CFG.USERS_TIME_FIELD,
     CFG.USERS_NAME_FIELD,
     CFG.USERS_TEXT_FIELD,
@@ -328,11 +329,12 @@ async function riskReviewExists({ id, time_key, phone, patient_code, line_num })
   return count > 0;
 }
 
-async function insertRiskReview({ id, time_key, phone, patient_code, name, line_num, short_risk, risk_reasons }) {
+async function insertRiskReview({ id, conversation_id, time_key, phone, patient_code, name, line_num, short_risk, risk_reasons }) {
   const table = CFG.RISK_REVIEWS_TABLE;
 
   const row = {
     id,
+    conversation_id: conversation_id || null,
     time_key,
     line_num,
     status: "NEW",
@@ -402,6 +404,7 @@ async function main() {
     scannedRows += 1;
 
     const id = String(row?.id ?? "").trim();
+    const conversation_id = row?.conversation_id ?? null;
     const phone = String(row?.[CFG.USERS_PHONE_FIELD] ?? "").trim();
     const patient_code = USE_PATIENT_CODE ? String(row?.[USER_PATIENT_CODE_FIELD] ?? "").trim() : "";
     const time_key = row?.[CFG.USERS_TIME_FIELD];
@@ -472,6 +475,7 @@ async function main() {
 
       await insertRiskReview({
         id,
+        conversation_id,
         time_key,
         phone,
         patient_code,
