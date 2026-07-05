@@ -50,9 +50,9 @@
   const FUNCTIONS_BASE = `${SUPABASE_URL}/functions/v1`;
 
   const qs = new URLSearchParams(location.search);
-  let returnTo = (qs.get('return_to') || 'users_viewer_risk_prod.html').trim();
+  let returnTo = (qs.get('return_to') || 'users_viewer_tzvira_v2.html').trim();
   const bad = returnTo.includes('login_phone') || returnTo.includes('launcher');
-  if (bad) returnTo = 'users_viewer_risk_prod.html';
+  if (bad) returnTo = 'users_viewer_tzvira_v2.html';
 
   const $ = (id) => document.getElementById(id);
   const phoneEl = $('phone');
