@@ -31,6 +31,7 @@ jobs:
         env:
           SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RISK_REVIEWS_TABLE:        risk_reviews_v2
           PUSHOVER_TOKEN:            ${{ secrets.PUSHOVER_TOKEN }}
           PUSHOVER_USER:             ${{ secrets.PUSHOVER_USER }}
           PUSHOVER_USER_2:           ${{ secrets.PUSHOVER_USER_2 }}    # אופציונלי
