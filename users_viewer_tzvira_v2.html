@@ -297,11 +297,11 @@ function getReviewerName(ev){
   try {
     const s = await supa.auth.getSession();
     if (!s || !s.data || !s.data.session) {
-      window.location.href = 'launcher.html?return_to=' + encodeURIComponent('users_viewer_tzvira_v2.html' + (window.location.search || ''));
+      window.location.href = 'launcher_v2.html?return_to=' + encodeURIComponent('users_viewer_tzvira_v2.html' + (window.location.search || ''));
       return;
     }
   } catch (e) {
-    window.location.href = 'launcher.html?return_to=' + encodeURIComponent('users_viewer_tzvira_v2.html' + (window.location.search || ''));
+    window.location.href = 'launcher_v2.html?return_to=' + encodeURIComponent('users_viewer_tzvira_v2.html' + (window.location.search || ''));
     return;
   }
 
