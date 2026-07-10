@@ -176,6 +176,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
           candidate_answer: candidateText,
           corrected_answer: candidateText,
           corrector_decision: "PASS",
+          correction_action: "PASS",
           reason_codes: [],
           fallback_used: false,
         }, 200);
@@ -193,6 +194,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         candidate_answer: candidateText,
         corrected_answer: rewrite,
         corrector_decision: "REWRITE",
+        correction_action: "REWRITE",
         reason_codes: correctorResult.reason_codes,
         fallback_used: false,
       }, 200);
@@ -205,6 +207,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         candidate_answer: candidateText,
         corrected_answer: candidateText,
         corrector_decision: "FALLBACK",
+        correction_action: "FALLBACK",
         reason_codes: [],
         fallback_used: true,
       }, 200);
