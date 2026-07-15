@@ -50,11 +50,10 @@ async function supaSelectUsersTotalV2ById(id) {
 }
 
 async function supaSelectPromptUserText() {
-  const promptPhone = "55555555";
   const url =
-    `${SUPABASE_URL}/rest/v1/users_information` +
+    `${SUPABASE_URL}/rest/v1/prompt_information_v2` +
     `?select=user_text` +
-    `&phone=eq.${encodeURIComponent(promptPhone)}` +
+    `&prompt_key=eq.summary` +
     `&limit=1`;
 
   const res = await fetch(url, { headers: supaHeaders });
