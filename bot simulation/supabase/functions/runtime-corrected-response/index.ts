@@ -315,8 +315,7 @@ async function fetchRuntimeCorrectorPrompt(correlationId: string): Promise<strin
     throw new Error("runtime_corrector_prompt_fetch_failed");
   }
 
-  const encodedPhone = encodeURIComponent("123456789");
-  const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/users_information_v2?select=user_text&phone=eq.${encodedPhone}&limit=1`;
+  const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/prompt_information_v2?select=user_text&prompt_key=eq.corrector&limit=1`;
   const response = await fetch(url, {
     headers: {
       apikey: supabaseKey,
