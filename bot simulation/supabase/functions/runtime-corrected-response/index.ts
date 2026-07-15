@@ -4,7 +4,7 @@ type RequestPayload = {
   patient20: string;
   summarized20: string;
   tzvira: string;
-  response20: string;
+  response20?: string;
   question20: string;
   patient_id: string;
   session_id: string;
@@ -29,7 +29,6 @@ const REQUIRED_TEXT_FIELDS = [
   "patient20",
   "summarized20",
   "tzvira",
-  "response20",
   "question20",
   "patient_id",
   "session_id",
@@ -52,47 +51,6 @@ const REASON_CODES = [
 
 const REASON_CODE_SET = new Set<string>(REASON_CODES);
 
-const RUNTIME_CORRECTOR_SYSTEM_PROMPT = `You are a Runtime Corrector for a bot replay experiment.
-
-You evaluate one candidate BOT response at a time. You may see only the conversation history through the current patient message and the current candidate BOT response. You must not use, infer, request, or rely on future patient turns, future BOT turns, judge scores, the complete replay question file, or later conversation context.
-
-Hebrew speaker labels may appear as דינה for Dina and המטפל for the therapist. Treat them as normal conversation labels.
-
-Your job is conservative. If the candidate is good enough, preserve it exactly. If it has a clear local quality problem, minimally rewrite it so the accepted response is better while preserving continuity and intent.
-
-Core quality criteria:
-- Respect explicit user constraints and rejected suggestions.
-- Do not repeat an idea already rejected.
-- Do not recycle the same intervention in a smaller variant.
-- Progress rather than merely summarize.
-- Avoid unsupported psychological inference.
-- Avoid over-analysis when the user asks for practical help.
-- Avoid excessive task-giving or instructor tone.
-- Remain human, concise, context-sensitive, and emotionally attuned.
-- If the user requests one concrete direction, provide one.
-- If the user requests a small step, keep it genuinely small.
-- Preserve continuity with prior turns.
-- Do not invent facts.
-- Do not diagnose.
-- Do not perform deep therapy.
-- Do not use future information.
-- Prefer minimal correction over unnecessary rewriting.
-
-Return machine-parseable JSON only. Do not use Markdown. Do not include explanations outside the JSON object.
-
-Output contract:
-{
-"action": "PASS" | "REWRITE",
-"final_response": "...",
-"reason_codes": ["..."]
-}
-
-Rules:
-- If action is PASS, final_response must equal the candidate response exactly, byte-for-byte in text content.
-- If action is REWRITE, final_response contains only the improved replacement response.
-- reason_codes must contain only values from this fixed enum: REPEATS_REJECTED_IDEA, VIOLATES_USER_CONSTRAINT, REDUNDANT_SUMMARY, NO_FORWARD_PROGRESS, UNSUPPORTED_INFERENCE, OVER_ANALYSIS, OVERLY_TASK_ORIENTED, TOO_LONG, CONTINUITY_ERROR, MISSES_DIRECT_REQUEST, TONE_MISMATCH, OTHER.
-- Use PASS unless a rewrite is clearly warranted by the visible conversation so far.`;
-
 Deno.serve(async (request: Request): Promise<Response> => {
   const correlationId = crypto.randomUUID();
   const startedAt = Date.now();
@@ -102,6 +60,20 @@ Deno.serve(async (request: Request): Promise<Response> => {
   let correctorDecision: CorrectorDecision | "" = "";
   let fallbackUsed = false;
   let candidateSuccess = false;
+  let diagnosticTherapistModel = DEFAULT_MODEL;
+  let diagnosticTherapistInstructions = "";
+  let diagnosticCandidateInput = "";
+  let diagnosticPayload: {
+    prompt20: string;
+    pre_patient20: string;
+    patient20: string;
+    summarized20: string;
+    tzvira: string;
+    response20: string;
+    question20: string;
+    patient_id: string;
+    session_id: string;
+  } | null = null;
 
   try {
     if (request.method !== "POST") {
@@ -133,16 +105,54 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const therapistInstructions = buildTherapistInstructions(payload.value);
     const candidateInput = buildCandidateInput(payload.value);
 
+    diagnosticTherapistModel = therapistModel;
+    diagnosticTherapistInstructions = therapistInstructions;
+    diagnosticCandidateInput = candidateInput;
+    diagnosticPayload = {
+      prompt20: payload.value.prompt20,
+      pre_patient20: payload.value.pre_patient20,
+      patient20: payload.value.patient20,
+      summarized20: payload.value.summarized20,
+      tzvira: payload.value.tzvira,
+      response20: payload.value.response20 ?? "",
+      question20: payload.value.question20,
+      patient_id: payload.value.patient_id,
+      session_id: payload.value.session_id,
+    };
+
+    console.log(JSON.stringify({
+      event: "candidate_request_debug",
+      correlation_id: correlationId,
+      therapist_model: therapistModel,
+      therapistInstructions,
+      candidateInput,
+      payload: {
+        prompt20: payload.value.prompt20,
+        pre_patient20: payload.value.pre_patient20,
+        patient20: payload.value.patient20,
+        summarized20: payload.value.summarized20,
+        tzvira: payload.value.tzvira,
+        response20: payload.value.response20 ?? "",
+        question20: payload.value.question20,
+        patient_id: payload.value.patient_id,
+        session_id: payload.value.session_id,
+      },
+    }));
+
     const candidateStartedAt = Date.now();
-    const candidateText = await generateCandidate({
-      apiKey: openAiApiKey,
-      model: therapistModel,
-      instructions: therapistInstructions,
-      input: candidateInput,
-      patientId: payload.value.patient_id,
-      sessionId: payload.value.session_id,
-    });
-    candidateElapsedMs = Date.now() - candidateStartedAt;
+    let candidateText: string | null;
+    try {
+      candidateText = await generateCandidate({
+        apiKey: openAiApiKey,
+        model: therapistModel,
+        instructions: therapistInstructions,
+        input: candidateInput,
+        patientId: payload.value.patient_id,
+        sessionId: payload.value.session_id,
+      });
+    } finally {
+      candidateElapsedMs = Date.now() - candidateStartedAt;
+    }
 
     if (!candidateText) {
       httpStatus = 502;
@@ -151,6 +161,20 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     candidateSuccess = true;
 
+    let correctorInstructions: string;
+    try {
+      correctorInstructions = await fetchRuntimeCorrectorPrompt(correlationId);
+    } catch (error) {
+      const typedError = toError(error);
+      if (
+        typedError.message === "runtime_corrector_prompt_fetch_failed" ||
+        typedError.message === "missing_runtime_corrector_prompt"
+      ) {
+        return jsonResponse({ ok: false, error: typedError.message }, 502);
+      }
+      throw error;
+    }
+
     try {
       const correctorStartedAt = Date.now();
       let correctorResult: CorrectorResult;
@@ -158,9 +182,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
         correctorResult = await runCorrector({
           apiKey: openAiApiKey,
           model: correctorModel,
-          therapistInstructions,
+          correctorInstructions,
           acceptedPriorHistory: payload.value.tzvira,
-          previousAcceptedTherapistResponse: payload.value.response20,
+          previousAcceptedTherapistResponse: payload.value.response20 ?? "",
           currentPatientMessage: payload.value.question20,
           candidateResponse: candidateText,
         });
@@ -232,6 +256,20 @@ Deno.serve(async (request: Request): Promise<Response> => {
       candidate_elapsed_ms: candidateElapsedMs,
       corrector_elapsed_ms: correctorElapsedMs,
       total_elapsed_ms: Date.now() - startedAt,
+      therapist_model: diagnosticTherapistModel,
+      therapistInstructions: diagnosticTherapistInstructions,
+      candidateInput: diagnosticCandidateInput,
+      payload: diagnosticPayload ?? {
+        prompt20: "",
+        pre_patient20: "",
+        patient20: "",
+        summarized20: "",
+        tzvira: "",
+        response20: "",
+        question20: "",
+        patient_id: "",
+        session_id: "",
+      },
     });
   }
 });
@@ -261,6 +299,92 @@ async function parseAndValidatePayload(
   return { ok: true, value: record as RequestPayload };
 }
 
+async function fetchRuntimeCorrectorPrompt(correlationId: string): Promise<string> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseKey =
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
+    Deno.env.get("SUPABASE_ANON_KEY") ||
+    Deno.env.get("SUPABASE_KEY");
+
+  if (!supabaseUrl || !supabaseKey) {
+    console.error(JSON.stringify({
+      event: "runtime_corrector_prompt_fetch_failed",
+      correlation_id: correlationId,
+      error: "supabase_configuration_missing",
+    }));
+    throw new Error("runtime_corrector_prompt_fetch_failed");
+  }
+
+  const encodedPhone = encodeURIComponent("123456789");
+  const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/users_information_v2?select=user_text&phone=eq.${encodedPhone}&limit=1`;
+  const response = await fetch(url, {
+    headers: {
+      apikey: supabaseKey,
+      Authorization: `Bearer ${supabaseKey}`,
+      Accept: "application/json",
+      Prefer: "count=exact",
+    },
+  });
+
+  if (!response.ok) {
+    console.error(JSON.stringify({
+      event: "runtime_corrector_prompt_fetch_failed",
+      correlation_id: correlationId,
+      error: "supabase_http_error",
+      status: response.status,
+      status_text: response.statusText,
+    }));
+    throw new Error("runtime_corrector_prompt_fetch_failed");
+  }
+
+  const data = await response.json();
+  if (!Array.isArray(data)) {
+    console.error(JSON.stringify({
+      event: "runtime_corrector_prompt_fetch_failed",
+      correlation_id: correlationId,
+      error: "supabase_invalid_response",
+    }));
+    throw new Error("runtime_corrector_prompt_fetch_failed");
+  }
+
+  if (data.length === 0) {
+    console.error(JSON.stringify({
+      event: "missing_runtime_corrector_prompt",
+      correlation_id: correlationId,
+    }));
+    throw new Error("missing_runtime_corrector_prompt");
+  }
+
+  if (data.length > 1) {
+    console.error(JSON.stringify({
+      event: "runtime_corrector_prompt_fetch_failed",
+      correlation_id: correlationId,
+      error: "multiple_runtime_corrector_prompts_found",
+    }));
+    throw new Error("runtime_corrector_prompt_fetch_failed");
+  }
+
+  const record = data[0] as Record<string, unknown>;
+  if (record.user_text == null || typeof record.user_text !== "string") {
+    console.error(JSON.stringify({
+      event: "missing_runtime_corrector_prompt",
+      correlation_id: correlationId,
+    }));
+    throw new Error("missing_runtime_corrector_prompt");
+  }
+
+  const prompt = record.user_text.trim();
+  if (prompt.length === 0) {
+    console.error(JSON.stringify({
+      event: "missing_runtime_corrector_prompt",
+      correlation_id: correlationId,
+    }));
+    throw new Error("missing_runtime_corrector_prompt");
+  }
+
+  return prompt;
+}
+
 function buildTherapistInstructions(payload: RequestPayload): string {
   return [
     payload.prompt20,
@@ -288,7 +412,7 @@ function buildCandidateInput(payload: RequestPayload): string {
     payload.tzvira,
     "",
     "response20:",
-    payload.response20,
+    payload.response20 ?? "",
     "",
     "question20:",
     payload.question20,
@@ -331,7 +455,7 @@ async function generateCandidate(args: {
 async function runCorrector(args: {
   apiKey: string;
   model: string;
-  therapistInstructions: string;
+  correctorInstructions: string;
   acceptedPriorHistory: string;
   previousAcceptedTherapistResponse: string;
   currentPatientMessage: string;
@@ -343,7 +467,6 @@ async function runCorrector(args: {
       "runtime payload contains accepted prior history, previous accepted therapist response, current patient message, and current candidate response only",
     response_format_instruction:
       "Return one valid JSON object only with action, final_response, and reason_codes. No Markdown and no text outside JSON.",
-    therapist_instructions: args.therapistInstructions,
     accepted_prior_history: args.acceptedPriorHistory,
     previous_accepted_therapist_response: args.previousAcceptedTherapistResponse,
     current_patient_message: args.currentPatientMessage,
@@ -356,7 +479,7 @@ async function runCorrector(args: {
     body: {
       model: args.model,
       store: false,
-      instructions: RUNTIME_CORRECTOR_SYSTEM_PROMPT,
+      instructions: args.correctorInstructions,
       input: JSON.stringify(correctorPayload),
       temperature: 0.1,
       max_output_tokens: 700,
