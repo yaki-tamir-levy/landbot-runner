@@ -474,9 +474,9 @@ async function supaPatchByIdForClaim(id, patient_code, patchObj, expectedProcess
 }
 
 async function supaFetchPrompt10() {
-  const url = new URL(`${SUPABASE_URL}/rest/v1/${USERS_INFORMATION_TABLE}`);
-  url.searchParams.set("select", PROMPT10_COLUMN);
-  url.searchParams.set("phone", `eq.${PROMPT10_PHONE}`);
+  const url = new URL(`${SUPABASE_URL}/rest/v1/prompt_information_v2`);
+  url.searchParams.set("select", "user_text");
+  url.searchParams.set("prompt_key", "eq.risk");
   url.searchParams.set("limit", "1");
 
   const res = await fetch(url, { headers: supaHeaders() });
