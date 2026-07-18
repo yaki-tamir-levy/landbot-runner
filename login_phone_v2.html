@@ -67,13 +67,18 @@
   }
 
   function normalizePhone(value) {
-    return String(value || '').replace(/[^\d]/g, '').trim();
+    let d = String(value || '').replace(/\D/g, '');
+    if (d.startsWith('00')) d = d.slice(2);
+    if (d.startsWith('0972')) d = d.slice(4);
+    else if (d.startsWith('972')) d = d.slice(3);
+    else if (d.startsWith('0')) d = d.slice(1);
+    d = '0' + d;
+    return /^05\d{8}$/.test(d) ? d : null;
   }
 
   function validatePhone(rawPhone) {
     const phone = normalizePhone(rawPhone);
-    if (!phone) return 'נא להזין מספר טלפון.';
-    if (!/^0\d{8,9}$/.test(phone)) return 'מספר הטלפון אינו תקין.';
+    if (!phone) return 'נא להזין מספר נייד תקין (05X-XXXXXXX).';
     return '';
   }
 
@@ -140,7 +145,13 @@
     setText(verifyStatusEl, '', 'muted');
 
     try {
-      const payload = { phone: normalizePhone(phoneEl.value) };
+      const normalized = normalizePhone(phoneEl.value);
+      if (!normalized) {
+        setText(sendStatusEl, 'נא להזין מספר נייד תקין (05X-XXXXXXX).', 'err');
+        btnSendEl.disabled = false;
+        return;
+      }
+      const payload = { phone: normalized };
       await postJson(`${FUNCTIONS_BASE}/start-login`, payload);
       setText(sendStatusEl, 'אם המספר קיים במערכת — נשלח קוד למייל המשויך.', 'ok');
       tokenEl.focus();
@@ -162,8 +173,13 @@
     setText(verifyStatusEl, 'מאמת…', 'muted');
 
     try {
+      const normalized = normalizePhone(phoneEl.value);
+      if (!normalized) {
+        setText(verifyStatusEl, 'נא להזין מספר נייד תקין (05X-XXXXXXX).', 'err');
+        return;
+      }
       const data = await postJson(`${FUNCTIONS_BASE}/verify-login`, {
-        phone: normalizePhone(phoneEl.value),
+        phone: normalized,
         token
       });
 
