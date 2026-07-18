@@ -182,16 +182,22 @@ function buildNumberedTalk(talkText) {
   const lines = talkText.split(/\r?\n/);
   const out = [];
   let n = 1;
+  let current = null;
   for (const rawLine of lines) {
     const line = rawLine ?? "";
     const t = line.trimStart();
     const isHeb = line.includes("שאלה:") || line.includes("תשובה:");
     const isQA = t.startsWith("Q:") || t.startsWith("A:");
     if (isHeb || isQA) {
-      out.push(`-${n}- ${line}`);
+      if (current !== null) out.push(current);
+      current = `-${n}- ${line.trim()}`;
       n++;
+    } else if (current !== null) {
+      const extra = line.trim();
+      if (extra) current += " " + extra;
     }
   }
+  if (current !== null) out.push(current);
   return { numberedText: out.join("\n"), count: out.length };
 }
 
