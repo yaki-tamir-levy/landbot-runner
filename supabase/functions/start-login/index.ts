@@ -126,7 +126,7 @@ if (import.meta.main) {
   // 1) Find email by phone in your table
   const { data, error } = await supabaseAdmin
     .from("psychologists")
-    .select("email")
+    .select("email, active")
     .eq("phone", phone)
     .maybeSingle();
 
@@ -137,8 +137,8 @@ if (import.meta.main) {
 
   const email = (data?.email ?? "").toString().trim();
 
-  if (!email) {
-    // Not found or no email configured
+  if (!email || data?.active === false) {
+    // Not found, no email configured, or explicitly deactivated
     return jsonResponse(req, 200, DEBUG_ENUM ? { ...genericOk, debug: { found: false } } : genericOk);
   }
 

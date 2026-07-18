@@ -60,7 +60,7 @@ serve(async (req: Request) => {
 
   const { data, error } = await supabaseAdmin
     .from("psychologists")
-    .select("email")
+    .select("email, active")
     .eq("phone", phone)
     .maybeSingle();
 
@@ -70,7 +70,7 @@ serve(async (req: Request) => {
   }
 
   const email = (data?.email ?? "").toString().trim();
-  if (!email) {
+  if (!email || data?.active === false) {
     return json(req, 401, { ok: false, error: "verify_failed" });
   }
 
