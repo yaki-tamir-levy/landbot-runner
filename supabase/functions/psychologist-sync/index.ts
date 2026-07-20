@@ -102,6 +102,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
           p_email: email,
           p_name: name,
           p_active: active,
+          p_organization: row.organization != null && row.organization !== '' ? String(row.organization) : null,
+          p_text: row.text != null && row.text !== '' ? String(row.text) : null,
         }),
       });
 
