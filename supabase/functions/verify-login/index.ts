@@ -59,7 +59,7 @@ serve(async (req: Request) => {
   if (!token || token.length < 4) return json(req, 400, { ok: false });
 
   const { data, error } = await supabaseAdmin
-    .from("psychologists")
+    .from("psychologists_v2")
     .select("email, active")
     .eq("phone", phone)
     .maybeSingle();

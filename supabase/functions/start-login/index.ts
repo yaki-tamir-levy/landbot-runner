@@ -125,7 +125,7 @@ if (import.meta.main) {
 
   // 1) Find email by phone in your table
   const { data, error } = await supabaseAdmin
-    .from("psychologists")
+    .from("psychologists_v2")
     .select("email, active")
     .eq("phone", phone)
     .maybeSingle();
