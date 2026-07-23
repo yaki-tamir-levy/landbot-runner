@@ -286,6 +286,7 @@ function getReviewerName(ev){
   var REVIEWS_TABLE     = "risk_reviews_v2";
   var FLAGS_TABLE       = "talk_read_flags";
   var USERS_INFO_TABLE  = "users_information";
+  var IDENTITY_TABLE    = "patient_identity_map";
 
   if (!window.supabase || !window.supabase.createClient){
     setStatusErr('ספריית Supabase לא נטענה (בדוק חיבור אינטרנט / חסימת CDN).');
@@ -438,7 +439,8 @@ function getReviewerName(ev){
     infoMap:  new Map(),   // phone -> {status}
     riskMap:  new Map(),   // key(time,phone) -> [riskRows]
     riskKeySet: new Set(), // keys time_key+phone that have any risk
-    riskForceKeySet: new Set() // keys time_key+phone that have risk in status NEW/REVIEWED (VIEWED legacy)
+    riskForceKeySet: new Set(), // keys time_key+phone that have risk in status NEW/REVIEWED (VIEWED legacy)
+    identityMap: {}        // patient_code (string, as-is) -> {name, phone}
   
   };
 
@@ -511,6 +513,7 @@ function getReviewerName(ev){
     CACHE.riskMap = new Map();
     CACHE.riskKeySet = new Set();
     CACHE.riskForceKeySet = new Set();
+    CACHE.identityMap = {};
 
     return fetchAllPaged(TABLE, 'id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk', 'time_key')
       .then(function(allRows){
@@ -537,6 +540,22 @@ function getReviewerName(ev){
         });
         CACHE.loaded = true;
         setStatusOk('טעינה ראשונית הושלמה. סלקציות כעת מקומיות.');
+      })
+      .then(function(){
+        // ADDITIVE: patient identity map. Isolated — must not affect the existing load flow.
+        return fetchAllPaged(IDENTITY_TABLE, 'patient_code, name, phone', 'patient_code')
+          .then(function(allIdentity){
+            (allIdentity || []).forEach(function(ir){
+              if (!ir) return;
+              var code = String(ir.patient_code == null ? '' : ir.patient_code);
+              if (!code) return;
+              CACHE.identityMap[code] = { name: ir.name, phone: ir.phone };
+            });
+            console.log('identityMap entries: ' + Object.keys(CACHE.identityMap).length);
+          })
+          .catch(function(e){
+            console.warn('identityMap load skipped: ' + (e && e.message ? e.message : e));
+          });
       })
       .catch(function(e){
         setStatusErr('שגיאת טעינה: ' + (e && e.message ? e.message : e));
