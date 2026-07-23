@@ -1295,7 +1295,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
             for (var a=0;a<alerts.length;a++){
               var AA = alerts[a];
               top.push('<div class="alertitem">');
-              top.push('<div><strong>' + escapeHtml(AA.name) + '</strong> · ' + escapeHtml(AA.phone) + '</div>');
+              top.push('<div><strong>' + escapeHtml(AA.name) + '</strong> · <span dir="ltr">' + escapeHtml(AA.phone) + '</span></div>');
               top.push('<div class="when">' + escapeHtml(AA.time) + '</div><div>');
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
@@ -1394,7 +1394,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
           }
 
           var nameHtml  = '<span class="patient-name">' + escapeHtml(ident.name || 'מטופל/ת') + '</span>';
-          var phoneHtml = '<span class="patient-phone">' + escapeHtml(ident.phone || '') + '</span>';
+          var phoneHtml = '<span class="patient-phone" dir="ltr">' + escapeHtml(ident.phone || '') + '</span>';
           var btnLabel  = isHidden ? 'הצג שיחה' : 'הסתר שיחה';
 
           var rawHasContent = !!(r.summarized_linked_talk && String(r.summarized_linked_talk).trim());
