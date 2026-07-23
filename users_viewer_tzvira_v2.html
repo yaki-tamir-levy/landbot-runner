@@ -444,6 +444,18 @@ function getReviewerName(ev){
   
   };
 
+  // Display-only identity resolution.
+  // Prefers patient_identity_map; falls back to the row's shadow columns.
+  // NEVER used for join keys or write paths — those keep using the raw r.phone.
+  function displayIdentity(row){
+    var code = (row && row.patient_code != null) ? String(row.patient_code) : '';
+    if (code){
+      var rec = CACHE.identityMap ? CACHE.identityMap[code] : null;
+      if (rec) return { name: rec.name, phone: rec.phone };
+    }
+    return { name: (row ? row.name : ''), phone: (row ? row.phone : '') };
+  }
+
   function fetchAllPaged(tableName, selectCols, orderCol){
     var pageSize = 1000;
     var out = [];
@@ -515,7 +527,7 @@ function getReviewerName(ev){
     CACHE.riskForceKeySet = new Set();
     CACHE.identityMap = {};
 
-    return fetchAllPaged(TABLE, 'id, time_key, phone, name, last_talk_tzvira, summarized_linked_talk', 'time_key')
+    return fetchAllPaged(TABLE, 'id, time_key, phone, name, patient_code, last_talk_tzvira, summarized_linked_talk', 'time_key')
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
@@ -1360,6 +1372,9 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
           var flag = flagsMap.get(k);
           var isHidden = !!(flag && flag.is_hidden);
 
+          // Display-only. Join keys (keyOf/riskKey/normPhone) and writes keep using r.phone.
+          var ident = displayIdentity(r);
+
           if (!isHidden && notRev.length){
             var items = [];
             for (var nn=0; nn<notRev.length; nn++){
@@ -1371,15 +1386,15 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
               });
             }
             alerts.push({
-              name: r.name || 'מטופל/ת',
-              phone: r.phone || '',
+              name: ident.name || 'מטופל/ת',
+              phone: ident.phone || '',
               time: timeKeyToHuman(r.time_key),
               items: items
             });
           }
 
-          var nameHtml  = '<span class="patient-name">' + escapeHtml(r.name || 'מטופל/ת') + '</span>';
-          var phoneHtml = '<span class="patient-phone">' + escapeHtml(r.phone || '') + '</span>';
+          var nameHtml  = '<span class="patient-name">' + escapeHtml(ident.name || 'מטופל/ת') + '</span>';
+          var phoneHtml = '<span class="patient-phone">' + escapeHtml(ident.phone || '') + '</span>';
           var btnLabel  = isHidden ? 'הצג שיחה' : 'הסתר שיחה';
 
           var rawHasContent = !!(r.summarized_linked_talk && String(r.summarized_linked_talk).trim());
