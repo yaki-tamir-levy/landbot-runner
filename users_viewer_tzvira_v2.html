@@ -418,7 +418,7 @@ function getReviewerName(ev){
   var CACHE = {
     loaded: false,
     allRows: [],
-    flagsMap: new Map(),   // key(time,phone) -> {is_hidden}
+    flagsMap: new Map(),   // key(time_key, patient_code) -> {is_hidden}
     infoMap:  new Map(),   // patient_code -> {status}
     riskMap:  new Map(),   // key(time_key, patient_code) -> [riskRows]
     riskKeySet: new Set(), // keys time_key+patient_code that have any risk
@@ -526,11 +526,13 @@ function getReviewerName(ev){
         buildRiskCache(allRisk || []);
         markRowsWithRisk();
         setStatusOk('RISK נטען (צמדים=' + CACHE.riskKeySet.size + '). טוען דגלי הסתרה…');
-        return fetchAllPaged(FLAGS_TABLE, 'time_key, phone, is_hidden', 'time_key');
+        return fetchAllPaged(FLAGS_TABLE, 'time_key, phone, patient_code, is_hidden', 'time_key');
       })
       .then(function(allFlags){
         (allFlags || []).forEach(function(fr){
-          CACHE.flagsMap.set(keyOf(fr.time_key, fr.phone), { is_hidden: !!fr.is_hidden });
+          var fk = keyOf(fr.time_key, fr.patient_code);
+          if (!fk) return;   // no patient_code -> skip, never build a wrong key
+          CACHE.flagsMap.set(fk, { is_hidden: !!fr.is_hidden });
         });
         setStatusOk('דגלי הסתרה נטענו (' + CACHE.flagsMap.size + '). טוען סטטוסים…');
         return fetchAllPaged(USERS_INFO_TABLE, 'patient_code, status', 'patient_code');
@@ -765,6 +767,8 @@ function stripAllHtml(raw){
     catch(e){ return ts; }
   }
   function nowISO(){ return new Date().toISOString(); }
+  // UNUSED as of the patient_code migration: no join key or lookup matches by phone anymore.
+  // Kept intentionally (not deleted) in case a phone-based lookup is needed again.
   function normPhone(p){
     var s = String(p == null ? '' : p);
     // keep digits only
@@ -787,7 +791,14 @@ function stripAllHtml(raw){
     return d;
   }
 
-function keyOf(time_key, phone){ return String(time_key||'') + '|' + normPhone(phone); }
+function keyOf(time_key, patient_code){
+  // Local join key for talk_read_flags: time_key + patient_code.
+  // Missing patient_code -> empty key. Every caller MUST skip an empty key
+  // instead of building a wrong one.
+  var code = String(patient_code == null ? '' : patient_code).trim();
+  if (!code) return '';
+  return String(time_key||'') + '|' + code;
+}
 
   
   function keyOfId(id){ return String(id||''); }
@@ -1388,11 +1399,11 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
             if (st === 'NEW' || st === 'VIEWED' || st === 'REVIEWED') notRev.push(hits[h]);
           }
 
-          var k = keyOf(r.time_key, r.phone);
-          var flag = flagsMap.get(k);
+          var k = keyOf(r.time_key, r.patient_code);
+          var flag = k ? flagsMap.get(k) : null;   // no patient_code -> treated as not hidden
           var isHidden = !!(flag && flag.is_hidden);
 
-          // Display-only. riskKey now joins on patient_code; keyOf/flagsMap and all server writes keep using r.phone.
+          // Display-only. All join keys (riskKey/keyOf) and all server writes now use patient_code.
           var ident = displayIdentity(r);
 
           if (!isHidden && notRev.length){
@@ -1532,6 +1543,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       var talkElem = btnToggle.closest('.talk');
       var time_key = btnToggle.getAttribute('data-time');
       var phone    = btnToggle.getAttribute('data-phone');
+      var pCode    = talkElem ? String(talkElem.getAttribute('data-patient_code') || '').trim() : '';
       var name     = btnToggle.getAttribute('data-name') || null;
       var isHidden = btnToggle.getAttribute('data-hidden') === '1';
       var notRevCount = parseInt(btnToggle.getAttribute('data-notrev')||'0',10);
@@ -1541,17 +1553,25 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         return;
       }
 
-      var payload = { time_key: time_key, phone: phone, is_hidden: !isHidden, toggled_by: 'viewer_default', patient_name: name };
+      // HARD GUARD: this is a DB write. No patient_code -> the request is never sent,
+      // and there is NO fallback to phone.
+      if (!pCode){
+        showInlineMsg(talkElem, 'חסר מזהה מטופל (patient_code) בשיחה זו — לא ניתן לשנות את מצב ההצגה.');
+        return;
+      }
+
+      // phone is still sent while the column exists and is nullable (temporary, shadow only).
+      var payload = { time_key: time_key, phone: phone, patient_code: pCode, is_hidden: !isHidden, toggled_by: 'viewer_default', patient_name: name };
 
       supa.from(FLAGS_TABLE)
-          .upsert(payload, { onConflict: 'time_key,phone' })
+          .upsert(payload, { onConflict: 'time_key,patient_code' })
           .then(function(res2){
             if (res2.error){
               showInlineMsg(talkElem, 'שגיאה בעדכון מצב השיחה: ' + (res2.error.message || 'unknown'));
               return;
             }
             if (CACHE && CACHE.loaded){
-              CACHE.flagsMap.set(keyOf(time_key, phone), { is_hidden: !isHidden });
+              CACHE.flagsMap.set(keyOf(time_key, pCode), { is_hidden: !isHidden });
               rerenderFromCache();
             } else {
               queryPage(true);
