@@ -1269,21 +1269,26 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         var info = infoMap.get(codeKey);
         if (!info || info.status == null) return false;
 
-        var sVal = parseInt(info.status, 10);
-        var kVal = parseInt(talkKind, 10);
-        if (!isFinite(kVal)) return true;
+        // Normalize both sides to trimmed strings: users_information_v2.status is TEXT,
+        // and the filter value arrives from the DOM as a string. A numeric 4 and the
+        // string '4' therefore compare identically.
+        var sKey = String(info.status).trim();
+        var kKey = String(talkKind).trim();
 
-        // Status filter logic:
-        // 1 ("מטפל וירטואלי"): allow status 1 or 3
-        // 2 ("מדריך קורס"): allow status 2 or 3
-        // 3 ("גם וגם"): allow status 3 only
+        // Status filter logic (status 4 is fully isolated):
+        // 1: allow status 1 or 3
+        // 2: allow status 2 or 3
+        // 3: allow status 1, 2 or 3
+        // 4: allow status 4 only
         var allowed = false;
-        if (kVal === 1){
-          allowed = (sVal === 1 || sVal === 3);
-        } else if (kVal === 2){
-          allowed = (sVal === 2 || sVal === 3);
-        } else if (kVal === 3){
-          allowed = (sVal === 3);
+        if (kKey === '1'){
+          allowed = (sKey === '1' || sKey === '3');
+        } else if (kKey === '2'){
+          allowed = (sKey === '2' || sKey === '3');
+        } else if (kKey === '3'){
+          allowed = (sKey === '1' || sKey === '2' || sKey === '3');
+        } else if (kKey === '4'){
+          allowed = (sKey === '4');
         } else {
           allowed = true;
         }
