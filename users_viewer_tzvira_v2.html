@@ -901,11 +901,13 @@ function showInlineMsg(talkElem, msg){
       var k = riskKey(talk_id, time_key, patient_code);
       return Promise.resolve(k ? (CACHE.riskMap.get(k) || []) : []);
     }
+    // Server fallback (CACHE not loaded). No patient_code -> no query at all, never fall back to phone.
+    if (!String(patient_code == null ? '' : patient_code).trim()) return Promise.resolve([]);
     return supa.from(REVIEWS_TABLE)
       // NOTE: production schema uses LINE_NUM (no page_num)
-      .select('id, time_key, phone, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
+      .select('id, time_key, phone, patient_code, line_num, status, reviewed_at, reviewer, name, review_notes, severity, match_method, risk_reasons, short_risk')
       .eq('time_key', time_key)
-      .eq('phone', phone)
+      .eq('patient_code', patient_code)
       .then(function(res){
         if (res.error) return [];
         return res.data || [];
@@ -918,7 +920,11 @@ function showInlineMsg(talkElem, msg){
   // ------------------------------------------------------------
   function updateRiskReviewStatus(talkId, timeKey, phone, lineNum, newStatus, notes, reviewerName, patientCode){
     var stUi = String(newStatus || '').trim();
-    if (!timeKey || !phone || !lineNum || !stUi) return Promise.resolve(false);
+    if (!timeKey || !lineNum || !stUi) return Promise.resolve(false);
+    // HARD GUARD: patient_code is the only patient identifier used for the write.
+    // Missing -> the request is never sent, and there is NO fallback to phone.
+    var pc = String(patientCode == null ? '' : patientCode).trim();
+    if (!pc) return Promise.reject(new Error('חסר מזהה מטופל (patient_code) — העדכון בוטל'));
     var txt = (notes == null) ? '' : String(notes);
 
 
@@ -938,7 +944,7 @@ function showInlineMsg(talkElem, msg){
       return supa.from(REVIEWS_TABLE)
         .update(upd)
         .eq('time_key', timeKey)
-        .eq('phone', phone)
+        .eq('patient_code', pc)
         .eq('line_num', lineNum)
         .select('id')
         .then(function(res){
@@ -977,12 +983,12 @@ function showInlineMsg(talkElem, msg){
 
     return tryWithConstraintFallback().then(function(ok){
       if (ok && CACHE && CACHE.loaded){
-        var kc = riskKey(talkId, timeKey, patientCode);
+        var kc = riskKey(talkId, timeKey, pc);
         var arr = kc ? (CACHE.riskMap.get(kc) || []) : [];
         for (var i=0;i<arr.length;i++){
           var rr = arr[i];
           var ln = (rr && rr.line_num);
-          if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'') === String(patientCode||'')){
+          if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'').trim() === pc){
             rr.status = stDb;
             rr.review_notes = txt;
             rr.reviewed_at = nowISO();
@@ -995,7 +1001,10 @@ function showInlineMsg(talkElem, msg){
   }
 
 function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerName, patientCode){
-    if (!timeKey || !phone || !lineNum) return Promise.resolve(false);
+    if (!timeKey || !lineNum) return Promise.resolve(false);
+    // HARD GUARD: see updateRiskReviewStatus. No patient_code -> no request, no phone fallback.
+    var pc = String(patientCode == null ? '' : patientCode).trim();
+    if (!pc) return Promise.reject(new Error('חסר מזהה מטופל (patient_code) — שמירת ההערה בוטלה'));
     var txt = (notes == null) ? '' : String(notes);
     var rn = String(reviewerName == null ? '' : reviewerName).trim();
     if (!rn){ throw new Error('חובה להזין שם מטפל'); }
@@ -1005,7 +1014,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
     return supa.from(REVIEWS_TABLE)
       .update({ review_notes: txt, reviewer: rn })
       .eq('time_key', timeKey)
-      .eq('phone', phone)
+      .eq('patient_code', pc)
       .eq('line_num', lineNum)
       .select('id')
       .then(function(res){
@@ -1016,12 +1025,12 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       })
       .then(function(ok){
         if (ok && CACHE && CACHE.loaded){
-          var kc = riskKey(talkId, timeKey, patientCode);
+          var kc = riskKey(talkId, timeKey, pc);
           var arr = kc ? (CACHE.riskMap.get(kc) || []) : [];
           for (var i=0;i<arr.length;i++){
             var rr = arr[i];
             var ln = (rr && rr.line_num);
-            if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'') === String(patientCode||'')){
+            if (parseInt(ln,10) === parseInt(lineNum,10) && String(rr.time_key||'') === String(timeKey||'') && String(rr.patient_code||'').trim() === pc){
               rr.review_notes = txt;
               rr.reviewer = rn;
             }
@@ -1640,6 +1649,11 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         try{ if (tnN) tnN.focus(); }catch(e){}
         return;
       }
+      // Abort before any network call if the talk has no patient_code.
+      if (!String(pCodeN || '').trim()){
+        showInlineMsgNearRiskBox(boxN, 'חסר מזהה מטופל (patient_code) בשיחה זו — לא ניתן לשמור.');
+        return;
+      }
       updateRiskReviewNotes(talkIdN, timeKeyN, phoneN, lnN, noteTrimN, therapistNameN, pCodeN).then(function(ok){
         if (!ok){
           showInlineMsgNearRiskBox(boxN, 'לא עודכנה הערה (לא נמצאה שורה מתאימה).');
@@ -1690,6 +1704,12 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       if (!therapistNameX){
         showInlineMsgNearRiskBox(box, 'יש להזין שם מטפל');
         try{ if (tnX) tnX.focus(); }catch(e){}
+        return;
+      }
+      // Abort before any network call AND before the optimistic UI, so no false "active" state is left behind.
+      if (!String(pCodeX || '').trim()){
+        clearInlineMsgNearRiskBox(box);
+        showInlineMsgNearRiskBox(box, 'חסר מזהה מטופל (patient_code) בשיחה זו — לא ניתן לעדכן סטטוס.');
         return;
       }
       // optimistic UI: mark selected button
