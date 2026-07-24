@@ -1506,7 +1506,10 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
             hiddenCount++;
           } else {
             shownCount++;
-            if (r.phone) patientsShown.add(String(r.phone).trim());
+            // Count distinct patients by patient_code. name/phone are shadow columns pending
+            // removal and are already null on some rows, so there is NO fallback to phone.
+            var pcKey = (r && r.patient_code != null) ? String(r.patient_code).trim() : '';
+            if (pcKey) patientsShown.add(pcKey);
 
             var dialogHtml = renderDialogHtml(parsed.patient, parsed.lines, hits);
             dialogHtml = dialogHtml.replace(/__TALKDOM__-/g, 'ln-' + talkDomId + '-');
