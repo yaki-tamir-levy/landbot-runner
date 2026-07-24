@@ -663,21 +663,25 @@ function getReviewerName(ev){
     }
   }
 
-  // תווית למצב משתמש (מטפל/מדריך) שמגיע מ-users_information.status
+  // Single source of truth for users_information_v2.status -> display label.
+  // Keys are strings; lookup normalizes the incoming value first, so 4 and '4' resolve identically.
+  var STATUS_LABEL_MAP = {
+    "1": "מטופל",
+    "2": "קורסיסט",
+    "3": "מטופל קורסיסט",
+    "4": "פיקטיבי - לשני הסוגים"
+  };
+
+  // תווית למצב משתמש שמגיע מ-users_information_v2.status
   function statusLabel(statusVal){
     if (statusVal == null) return 'לא ידוע';
     var s = String(statusVal).trim();
     if (!s) return 'לא ידוע';
 
-    // התאמות נפוצות (שמור גמיש - לא מניח קידוד יחיד)
-    var low = s.toLowerCase();
-    if (s === '1' || low === 'therapist' || low === 't') return 'מטפל וירטואלי';
-    if (s === '3' || low === 'mentor'    || low === 'm') return 'מדריך קורס';
+    // s is already a trimmed string, so a numeric 4 and the string '4' both arrive here as "4".
+    if (Object.prototype.hasOwnProperty.call(STATUS_LABEL_MAP, s)) return STATUS_LABEL_MAP[s];
 
-    // אם כבר הגיע בעברית - נשאיר בקירוב תקין
-    if (s.indexOf('מטפל') !== -1)  return 'מטפל וירטואלי';
-    if (s.indexOf('מדריך') !== -1) return 'מדריך קורס';
-
+    // Not 1-4 -> unchanged existing default: return the value as-is.
     return s;
   }
 
