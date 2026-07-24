@@ -285,7 +285,7 @@ function getReviewerName(ev){
   var TABLE             = "users_tzvira_v2";
   var REVIEWS_TABLE     = "risk_reviews_v2";
   var FLAGS_TABLE       = "talk_read_flags";
-  var USERS_INFO_TABLE  = "users_information";
+  var USERS_INFO_TABLE  = "users_information_v2";
   var IDENTITY_TABLE    = "patient_identity_map";
 
   if (!window.supabase || !window.supabase.createClient){
@@ -309,11 +309,13 @@ function getReviewerName(ev){
 
 
   // ------------------------------------------------------------
-  // users_information.status backfill — at most one DB call per phone
-  // Goal: never show "לא ידוע" if the status exists in users_information.
+  // users_information_v2.status backfill — at most one DB call per patient_code
+  // Goal: never show "לא ידוע" if the status exists in users_information_v2.
   // ------------------------------------------------------------
-  var UI_STATUS_FETCH = new Map(); // normPhone(phone) -> Promise<any|null>
+  var UI_STATUS_FETCH = new Map(); // patient_code -> Promise<any|null>
 
+  // UNUSED as of the patient_code migration: status lookup no longer matches by phone.
+  // Kept intentionally (not deleted) in case a phone-based lookup is needed again.
   function uiPhoneVariants(rawPhone){
     var s = String(rawPhone == null ? '' : rawPhone).trim();
     var digits = s.replace(/\D+/g,'');
@@ -337,37 +339,41 @@ function getReviewerName(ev){
     return Array.from(set).filter(function(x){ return x && String(x).trim() !== ''; });
   }
 
-  function hasInfoStatus(phoneRaw){
+  function hasInfoStatus(patientCode){
     try{
-      var info = CACHE && CACHE.infoMap ? CACHE.infoMap.get(normPhone(phoneRaw)) : null;
+      var k = String(patientCode == null ? '' : patientCode).trim();
+      if (!k) return false;
+      var info = CACHE && CACHE.infoMap ? CACHE.infoMap.get(k) : null;
       return !!(info && info.status != null && String(info.status).trim() !== '');
     } catch(e){
       return false;
     }
   }
 
-  function fetchUsersInformationStatusOnce(phoneRaw){
-    var key = normPhone(phoneRaw);
+  function fetchUsersInformationStatusOnce(patientCode){
+    var key = String(patientCode == null ? '' : patientCode).trim();
+    // No patient_code -> no request at all, and never fall back to phone.
+    if (!key) return Promise.resolve(null);
     if (UI_STATUS_FETCH.has(key)) return UI_STATUS_FETCH.get(key);
 
     // if already present in cache, don't hit DB
-    if (hasInfoStatus(phoneRaw)){
+    if (hasInfoStatus(key)){
       var p0 = Promise.resolve(CACHE.infoMap.get(key).status);
       UI_STATUS_FETCH.set(key, p0);
       return p0;
     }
 
-    var variants = uiPhoneVariants(phoneRaw);
-    var orParts = variants.map(function(v){ return 'phone.eq.' + v; }).join(',');
     var p = supa.from(USERS_INFO_TABLE)
-      .select('status, phone')
-      .or(orParts)
+      // Direct lookup by patient_code. Replaces the or(phone.eq...) variant matching
+      // that produced the 400 error.
+      .select('status, patient_code')
+      .eq('patient_code', key)
       .limit(1)
       .then(function(res){
         var row = (res && res.data && res.data.length) ? res.data[0] : null;
         if (row && row.status != null && String(row.status).trim() !== ''){
           // backfill into CACHE.infoMap so filters/labels use it everywhere
-          putInfoStatus(phoneRaw, row.status);
+          putInfoStatus(key, row.status);
           return row.status;
         }
         return null;
@@ -381,50 +387,27 @@ function getReviewerName(ev){
   }
 
   function ensureUsersInformationForRows(rows){
-    var uniq = new Map(); // key->raw
+    var uniq = new Set(); // patient_code
     (rows || []).forEach(function(r){
-      var raw = (r && r.phone != null) ? r.phone : '';
-      var k = normPhone(raw);
-      if (!uniq.has(k)) uniq.set(k, raw);
+      var k = (r && r.patient_code != null) ? String(r.patient_code).trim() : '';
+      if (k) uniq.add(k);   // no patient_code -> skip the row entirely
     });
 
     var ps = [];
-    uniq.forEach(function(raw, k){
-      if (!hasInfoStatus(raw)){
-        ps.push(fetchUsersInformationStatusOnce(raw));
+    uniq.forEach(function(k){
+      if (!hasInfoStatus(k)){
+        ps.push(fetchUsersInformationStatusOnce(k));
       }
     });
     return Promise.all(ps);
   }
-  function putInfoStatus(phoneRaw, statusVal){
+  function putInfoStatus(patientCode, statusVal){
     var status = statusVal;
     if (status == null || String(status).trim() === '') return;
-
-    var s = String(phoneRaw == null ? '' : phoneRaw).trim();
-    var digits = s.replace(/\D+/g,'');
-    var keys = new Set();
-
-    // normalized main key
-    var norm = normPhone(phoneRaw);
-    if (norm) keys.add(norm);
-
-    if (digits) keys.add(digits);
-    if (digits.length === 9) keys.add('0' + digits);
-    if (digits.length === 10 && digits.charAt(0) === '0'){
-      keys.add(digits.slice(1));
-      keys.add('972' + digits.slice(1));
-    }
-    if (digits.startsWith('972') && digits.length >= 11){
-      var rest = digits.slice(3);
-      keys.add(rest);
-      if (rest.length === 9) keys.add('0' + rest);
-      if (rest.length === 10) keys.add(rest);
-    }
-
-    keys.forEach(function(k){
-      if (!k) return;
-      try{ CACHE.infoMap.set(k, { status: status }); } catch(e){}
-    });
+    // Single canonical key: patient_code. No phone variants, no fallback.
+    var k = String(patientCode == null ? '' : patientCode).trim();
+    if (!k) return;
+    try{ CACHE.infoMap.set(k, { status: status }); } catch(e){}
   }
 
   // ------------------------------------------------------------
@@ -436,7 +419,7 @@ function getReviewerName(ev){
     loaded: false,
     allRows: [],
     flagsMap: new Map(),   // key(time,phone) -> {is_hidden}
-    infoMap:  new Map(),   // phone -> {status}
+    infoMap:  new Map(),   // patient_code -> {status}
     riskMap:  new Map(),   // key(time_key, patient_code) -> [riskRows]
     riskKeySet: new Set(), // keys time_key+patient_code that have any risk
     riskForceKeySet: new Set(), // keys time_key+patient_code that have risk in status NEW/REVIEWED (VIEWED legacy)
@@ -550,11 +533,11 @@ function getReviewerName(ev){
           CACHE.flagsMap.set(keyOf(fr.time_key, fr.phone), { is_hidden: !!fr.is_hidden });
         });
         setStatusOk('דגלי הסתרה נטענו (' + CACHE.flagsMap.size + '). טוען סטטוסים…');
-        return fetchAllPaged(USERS_INFO_TABLE, 'phone, status', 'phone');
+        return fetchAllPaged(USERS_INFO_TABLE, 'patient_code, status', 'patient_code');
       })
       .then(function(allInfo){
         (allInfo || []).forEach(function(ir){
-          putInfoStatus(ir.phone, ir.status);
+          putInfoStatus(ir.patient_code, ir.status);
         });
         CACHE.loaded = true;
         setStatusOk('טעינה ראשונית הושלמה. סלקציות כעת מקומיות.');
@@ -1276,10 +1259,10 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         // No status filter selected
         if (!talkKind) return true;
 
-        var phoneKey = normPhone(row.phone);
-        if (!phoneKey) return false;
+        var codeKey = (row && row.patient_code != null) ? String(row.patient_code).trim() : '';
+        if (!codeKey) return false;   // no patient_code -> skip, never fall back to phone
 
-        var info = infoMap.get(phoneKey);
+        var info = infoMap.get(codeKey);
         if (!info || info.status == null) return false;
 
         var sVal = parseInt(info.status, 10);
@@ -1435,7 +1418,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
           // ואם אין מידע—נשתמש בסוג שנבחר בסלקציה הנוכחית (fKind) כ־fallback.
           var kindTxt = 'לא ידוע';
           try{
-            var info2 = infoMap.get(normPhone(r.phone));
+            var info2 = infoMap.get((r && r.patient_code != null) ? String(r.patient_code).trim() : '');
             if (info2 && info2.status != null && String(info2.status).trim() !== ''){
               kindTxt = statusLabel(info2.status);
             } else {
