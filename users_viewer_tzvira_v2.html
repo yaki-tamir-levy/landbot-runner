@@ -1188,8 +1188,18 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         '</div>';
       }
 
+      // Risk-phrase tag, same look and same value as the pill in the top alert banner:
+      // risk_reasons first, short_risk as fallback. Value comes from the existing hit
+      // object (no extra fetch). Both missing -> render nothing.
+      var riskTag = '';
+      var srTxt = String((hit && (hit.risk_reasons || hit.short_risk)) || '').trim();
+      if (srTxt){
+        riskTag = '<div class="rc-row"><span class="pill mono">' + escapeHtml(srTxt) + '</span></div>';
+      }
+
       return (
         '<div class="risk-controls" data-riskctl="1" data-id="' + escapeHtml(String(talkId||'')) + '" data-ln="' + escapeHtml(String(lineNum)) + '">' +
+          riskTag +
           '<div class="rc-row">' +
             '<span class="rc-title">אישור מטפל:</span>' +
             '<button class="' + btnSeenCls + '" data-act="risk-status" data-status="צפיתי">' + btnSeenLabel + '</button>' +
