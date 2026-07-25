@@ -41,6 +41,8 @@
 }
 .patient-name{font-weight:900;font-size:1.35rem;}
     .patient-phone{font-weight:400;font-size:0.9rem;color:var(--muted);}
+    .patient-psych{font-weight:400;font-size:0.9rem;color:var(--muted);}
+    .head-sep{font-weight:400;font-size:0.9rem;color:var(--muted);}
     .btn-toggle,.btn-summarized_linked_talk,.btn-raw-summary,.btn-home{
       font-weight:700; border:2px solid #d1d5db; border-radius:10px; padding:8px 10px; background:#fff; min-width:140px; text-align:center
     }
@@ -428,7 +430,8 @@ function getReviewerName(ev){
     riskKeySet: new Set(), // keys time_key+patient_code that have any risk
     riskForceKeySet: new Set(), // keys time_key+patient_code that have risk in status NEW/REVIEWED (VIEWED legacy)
     identityMap: {},       // identityCode(patient_code) -> {name, phone}
-    identityLoadFailed: false   // true only if the patient_identity_map fetch failed
+    identityLoadFailed: false,  // true only if the patient_identity_map fetch failed
+    psychNameMap: {}       // identityCode(patient_code) -> psychologist_name (display only)
   };
 
   // Single normalization point for every patient_identity_map key.
@@ -460,6 +463,17 @@ function getReviewerName(ev){
     var code = identityCode(row ? row.patient_code : '');
     var rec = (code && CACHE.identityMap) ? CACHE.identityMap[code] : null;
     return { name: (rec && rec.name != null ? rec.name : ''), phone: (rec && rec.phone != null ? rec.phone : '') };
+  }
+
+  // Psychologist name for DISPLAY ONLY, from the psychologist_names_for_viewer RPC.
+  // Keyed by the same normalized patient_code as the identity map, via the existing
+  // identityCode. Missing code or missing entry -> '' (the caller renders 'לא משויך').
+  // Never used for join keys, filters or write paths.
+  function psychNameFor(row){
+    var code = identityCode(row ? row.patient_code : '');
+    if (!code) return '';
+    var n = CACHE.psychNameMap ? CACHE.psychNameMap[code] : '';
+    return (n == null) ? '' : String(n).trim();
   }
 
   function fetchAllPaged(tableName, selectCols, orderCol){
@@ -539,6 +553,7 @@ function getReviewerName(ev){
     CACHE.riskForceKeySet = new Set();
     CACHE.identityMap = {};
     CACHE.identityLoadFailed = false;
+    CACHE.psychNameMap = {};
 
     return fetchAllPaged(TABLE, 'id, time_key, patient_code, last_talk_tzvira, summarized_linked_talk', 'time_key')
       .then(function(allRows){
@@ -596,6 +611,31 @@ function getReviewerName(ev){
             CACHE.identityLoadFailed = true;
             CACHE.loaded = true;
             setStatusErr(IDENTITY_LOAD_ERR);
+          });
+      })
+      .then(function(){
+        // ADDITIVE, display-only: psychologist names via the SECURITY DEFINER RPC
+        // psychologist_names_for_viewer(). The RPC itself restricts the rows to what
+        // the signed-in user may see (admin = all, psychologist = own patients), so
+        // the psychologist table is never exposed to the browser and no filtering
+        // happens client-side.
+        // Soft-fail exactly like the identity map: on any failure the map stays empty
+        // and the badge reads 'לא משויך'. This must never break the load, and it is
+        // never consulted by a filter, a join key or a write path.
+        return supa.rpc('psychologist_names_for_viewer')
+          .then(function(res){
+            if (res && res.error) throw res.error;
+            var rows = (res && res.data) ? res.data : [];
+            rows.forEach(function(pr){
+              if (!pr) return;
+              var code = identityCode(pr.patient_code);
+              if (!code) return;
+              CACHE.psychNameMap[code] = (pr.psychologist_name == null) ? '' : String(pr.psychologist_name);
+            });
+            console.log('psychNameMap entries: ' + Object.keys(CACHE.psychNameMap).length);
+          })
+          .catch(function(e){
+            console.warn('psychNameMap load skipped: ' + (e && e.message ? e.message : e));
           });
       })
       .catch(function(e){
@@ -1370,7 +1410,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
             for (var a=0;a<alerts.length;a++){
               var AA = alerts[a];
               top.push('<div class="alertitem">');
-              top.push('<div><strong>' + escapeHtml(AA.name) + '</strong> · <span dir="ltr">' + escapeHtml(AA.phone) + '</span></div>');
+              top.push('<div><strong>' + escapeHtml(AA.name) + '</strong> · <span dir="ltr">' + escapeHtml(AA.phone) + '</span> · המטפל: ' + escapeHtml(AA.psych || 'לא משויך') + '</div>');
               top.push('<div class="when">' + escapeHtml(AA.time) + '</div><div>');
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
@@ -1463,6 +1503,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
             alerts.push({
               name: ident.name || 'מטופל/ת',
               phone: ident.phone || '',
+              psych: psychNameFor(r),
               time: timeKeyToHuman(r.time_key),
               items: items
             });
@@ -1470,6 +1511,9 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
 
           var nameHtml  = '<span class="patient-name">' + escapeHtml(ident.name || 'מטופל/ת') + '</span>';
           var phoneHtml = '<span class="patient-phone" dir="ltr">' + escapeHtml(ident.phone || '') + '</span>';
+          // Display-only, appended after the existing name and phone. displayIdentity
+          // is untouched and still the sole source of the name and the phone.
+          var psychHtml = '<span class="patient-psych"> · המטפל: ' + escapeHtml(psychNameFor(r) || 'לא משויך') + '</span>';
           var btnLabel  = isHidden ? 'הצג שיחה' : 'הסתר שיחה';
 
           var rawHasContent = !!(r.summarized_linked_talk && String(r.summarized_linked_talk).trim());
@@ -1477,7 +1521,9 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
           var headParts = [];
           headParts.push('<div class="head">');
           headParts.push('<div class="head-name">', nameHtml, '</div>');
+          headParts.push('<div class="head-sep">·</div>');
           headParts.push('<div class="head-phone">', phoneHtml, '</div>');
+          headParts.push('<div class="head-psych">', psychHtml, '</div>');
                               // למה השיחה נבחרה: (א) RISK override אם יש RISK, (ב) סוג שיחה לפי users_information.status,
           // ואם אין מידע—נשתמש בסוג שנבחר בסלקציה הנוכחית (fKind) כ־fallback.
           var kindTxt = 'לא ידוע';
