@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- VERSION: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY -->
+<!-- version stamp is fetched live from GitHub, see #commitStamp -->
 <html lang="he" dir="rtl">
 <head>
   <script>
@@ -131,7 +131,7 @@ function getReviewerName(ev){
 <body>
 <div class="wrap">
   <h2 id="pageTitle">כל הסוגים</h2>
-  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;">Version: 2026-05-13 STAGE3-FIX15-ISRAEL-TIME-DISPLAY BBB<span id="vBadge" style="opacity:.75"></span></div>
+  <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;"><span id="commitStamp">טוען גרסה…</span><span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
   <div id="alertHost"></div>
@@ -1863,6 +1863,44 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
       var badge = document.getElementById("vBadge");
       if (badge && v){ badge.textContent = " · v=" + String(v); }
     }catch(e){}
+  })();
+
+  // Version stamp: the last commit that touched THIS file, shown in Israel time.
+  // Display-only, additive, and non-blocking: any failure (offline, rate limit,
+  // private repo, unexpected payload) falls back to a static text and never
+  // interferes with queryPage() or the load chain.
+  (function(){
+    var COMMITS_URL = 'https://api.github.com/repos/yaki-tamir-levy/landbot-runner/commits?path=users_viewer_tzvira_v2.html&per_page=1';
+    var elStamp = document.getElementById('commitStamp');
+    if (!elStamp) return;
+
+    function stampUnavailable(e){
+      console.warn('commit stamp unavailable: ' + (e && e.message ? e.message : e));
+      elStamp.textContent = 'גרסה לא זמינה';
+    }
+
+    try{
+      fetch(COMMITS_URL, { headers: { 'Accept': 'application/vnd.github+json' } })
+        .then(function(res){
+          if (!res.ok) throw new Error('github http ' + res.status);
+          return res.json();
+        })
+        .then(function(list){
+          var c = (list && list.length) ? list[0] : null;
+          var utc = (c && c.commit && c.commit.committer) ? c.commit.committer.date : '';
+          var sha = (c && c.sha) ? String(c.sha).slice(0, 7) : '';
+          if (!utc || !sha) throw new Error('unexpected github payload');
+          var d = new Date(utc);
+          if (isNaN(d.getTime())) throw new Error('bad commit date: ' + utc);
+          // Explicit timeZone: the stamp must read identically for every viewer,
+          // independent of the time zone of the machine looking at the page.
+          var israel = d.toLocaleString('he-IL', { timeZone: 'Asia/Jerusalem' });
+          elStamp.textContent = 'עודכן: ' + israel + ' · ' + sha;
+        })
+        .catch(stampUnavailable);
+    }catch(e){
+      stampUnavailable(e);
+    }
   })();
 
   // init אחרי שה-DOM מוכן (למקרה של race)
