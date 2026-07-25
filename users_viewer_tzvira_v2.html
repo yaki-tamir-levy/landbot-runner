@@ -1009,6 +1009,13 @@ function showInlineMsg(talkElem, msg){
     if (!pc) return Promise.reject(new Error('חסר מזהה מטופל (patient_code) — העדכון בוטל'));
     var txt = (notes == null) ? '' : String(notes);
 
+    // reviewer is DERIVED: the psychologist assigned to this patient, not the value
+    // typed into the free-text field. The typed value survives only as a fallback,
+    // so a patient with no assignment never causes an existing reviewer to be
+    // overwritten with an empty string.
+    var rnTyped = String(reviewerName == null ? '' : reviewerName).trim();
+    var rnFinal = psychNameFor({ patient_code: pc }) || rnTyped;
+
 
     // UI -> DB status mapping
     // דרישה: לחיצה על "צפיתי" מעדכנת סטטוס ל-REVIEWED
@@ -1019,7 +1026,7 @@ function showInlineMsg(talkElem, msg){
     // Some environments might have the column spelled differently (STATUS vs STSTUS).
     // We try STATUS first, then STSTUS.
     function doUpdate(statusVal, colName){
-      var rn = String(reviewerName == null ? '' : reviewerName).trim();
+      var rn = rnFinal;
       if (!rn) { throw new Error('חובה להזין שם מטפל'); }
       var upd = { review_notes: txt, reviewed_at: nowISO(), reviewer: rn };
       upd[colName] = statusVal;
@@ -1074,7 +1081,7 @@ function showInlineMsg(talkElem, msg){
             rr.status = stDb;
             rr.review_notes = txt;
             rr.reviewed_at = nowISO();
-            rr.reviewer = String(reviewerName || '').trim();
+            rr.reviewer = rnFinal;
           }
         }
       }
@@ -1088,7 +1095,11 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
     var pc = String(patientCode == null ? '' : patientCode).trim();
     if (!pc) return Promise.reject(new Error('חסר מזהה מטופל (patient_code) — שמירת ההערה בוטלה'));
     var txt = (notes == null) ? '' : String(notes);
-    var rn = String(reviewerName == null ? '' : reviewerName).trim();
+    // reviewer is DERIVED — same rule as updateRiskReviewStatus: the assigned
+    // psychologist, with the typed value only as a fallback so nothing is ever
+    // overwritten with an empty string.
+    var rnTyped = String(reviewerName == null ? '' : reviewerName).trim();
+    var rn = psychNameFor({ patient_code: pc }) || rnTyped;
     if (!rn){ throw new Error('חובה להזין שם מטפל'); }
 
     // Saving a note must update review_notes and reviewer (therapist name).
