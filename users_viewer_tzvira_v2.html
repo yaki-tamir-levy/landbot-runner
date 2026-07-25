@@ -625,6 +625,8 @@ function getReviewerName(ev){
       if (pnLow || nnLow){
         var idf = identityFromMap(r);
         if (pnLow && String(idf.phone || '').toLowerCase().indexOf(pnLow) === -1) return;
+        // TEMP DIAGNOSTIC — REMOVE
+        console.log('NAMEFILTER:', 'patient_code=', r.patient_code, '| idf.name=', idf.name, '| nnLow=', nnLow, '| indexOf=', String(idf.name || '').toLowerCase().indexOf(nnLow));
         if (nnLow && String(idf.name  || '').toLowerCase().indexOf(nnLow) === -1) return;
       }
       if (fromTime && String(r.time_key||'') < fromTime) return;
