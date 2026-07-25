@@ -287,6 +287,10 @@ function getReviewerName(ev){
   var FLAGS_TABLE       = "talk_read_flags";
   var USERS_INFO_TABLE  = "users_information_v2";
   var IDENTITY_TABLE    = "patient_identity_map";
+  // Shown when patient_identity_map fails to load. Name/phone search resolves its
+  // needles through identityFromMap, so an empty map means those two filters can
+  // never match — the user must be told, not left with a silent empty result.
+  var IDENTITY_LOAD_ERR = 'מפת זהות המטופלים לא נטענה — חיפוש לפי שם/טלפון אינו זמין. לחץ "טען" לניסיון נוסף.';
 
   if (!window.supabase || !window.supabase.createClient){
     setStatusErr('ספריית Supabase לא נטענה (בדוק חיבור אינטרנט / חסימת CDN).');
@@ -423,20 +427,39 @@ function getReviewerName(ev){
     riskMap:  new Map(),   // key(time_key, patient_code) -> [riskRows]
     riskKeySet: new Set(), // keys time_key+patient_code that have any risk
     riskForceKeySet: new Set(), // keys time_key+patient_code that have risk in status NEW/REVIEWED (VIEWED legacy)
-    identityMap: {}        // patient_code (string, as-is) -> {name, phone}
-  
+    identityMap: {},       // identityCode(patient_code) -> {name, phone}
+    identityLoadFailed: false   // true only if the patient_identity_map fetch failed
   };
+
+  // Single normalization point for every patient_identity_map key.
+  // Used by the map build path AND by both lookup helpers, so the key that is stored
+  // and the key that is looked up are provably the same string.
+  // Intentionally separate from riskKey/keyOf — those are untouched.
+  function identityCode(v){
+    return String(v == null ? '' : v).trim();
+  }
 
   // Display-only identity resolution.
   // Prefers patient_identity_map; falls back to the row's shadow columns.
-  // NEVER used for join keys or write paths — those keep using the raw r.phone.
+  // NEVER used for join keys or write paths — those keep using patient_code.
   function displayIdentity(row){
-    var code = (row && row.patient_code != null) ? String(row.patient_code) : '';
+    var code = identityCode(row ? row.patient_code : '');
     if (code){
       var rec = CACHE.identityMap ? CACHE.identityMap[code] : null;
       if (rec) return { name: rec.name, phone: rec.phone };
     }
     return { name: (row ? row.name : ''), phone: (row ? row.phone : '') };
+  }
+
+  // Identity for filtering and dialog labels: patient_identity_map ONLY.
+  // Same normalized key as displayIdentity (both go through identityCode), but with
+  // NO shadow fallback: a missing map entry yields empty strings, so the phone/name
+  // filters simply do not match and the dialog label falls back to its existing
+  // default. Never reads r.phone / r.name.
+  function identityFromMap(row){
+    var code = identityCode(row ? row.patient_code : '');
+    var rec = (code && CACHE.identityMap) ? CACHE.identityMap[code] : null;
+    return { name: (rec && rec.name != null ? rec.name : ''), phone: (rec && rec.phone != null ? rec.phone : '') };
   }
 
   function fetchAllPaged(tableName, selectCols, orderCol){
@@ -515,8 +538,9 @@ function getReviewerName(ev){
     CACHE.riskKeySet = new Set();
     CACHE.riskForceKeySet = new Set();
     CACHE.identityMap = {};
+    CACHE.identityLoadFailed = false;
 
-    return fetchAllPaged(TABLE, 'id, time_key, phone, name, patient_code, last_talk_tzvira, summarized_linked_talk', 'time_key')
+    return fetchAllPaged(TABLE, 'id, time_key, patient_code, last_talk_tzvira, summarized_linked_talk', 'time_key')
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
@@ -526,7 +550,7 @@ function getReviewerName(ev){
         buildRiskCache(allRisk || []);
         markRowsWithRisk();
         setStatusOk('RISK נטען (צמדים=' + CACHE.riskKeySet.size + '). טוען דגלי הסתרה…');
-        return fetchAllPaged(FLAGS_TABLE, 'time_key, phone, patient_code, is_hidden', 'time_key');
+        return fetchAllPaged(FLAGS_TABLE, 'time_key, patient_code, is_hidden', 'time_key');
       })
       .then(function(allFlags){
         (allFlags || []).forEach(function(fr){
@@ -541,23 +565,37 @@ function getReviewerName(ev){
         (allInfo || []).forEach(function(ir){
           putInfoStatus(ir.patient_code, ir.status);
         });
-        CACHE.loaded = true;
-        setStatusOk('טעינה ראשונית הושלמה. סלקציות כעת מקומיות.');
+        // CACHE.loaded is intentionally NOT set here. The identity map is still missing
+        // at this point, and every filter trigger in the UI gates on CACHE.loaded.
+        // See the identity stage below.
+        setStatusOk('סטטוסים נטענו. טוען מפת זהות מטופלים…');
       })
       .then(function(){
-        // ADDITIVE: patient identity map. Isolated — must not affect the existing load flow.
+        // The identity map is part of the readiness contract: CACHE.loaded is set ONLY
+        // after this stage settles, because the phone/name filters resolve their
+        // needles through identityFromMap. Both branches must set it, otherwise a
+        // failed identity fetch would leave the whole viewer permanently "not loaded".
         return fetchAllPaged(IDENTITY_TABLE, 'patient_code, name, phone', 'patient_code')
           .then(function(allIdentity){
             (allIdentity || []).forEach(function(ir){
               if (!ir) return;
-              var code = String(ir.patient_code == null ? '' : ir.patient_code);
+              var code = identityCode(ir.patient_code);
               if (!code) return;
               CACHE.identityMap[code] = { name: ir.name, phone: ir.phone };
             });
             console.log('identityMap entries: ' + Object.keys(CACHE.identityMap).length);
+            CACHE.identityLoadFailed = false;
+            CACHE.loaded = true;
+            setStatusOk('טעינה ראשונית הושלמה. סלקציות כעת מקומיות.');
           })
           .catch(function(e){
-            console.warn('identityMap load skipped: ' + (e && e.message ? e.message : e));
+            console.warn('identityMap load failed: ' + (e && e.message ? e.message : e));
+            // Soft-fail is preserved: talks, RISK, flags and statuses are already in
+            // cache, so the viewer stays usable. Only name/phone search is dead, and
+            // that is now stated explicitly instead of console-only.
+            CACHE.identityLoadFailed = true;
+            CACHE.loaded = true;
+            setStatusErr(IDENTITY_LOAD_ERR);
           });
       })
       .catch(function(e){
@@ -584,8 +622,11 @@ function getReviewerName(ev){
 
       if (!SHOW_OLD && _isTooOld(r.time_key)) return;
 
-      if (pnLow && String(r.phone || '').toLowerCase().indexOf(pnLow) === -1) return;
-      if (nnLow && String(r.name  || '').toLowerCase().indexOf(nnLow) === -1) return;
+      if (pnLow || nnLow){
+        var idf = identityFromMap(r);
+        if (pnLow && String(idf.phone || '').toLowerCase().indexOf(pnLow) === -1) return;
+        if (nnLow && String(idf.name  || '').toLowerCase().indexOf(nnLow) === -1) return;
+      }
       if (fromTime && String(r.time_key||'') < fromTime) return;
       if (toTime   && String(r.time_key||'') > toTime)   return;
 
@@ -619,7 +660,10 @@ function getReviewerName(ev){
       return render(rows, CACHE.flagsMap, CACHE.infoMap, talkKind);
     }).then(function(info){
       el.countInfo.textContent = 'מציג ' + (info.patientsCount||0) + ' מטופלים · ' + (info.shownCount||0) + ' שיחות פתוחות · ' + (info.hiddenCount||0) + ' שיחות מוסתרות';
-      setStatusOk('מוכן.');
+      // setStatusOk/setStatusErr overwrite the same status bar, so the identity-load
+      // error must be re-asserted here or the render would silently wipe it.
+      if (CACHE.identityLoadFailed){ setStatusErr(IDENTITY_LOAD_ERR); }
+      else { setStatusOk('מוכן.'); }
     }).catch(function(e){
       setStatusErr('שגיאת רינדור: ' + (e && e.message ? e.message : e));
     });
@@ -1383,7 +1427,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         if (!isRowAllowed(r)){ nextRow(i+1); return; }
 
         var talkClean = cleanTalk(r.last_talk_tzvira || '');
-        var parsed = toDialogLines(r.name, talkClean);
+        var parsed = toDialogLines(identityFromMap(r).name, talkClean);
         var talkDomId = (r.time_key || '').replace(/[^0-9]/g,'') || Math.random().toString(36).slice(2);
 
         // Anchor IDs are based on the original line numbers ("-1-", "-2-", ...)
@@ -1563,8 +1607,8 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, reviewerN
         return;
       }
 
-      // phone is still sent while the column exists and is nullable (temporary, shadow only).
-      var payload = { time_key: time_key, phone: phone, patient_code: pCode, is_hidden: !isHidden, toggled_by: 'viewer_default', patient_name: name };
+      // phone is no longer written: the shadow column is being dropped.
+      var payload = { time_key: time_key, patient_code: pCode, is_hidden: !isHidden, toggled_by: 'viewer_default', patient_name: name };
 
       supa.from(FLAGS_TABLE)
           .upsert(payload, { onConflict: 'time_key,patient_code' })
