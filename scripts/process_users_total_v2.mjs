@@ -735,8 +735,8 @@ async function logUsersTzviraUpdatedEvent({ conversation_id, id, patient_code, t
   );
 }
 
-async function insertUsersTzviraRow({ id, time_key, conversation_id, patient_code, phone, name, last_talk_tzvira, summarized_linked_talk }) {
-  // V2: include patient_code as primary identity and keep phone/name as shadow fields
+async function insertUsersTzviraRow({ id, time_key, conversation_id, patient_code, last_talk_tzvira, summarized_linked_talk }) {
+  // V2: patient_code is the primary identity; the phone/name shadow columns were dropped
   await supaUpsert(
     USERS_TZVIRA_TABLE,
     {
@@ -744,8 +744,6 @@ async function insertUsersTzviraRow({ id, time_key, conversation_id, patient_cod
       time_key,
       conversation_id,
       patient_code,
-      phone,
-      name,
       last_talk_tzvira,
       summarized_linked_talk,
     },
@@ -821,8 +819,6 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     time_key: lastSummaryAt,
     conversation_id,
     patient_code,
-    phone,
-    name,
     last_talk_tzvira: numberedText,
     summarized_linked_talk: summarized,
   });
