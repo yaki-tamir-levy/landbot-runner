@@ -1,104 +1,158 @@
 # SESSION HANDOFF
 
-**Last updated: 2026-07-26 (session 2)**
+**Last verified: 2026-07-27 (evening session)**
 
-Merged handoff. This file is NOT an append-only log: on every update it is merged in place.
-Completed items move from OPEN to DONE with a date, new items are added, learnings are updated,
-and duplicates are consolidated. Do not accumulate historical session sections.
+Merge-on-update. Not append-only. Completed items move to DONE with a date; contradictions
+against the live DB are corrected, not accumulated.
+
+**Scope note:** stable architecture lives in `PROJECT_GUIDE.md` and `docs/ENCRYPTION.md`.
+This file holds only working state — what changed recently, what is mid-flight, what regressed.
+Do not duplicate architecture here.
 
 ---
 
-## DONE
+## CORRECTIONS TO THE PREVIOUS VERSION
 
-**1. "Unknown" status bug — root-caused to 3 separate layers** *(2026-07-26)*
-- 400 error from an empty `or=()` query parameter.
-- Missing RLS policy on `users_information_v2`: RLS enabled with 0 policies returns a silent empty result (no error), which surfaced as "Unknown".
-- Partial status label map: only values `1` and `3` were mapped.
-- Status label map now covers: `1 = מטופל`, `2 = קורסיסט`, `3 = מטופל קורסיסט`, `4 = פיקטיבי`, with a normalized string/number comparison.
+The 2026-07-27 morning version carried three claims that live verification later disproved.
 
-**2. Status filter isolation** *(2026-07-26)*
-- Status `4` (test) is now isolated. Filter semantics: `1 → {1,3}`, `2 → {2,3}`, `3 → {1,2,3}`, `4 → {4}` only.
+**A. `start_conversation_v2` — NOT "recreated on every deploy".**
+Previous version: the 2-arg overload was dropped and "something recreates it on deploy".
+FALSE. A full-repo search found NO `CREATE FUNCTION` for it anywhere — no migration, no deploy
+SQL. The overload was an old leftover; the earlier DROP failed silently because it did not name
+the exact signature. It was dropped for good on 07-27 by full signature and verified gone by a
+live call. There is no regeneration mechanism.
 
-**3. Migration `phone` → `patient_code` COMPLETE** *(2026-07-26)*
-- Includes `talk_read_flags`: the table was emptied (192 junk rows, 0 tied to live conversations), `patient_code uuid NOT NULL` was added, the PK changed from `(time_key, phone)` to `(time_key, patient_code)`, and `phone` was made nullable and then DROPPED.
-- Also migrated: `riskKey`, `keyOf`, `flagsMap`, `onConflict`, and the patient counter (which was the last consumer of `r.phone`).
+**B. "risk-scan is the only phrase-scan and it's dead" — INCOMPLETE.**
+The phrase scanner also lives inside `process_users_total_v2.mjs` (`phraseScanAndInsertRisks`),
+runs on the automatic hourly chain with `DRY_RUN=false`, and writes `match_method=2`. That path
+is healthy. `risk-scan.mjs` was a third, broken, redundant copy — now disabled.
 
-**4. Shadow columns DROPPED** *(2026-07-26)*
-- `name` + `phone` from `users_tzvira_v2`; `phone` from `talk_read_flags`.
-- Verified no code reads them. Masked phone/name now come only from `patient_identity_map`.
+**C. "No match_method=2 rows means the phrase path is broken" — FALSE.**
+Proven by a live end-to-end test: a seeded phrase produced a `match_method=2` row immediately.
+The earlier absence just meant no listed phrase appeared in patient lines in the test data.
 
-**5. SECURITY DEFINER RLS filtering by psychologist** *(2026-07-26)*
-- Full resolution chain: `auth.jwt()->>'email'` → `psychologists_v2.email` → `.phone` → `users_information_v2.psychologist` → `patient_code`.
-- Functions: `current_psychologist_phone()`, `current_user_is_admin()`.
-- Policies `psychologist_select` / `psychologist_update` / `psychologist_insert` on 5 tables: `users_information_v2`, `users_tzvira_v2`, `patient_identity_map`, `risk_reviews_v2`, `talk_read_flags`. Each policy is: admin OR own-patient.
-- `psychologists_v2` stays RLS-locked with 0 policies — reachable only via the definer functions.
+---
 
-**6. Admin mechanism** *(2026-07-26)*
-- Added `is_admin boolean NOT NULL DEFAULT false` to `psychologists_v2`. It is NEVER written by the sheet sync (verified: `upsert_psychologist_from_sheet` updates explicit columns only).
-- Admin account: `yonatan10.bot@gmail.com`.
-- Added a `UNIQUE INDEX` on `lower(email)` after fixing duplicate-email rows. The duplicates were a live privilege leak: a shared email meant shared admin rights plus non-deterministic psychologist resolution.
+## DONE — this session (2026-07-27 evening), verified live
 
-**7. Live version timestamp in the header** *(2026-07-26)*
-- The viewer fetches the last commit date for its own file from the GitHub API and converts it to `Asia/Jerusalem`.
-- This addressed the root cause of roughly half the session's confusion: GitHub Pages was serving STALE cached versions even after `Ctrl+Shift+R`, with no way to tell which version was loaded.
-- The "חיים search bug" that was chased for a long time was NOT a code bug. Proven by the `NAMEFILTER` log showing `indexOf=0`; it was GitHub Pages cache serving old code. Shifting line numbers (557 → 586 → 629) confirmed when a new version finally loaded.
+**1. Deleted `patient_identity_map_decrypted`** — closed the medical-data exposure.
+The View granted anon full rights and pulled the crypto key from `app_config`. Its only
+protection was a decode failure (the `db1:` prefix breaks Base64 on all 38 rows). Pre-checks:
+0 dependents, no function references it, no HTML reads it. Verified gone after DROP.
 
-**8. Psychologist name display** *(2026-07-26)*
-- RPC `psychologist_names_for_viewer()` returns `(patient_code, name)` only for viewable patients (admin = all, psychologist = own).
-- Displayed as `name · phone · המטפל: X` in the main row and in the alert box.
-- Shows `לא משויך` for unassigned patients.
+**2. Fixed `start_conversation_v2` overload** — dropped the 2-arg
+`(p_phone text, p_name text)` signature by full signature. Two clean signatures remain:
+`(p_patient_code uuid)` and `(p_phone, p_name, p_source)`. A live call returned a single uuid
+with no PGRST203 ambiguity. Root cause was the earlier silent DROP failure, not regeneration.
 
-**9. Risk reviewer simplified** *(2026-07-26)*
-- `risk_reviews_v2.reviewer` is now auto-derived from the assigned psychologist (`psychNameFor`), never from the old free-text field.
-- The free-text `שם מטפל` input was REMOVED from the UI, and the `שם המטפל` label was REMOVED from the alert box. The `review_notes` field was KEPT.
-- Existing rows were retroactively updated to `NURIT`.
-- Never writes empty: uses the derived name, otherwise omits `reviewer` from the payload rather than blocking the write.
+**3. Disabled `risk-scan V2`** — `gh workflow disable "risk-scan V2"` -> `disabled_manually`.
+Redundant broken copy of the phrase path. The YAML still contains its `schedule:` block; final
+removal from the file is a separate step (OPEN).
 
-**10. Viewer gate confirmed secure** *(2026-07-26, session 2)*
-- With no session the page redirects to login; RLS returns 0 rows without a valid JWT.
-- The old "debug open gate" concern is RESOLVED by the RLS built earlier in the session.
-- Verified by clearing the `localStorage` session → redirect to login.
+**4. Verified the risk system end-to-end** — seeded one live conversation (fake phone
+`00000000000`, patient c32c06d5 test data) with two lines: one implicit, one containing a listed
+phrase. Result: two rows — `match_method=1` (model) and `match_method=2` (phrase). This proves
+the DB trigger fires, the queue processes, and both scan paths write. Test rows left in place
+(all patients are test data).
 
-**11. Merged handoff mechanism created** *(2026-07-26, session 2)*
-- `docs\SESSION_HANDOFF.md` — merge-on-update, chat-facing.
-- `CLAUDE.md` at repo root — auto-read by Claude Code at session start.
+**5. Confirmed the automatic processing chain** — `process-queue-worker-v2.yml` (cron `0 * * * *`)
+runs `process_queue_worker_v2.mjs`, which spawns `process_users_total_v2.mjs` per queue row with
+`DRY_RUN=false`. That spawned script runs BOTH scans in sequence (model at line 853, phrase at
+860-869). Queue feed is three-layer: DB trigger (immediate) + `reconcile-new-to-queue-v2` (safety
+net). Only ONE script does users_total_v2 NEW->DONE.
+
+**6. Confirmed failure monitoring already exists** — GitHub emails the repo owner on any Actions
+failure (screenshot confirmed: "risk-scan V2: All jobs have failed"). No custom monitor needed.
+Covers Actions only, NOT pg_cron. The monitor we drafted (monitor-failures.yml, email_send.py)
+was discarded to avoid duplicating a built-in feature.
+
+**7. Verified audit log is truly append-only** — a DELETE on `conversation_events_v2` was blocked
+by trigger `prevent_conversation_events_v2_change` with `conversation_events_v2 is append only`.
+There is a FK `conversation_events_v2_conversation_fk` -> `conversations_session_v2`, so a session
+already logged cannot be deleted at all. Working as designed.
 
 ---
 
 ## OPEN
 
-**1. `start_conversation_v2` — PGRST203 overload conflict (REGRESSED, root cause unknown)**
-- CONFIRMED STILL BROKEN: `start_conversation_v2` has 3 overloads again. `(p_phone, p_name)` and `(p_phone, p_name, p_source)` both match the incoming call → PostgREST returns `PGRST203` → Landbot cannot create a `conversation_id` → NO conversation reaches the DB.
-- This is exactly why course/all conversations do not write to `conversations_prod_v2`. It breaks at step 1 — not a table or migration issue.
-- The 2-arg version was re-dropped this session as a STOPGAP only.
-- ROOT CAUSE NOT YET FOUND: something recreates the stale 2-arg version. Suspect a migration/SQL file in the repo running `CREATE OR REPLACE` on deploy.
-- NEXT: search the repo for `start_conversation_v2` definitions and remove the stale 2-arg one at source, otherwise it returns on every deploy.
-- Originally root-caused live via a real Landbot test with phone `22222223`: no new session row appeared, and the `PGRST203` error was then surfaced.
+**1. `insert_conversation_v2` — highest remaining overload risk. TOP PRIORITY.**
+Two signatures with the SAME arity, differing only in the 2nd parameter type:
+`(p_phone text, p_conversation_id uuid, ...)` vs `(p_phone text, p_name text, ...)`.
+An untyped string conversation_id could land in the name field. Fix as we fixed
+start_conversation_v2: verify callers, then DROP the wrong signature BY FULL SIGNATURE.
+Lesson — DROP FUNCTION on a multi-overload name MUST name the exact signature or it fails silently.
 
-**2. `insert_conversation_v2` — 2 overloads, verify overload risk**
-- Signatures: `(p_phone, p_conversation_id uuid, ...)` vs `(p_phone, p_name text, ...)`.
-- The 2nd-argument type differs (`uuid` vs `text`), so it MAY be safe if Landbot calls by name — but VERIFY, given that `start_conversation_v2` kept regressing.
+**2. BOT MONITOR enhancements — tomorrow's task.**
+(a) Add the assigned psychologist's name to the monitor display.
+(b) Add the end time to the `Conversation Ended` event. Structural gap: there is no `ended_at`
+column on `conversations_session_v2`, and `current_stage` never advances past
+`conversation_started`. May require adding explicit end-of-conversation recording.
 
-**3. Finish shadow columns everywhere**
-- `risk_reviews_v2` still has `phone` + `name` shadow columns. Needs full read/write mapping before dropping. Code-before-DB.
+**3. `risk-scan.mjs` / risk-scan-v2.yml — finish the removal.**
+Workflow disabled but the file still has its `schedule:` block and the script still reads the
+dropped `users_tzvira_v2.name`. Either delete the workflow file, or (if kept as a manual tool)
+repoint the name lookup to `patient_identity_map` by `patient_code`.
 
-**4. Clean up patients that are not in the SHEET.**
+**4. Shadow columns on `risk_reviews_v2`** — `phone` + `name` still exist; viewer line 559 still
+selects them. Safe to drop now that the phrase path uses the integrated scanner (which resolves
+name differently). Verify no other consumer first.
 
-**5. `otp_send_failed` on the 2nd consecutive OTP send** — suspected Supabase Auth rate limit; verify.
+**5. `talk_read_flags` vs `talk_read_flags_v2`** — viewer reads the no-suffix table (line 287),
+where the 3 psychologist policies live. The `_v2` version is abandoned AND carries two open
+policies: select on `auth.role()='authenticated'`, update on `true`. Remove those.
 
-**6. 8 orphan `patient_identity_map` rows** from the deleted prompt rows in *(source note truncated — origin table/scope to be confirmed next session)*.
+**6. Missing write policies — verify intent.** `users_information_v2`, `users_tzvira_v2`,
+`patient_identity_map` have SELECT policies only. Likely deliberate (writes via SECURITY DEFINER).
+
+**7. Production blockers** — close the temporary open gate `users_viewer_risk_v2.html`; restore
+email auth + close the bypass login; connect the viewer to `rpc_get_users_tzvira_v2_viewer`.
+
+**8. Safety-net reconciler** — the DB trigger IS firing (proven this session). Re-evaluate whether
+`reconcile-new-to-queue-v2` is still needed, or is now redundant.
+
+**9. pg_cron failures** (not covered by GitHub's email): jobs 1 and 11 target a deleted function
+(delete them); job 24 needs a `pg_net` signature fix.
+
+**10. Five *.psbackup.* files on disk but gitignored** (`*.psbackup.*`), including two scripts.
+They cannot run anywhere. Decide keep-out-of-git vs delete.
+
+**11. Unresolved timing note** — audit chain stamped 08:20 but the only relevant cron is minute 00.
+No minute-20 schedule exists in the repo. Needs GitHub Actions run history; low priority.
 
 ---
 
 ## Key learnings
 
-- GitHub Pages serves stale cache independently of a browser hard-refresh. Always verify that the header timestamp SHA matches the pushed SHA before concluding anything about viewer behavior.
-- PostgREST function overloads are a recurring failure mode in this project. A dropped overload can come back on deploy — treat "dropped it in the DB" as a stopgap, never as a fix, until the source definition is removed from the repo.
-- Claude Code's default permission mode was Manual, so file writes silently waited for approval — earlier "wrote to file" reports were issued before approval was granted. Fixed by ending each instruction with auto-approve; reports are now written in English to avoid RTL/encoding issues.
-- `conversations_session_v2` is a SESSION tracker (`conversation_id`, `patient_code`, `current_stage`, `started_at`, `source`) — NOT a message-content table. Do not compare its row count to `conversations_prod_v2`.
+- **PostgREST function overloads are this project's most persistent failure mode.** Two overloads
+  that can both match one call cause PGRST203 and silent mis-routing. Fix by DROP with EXACT
+  signature — a name-only DROP fails silently and looks like the overload "came back".
+
+- **A column drop breaks consumers outside the viewer.** The `users_tzvira_v2` migration was
+  verified against the viewer only and killed `scripts/risk-scan.mjs` for a day. Always check
+  `scripts/`, `tools/`, workflows, and DB functions.
+
+- **Don't build what already exists.** We nearly added a failure-monitor duplicating GitHub's
+  built-in email alerts. Check account-level features, not just the YAML, before building.
+
+- **The audit log is genuinely append-only** and FK-linked to sessions — so seeded test
+  conversations cannot be deleted. Seed test data only with clearly fake phones; accept it becomes
+  permanent.
+
+- GitHub Pages serves stale cache independently of a browser hard-refresh. Match the header
+  timestamp SHA against the pushed SHA before concluding anything about viewer behavior.
+
+- Claude Code defaults to Manual approval — file writes silently wait. Choose "allow all edits
+  during this session". Reports in English to avoid RTL/encoding, written to
+  `powershell_text\POWERSHELL_TXT.txt`, overwrite, then read back to verify non-empty.
+
+- **All 38 patients are test data.** One holds 98 of 127 sessions (min gap < 6s). Never derive
+  usage metrics from row counts.
 
 ---
 
 ## Working rules
 
-- End-of-session: when the user says "סיום סשן", update this file via merge, then run a full Git cycle (add / commit / push) and verify against `origin/main`.
+- On "סיום סשן": merge this file, then run the full Git cycle (add / commit / push) and verify
+  against `origin/main`.
+- Architecture goes in `PROJECT_GUIDE.md`. Encryption detail goes in `docs/ENCRYPTION.md`.
+  This file stays short.
