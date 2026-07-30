@@ -587,8 +587,10 @@ function getReviewerName(ev){
         // after this stage settles, because the phone/name filters resolve their
         // needles through identityFromMap. Both branches must set it, otherwise a
         // failed identity fetch would leave the whole viewer permanently "not loaded".
-        return fetchAllPaged(IDENTITY_TABLE, 'patient_code, name, phone', 'patient_code')
-          .then(function(allIdentity){
+        return supa.rpc('rpc_get_users_tzvira_v2_viewer')
+          .then(function(res){
+            if (res && res.error) throw res.error;
+            var allIdentity = (res && res.data) ? res.data : [];
             (allIdentity || []).forEach(function(ir){
               if (!ir) return;
               var code = identityCode(ir.patient_code);
