@@ -1627,15 +1627,18 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
           parts.push('<div class="talk" data-id="' + escapeHtml(r.id||'') + '" data-time_key="' + escapeHtml(r.time_key||'') + '" data-time="' + escapeHtml(r.time_key||'') + '" data-phone="' + escapeHtml(r.phone||'') + '" data-name="'+escapeHtml(r.name||'')+'" data-patient_code="' + escapeHtml(r.patient_code == null ? '' : String(r.patient_code)) + '">');
           parts.push(headParts.join(''));
 
+          // Count distinct patients by patient_code, for EVERY row whose header was
+          // emitted above - a patient whose talks are all hidden still owns a header,
+          // so counting inside the isHidden branch below would lose that patient.
+          // name/phone are shadow columns pending removal and are already null on some
+          // rows, so there is NO fallback to phone.
+          var pcKey = (r && r.patient_code != null) ? String(r.patient_code).trim() : '';
+          if (pcKey) patientsShown.add(pcKey);
+
           if (isHidden){
             hiddenCount++;
           } else {
             shownCount++;
-            // Count distinct patients by patient_code. name/phone are shadow columns pending
-            // removal and are already null on some rows, so there is NO fallback to phone.
-            var pcKey = (r && r.patient_code != null) ? String(r.patient_code).trim() : '';
-            if (pcKey) patientsShown.add(pcKey);
-
             var dialogHtml = renderDialogHtml(parsed.patient, parsed.lines, hits);
             dialogHtml = dialogHtml.replace(/__TALKDOM__-/g, 'ln-' + talkDomId + '-');
             parts.push('<div class="body">' + dialogHtml + '</div>');
