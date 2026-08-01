@@ -194,6 +194,17 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
       if (correctorResult.action === "PASS") {
         correctorDecision = "PASS";
+        await appendTestLog({
+          ts: new Date().toISOString(),
+          correlation_id: correlationId,
+          conversation_id: payload.value.session_id,
+          phone: payload.value.patient_id,
+          question: payload.value.question20,
+          candidate_answer: candidateText,
+          corrected_answer: candidateText,
+          corrector_decision: "PASS",
+          reason_codes: [],
+        });
         return jsonResponse({
           ok: true,
           answer: formatDiagnosticAnswer(candidateText, "לא נדרש תיקון."),
@@ -212,6 +223,17 @@ Deno.serve(async (request: Request): Promise<Response> => {
       }
 
       correctorDecision = "REWRITE";
+      await appendTestLog({
+        ts: new Date().toISOString(),
+        correlation_id: correlationId,
+        conversation_id: payload.value.session_id,
+        phone: payload.value.patient_id,
+        question: payload.value.question20,
+        candidate_answer: candidateText,
+        corrected_answer: rewrite,
+        corrector_decision: "REWRITE",
+        reason_codes: correctorResult.reason_codes,
+      });
       return jsonResponse({
         ok: true,
         answer: formatDiagnosticAnswer(candidateText, rewrite),
@@ -225,6 +247,17 @@ Deno.serve(async (request: Request): Promise<Response> => {
     } catch (_error) {
       correctorDecision = "FALLBACK";
       fallbackUsed = true;
+      await appendTestLog({
+        ts: new Date().toISOString(),
+        correlation_id: correlationId,
+        conversation_id: payload.value.session_id,
+        phone: payload.value.patient_id,
+        question: payload.value.question20,
+        candidate_answer: candidateText,
+        corrected_answer: candidateText,
+        corrector_decision: "FALLBACK",
+        reason_codes: [],
+      });
       return jsonResponse({
         ok: true,
         answer: formatDiagnosticAnswer(candidateText, "הבדיקה לא הושלמה, ולכן לא בוצע תיקון."),
@@ -695,4 +728,80 @@ function jsonResponse(body: Record<string, unknown>, status: number): Response {
 
 function logDiagnostic(fields: Record<string, unknown>): void {
   console.log(JSON.stringify(fields));
+}
+
+const TEST_LOG_TIMEOUT_MS = 5_000;
+
+async function appendTestLog(entry: Record<string, unknown>): Promise<void> {
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const bucket = Deno.env.get("TEST_LOG_BUCKET") || "corrector-test-log";
+
+    if (!supabaseUrl || !supabaseKey) {
+      console.error(JSON.stringify({
+        event: "test_log_skipped",
+        error: "supabase_configuration_missing",
+      }));
+      return;
+    }
+
+    const day = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Jerusalem",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+
+    const url =
+      `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/${bucket}/logs/${day}.jsonl`;
+
+    let existing = "";
+    const readController = new AbortController();
+    const readTimeout = setTimeout(() => readController.abort(), TEST_LOG_TIMEOUT_MS);
+    try {
+      const current = await fetch(url, {
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
+        signal: readController.signal,
+      });
+      if (current.ok) {
+        existing = await current.text();
+      } else {
+        await current.body?.cancel();
+      }
+    } finally {
+      clearTimeout(readTimeout);
+    }
+
+    const writeController = new AbortController();
+    const writeTimeout = setTimeout(() => writeController.abort(), TEST_LOG_TIMEOUT_MS);
+    try {
+      const upload = await fetch(url, {
+        method: "POST",
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          "Content-Type": "application/x-ndjson; charset=utf-8",
+          "x-upsert": "true",
+        },
+        body: `${existing}${JSON.stringify(entry)}\n`,
+        signal: writeController.signal,
+      });
+
+      if (!upload.ok) {
+        console.error(JSON.stringify({
+          event: "test_log_write_failed",
+          status: upload.status,
+          status_text: upload.statusText,
+        }));
+      }
+    } finally {
+      clearTimeout(writeTimeout);
+    }
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: "test_log_write_exception",
+      error_message: toError(error).message,
+    }));
+  }
 }
