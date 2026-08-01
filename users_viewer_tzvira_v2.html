@@ -138,6 +138,7 @@ function getReviewerName(ev){
   <div class="card controls">
     <div style="margin-bottom:10px; text-align:center">
       <button id="btnOldToggle" type="button">הצג שיחות ישנות</button>
+      <button id="btnHideSeen">הסתר שיחות שנצפו</button>
       <div class="hint old-hint-warn" id="oldHint" style="margin-top:6px;">שורות מעל חודש - לא מוצגות</div>
     </div>
     <div class="row">
@@ -187,7 +188,8 @@ function getReviewerName(ev){
     fPhone:$("fPhone"), fName:$("fName"), fFrom:$("fFrom"), fTo:$("fTo"), fKind:$("fKind"),
     btnRun:$("btnRun"), btnClear:$("btnClear"),
     out:$("out"), alertHost:$("alertHost"), statusBar:$("statusBar"), countInfo:$("countInfo"),
-    btnOldToggle:$("btnOldToggle"), oldHint:$("oldHint")
+    btnOldToggle:$("btnOldToggle"), oldHint:$("oldHint"),
+    btnHideSeen:$("btnHideSeen")
   };
 
   // Hide old rows by default (older than 30 days from page load)
@@ -199,6 +201,10 @@ function getReviewerName(ev){
   })();
   var SHOW_OLD = false;
   var OLD_DAYS = 30;
+
+  // Hide talks that were marked hidden AND carry no open risk.
+  // Off by default: the viewer keeps showing every row until the user asks.
+  var HIDE_SEEN = false;
 
   function _parseTimeKeyToDayMs(timeKey){
     // Date-only parsing (ignore time): supports
@@ -256,6 +262,31 @@ function getReviewerName(ev){
       el.btnOldToggle.addEventListener('click', function(){
         SHOW_OLD = !SHOW_OLD;
         _syncOldToggleUi();
+        // rerender using current cache/filters
+        if (CACHE && CACHE.loaded){ rerenderFromCache(); }
+      });
+    }
+  } catch(e){}
+
+  function _syncHideSeenUi(){
+    try{
+      if (!el.btnHideSeen) return;
+      el.btnHideSeen.textContent = HIDE_SEEN ? 'הצג שיחות שנצפו' : 'הסתר שיחות שנצפו';
+      // Same convention as btnOldToggle: emphasize the button while it is filtering.
+      if (HIDE_SEEN){
+        el.btnHideSeen.classList.add('btn-old-primary');
+      } else {
+        el.btnHideSeen.classList.remove('btn-old-primary');
+      }
+    } catch(e){}
+  }
+
+  try{
+    if (el.btnHideSeen){
+      _syncHideSeenUi();
+      el.btnHideSeen.addEventListener('click', function(){
+        HIDE_SEEN = !HIDE_SEEN;
+        _syncHideSeenUi();
         // rerender using current cache/filters
         if (CACHE && CACHE.loaded){ rerenderFromCache(); }
       });
@@ -1484,6 +1515,12 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
           var k = keyOf(r.time_key, r.patient_code);
           var flag = k ? flagsMap.get(k) : null;   // no patient_code -> treated as not hidden
           var isHidden = !!(flag && flag.is_hidden);
+
+          // Toolbar filter: drop talks that are marked hidden AND carry no open risk.
+          // Placed here on purpose: after isHidden and notRev are both known, and
+          // before the header is emitted and before hiddenCount is incremented, so a
+          // row skipped here is never counted as a hidden talk in the count line.
+          if (HIDE_SEEN && isHidden && notRev.length === 0){ nextRow(i+1); return; }
 
           // Display-only. All join keys (riskKey/keyOf) and all server writes now use patient_code.
           var ident = displayIdentity(r);
