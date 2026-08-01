@@ -1,6 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// Monitor display cutoff. Events created before this instant are not shown.
+// Historical rows remain in the database untouched. To reset the monitor again,
+// change this value and redeploy. Value captured from database clock 2026-08-01.
+const MONITOR_CUTOFF_ISO = "2026-08-01T15:02:41Z";
+
 type EventRow = {
   conversation_id: string;
   conversation_suffix: string;
@@ -196,6 +201,8 @@ serve(async (req) => {
   const { data, error } = await supabase
     .from("conversation_events_v2_view")
     .select("*")
+    .gte("created_at", MONITOR_CUTOFF_ISO)
+    .order("created_at", { ascending: false })
     .limit(200);
 
   if (error) {
