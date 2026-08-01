@@ -20,6 +20,7 @@ type EventRow = {
   details: Record<string, unknown> | null;
   id: string;
   phone_masked: string | null;
+  psychologist_name: string | null;
 };
 
 const corsHeaders = {
@@ -120,6 +121,7 @@ function buildPayload(rows: EventRow[]) {
         status: completed ? "Completed" : "Running",
         completed,
         phone_masked: first.phone_masked,
+        psychologist_name: first.psychologist_name ?? null,
 
         events: sortedEvents.map((event) => ({
           event_name: event.event_name,
@@ -139,7 +141,7 @@ function buildPayload(rows: EventRow[]) {
   );
 
   return {
-    version: "1.1",
+    version: "1.2",
     refreshed_at: new Date().toISOString(),
     count: conversations.length,
     conversations,

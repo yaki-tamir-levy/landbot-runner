@@ -185,7 +185,7 @@
       const app = document.getElementById("app");
 
       meta.textContent =
-        `Conversation Trace - Version 1.3 ${data.version} - Last refresh: ${formatTime(data.refreshed_at)}`;
+        `Conversation Trace - Version 1.4 ${data.version} - Last refresh: ${formatTime(data.refreshed_at)}`;
 
       if (!data.conversations || data.conversations.length === 0) {
         app.innerHTML = "<p>No events found.</p>";
@@ -204,6 +204,9 @@
 
         const phone =
           conversationPhone(conversation);
+
+        const psychologistName =
+          String(conversation.psychologist_name ?? "").trim();
 
         const conversationLabel =
           `Conversation ${conversation.conversation_suffix}`;
@@ -224,6 +227,7 @@
 
               <div class="card-sub">
                 ${source ? `<div class="source">${escapeHtml(source)}</div>` : ""}
+                ${psychologistName ? `<div>מטפל: ${escapeHtml(psychologistName)}</div>` : ""}
                 <div>${escapeHtml(phone)}</div>
               </div>
             </div>
