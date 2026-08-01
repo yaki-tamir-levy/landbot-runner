@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Force End Conversation - TEST ONLY</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.1/dist/umd/supabase.js"></script>
+<style>
+  body{font:15px system-ui,sans-serif;background:#fafafa;margin:0;padding:24px}
+  .card{max-width:520px;margin:40px auto;background:#fff;border:1px solid #ddd;
+        border-radius:10px;padding:20px}
+  .warn{background:#fff8e1;border:1px solid #e0b400;border-radius:6px;
+        padding:10px;margin-bottom:16px}
+  input{font-size:18px;padding:8px;width:110px;text-transform:lowercase;
+        letter-spacing:2px;text-align:center}
+  button{font-size:16px;padding:9px 18px;cursor:pointer;margin-inline-start:8px}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  pre{background:#f4f4f4;padding:12px;border-radius:6px;white-space:pre-wrap;
+      word-break:break-all;margin-top:16px;min-height:60px}
+  .bad{color:#b00}.good{color:#0a6}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="warn"><b>TEST ONLY</b> - shifts message timestamps back 16
+  minutes and runs the migration. Do not use on real patient data.</div>
+
+  <div id="auth">Checking session...</div>
+
+  <div id="panel" style="display:none">
+    <label>Last 4 chars of conversation id:</label><br><br>
+    <input id="suffix" maxlength="4" placeholder="abcd" autocomplete="off">
+    <button id="go" type="button">Force End</button>
+    <pre id="out">Ready.</pre>
+  </div>
+</div>
+
+<script>
+(async function(){
+  "use strict";
+  var SUPABASE_URL = "https://qcwimczsiuxkarwfiyai.supabase.co";
+  var SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI";
+  var supa = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  var authBox = document.getElementById('auth');
+  var panel   = document.getElementById('panel');
+  var out     = document.getElementById('out');
+  var input   = document.getElementById('suffix');
+  var btn     = document.getElementById('go');
+
+  var s = await supa.auth.getSession();
+  if (!s || !s.data || !s.data.session) {
+    authBox.className = 'bad';
+    authBox.innerHTML = 'No active session. Log in first via ' +
+      '<a href="login_phone_v2.html">login_phone_v2.html</a>, then reopen this page.';
+    return;
+  }
+  authBox.className = 'good';
+  authBox.textContent = 'Session active: ' + (s.data.session.user.email || 'unknown');
+  panel.style.display = 'block';
+
+  btn.addEventListener('click', async function(){
+    var suffix = (input.value || '').trim().toLowerCase();
+    if (suffix.length !== 4) { out.textContent = 'Need exactly 4 characters.'; return; }
+    btn.disabled = true;
+    out.textContent = 'Running...';
+    try {
+      var r = await supa.rpc('force_end_conversation_v2', { p_suffix: suffix });
+      if (r.error) { out.textContent = 'RPC ERROR: ' + r.error.message; return; }
+      var d = r.data;
+      if (!d || d.ok !== true) {
+        out.textContent = 'FAILED: ' + (d && d.error ? d.error : 'unknown') +
+                          '\n\n' + JSON.stringify(d, null, 2);
+        return;
+      }
+      out.textContent = 'OK\nconversations matched: ' + d.conversations_matched +
+                        '\nmessages shifted: ' + d.messages_shifted +
+                        '\n\n' + JSON.stringify(d, null, 2);
+    } catch (e) {
+      out.textContent = 'EXCEPTION: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
