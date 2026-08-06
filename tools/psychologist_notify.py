@@ -33,6 +33,7 @@ Environment variables
 
 from __future__ import annotations
 
+import html
 import os
 import smtplib
 import sys
@@ -427,6 +428,25 @@ def build_daily_message(
 # sending
 # ----------------------------------------------------------------------------
 
+def _html_rtl(body: str) -> str:
+    """
+    Right-to-left HTML alternative of the plain-text body.
+
+    white-space: pre-wrap preserves the exact line breaks of the text part, so
+    the two alternatives stay identical in content. The masked phone lines
+    already carry LRM marks, which keep them left-to-right inside the RTL block.
+    """
+    escaped = html.escape(body)
+    return (
+        "<html><body>"
+        '<div dir="rtl" style="text-align:right;white-space:pre-wrap;'
+        'font-family:Arial,Helvetica,sans-serif;font-size:14px;'
+        'line-height:1.6">'
+        f"{escaped}"
+        "</div></body></html>"
+    )
+
+
 class Mailer:
     def __init__(self, dry_run: bool) -> None:
         self.dry_run = dry_run
@@ -446,6 +466,7 @@ class Mailer:
         msg["From"] = self.sender
         msg["To"] = to_addr
         msg.set_content(body)
+        msg.add_alternative(_html_rtl(body), subtype="html")
 
         if self.dry_run:
             print("=" * 60)
