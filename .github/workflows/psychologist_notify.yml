@@ -1,0 +1,96 @@
+name: Psychologist Notify
+
+# Two independent schedules, one workflow.
+#
+#   "30 * * * *"    -> risk mode, hourly at :30.
+#                      Runs 30 minutes after process-queue-worker-v2 (:00)
+#                      so risk rows are already written when we query.
+#
+#   "0 17,18 * * *" -> daily mode. Fires twice because GitHub cron is UTC only
+#                      and Israel shifts between UTC+2 and UTC+3. The script
+#                      checks the local hour in Asia/Jerusalem and exits
+#                      immediately on the wrong one, so exactly one run sends.
+
+on:
+  schedule:
+    - cron: "30 * * * *"
+    - cron: "0 17,18 * * *"
+
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Which pass to run"
+        required: true
+        default: "risk"
+        type: choice
+        options:
+          - risk
+          - daily
+      dry_run:
+        description: "1 = print emails, send nothing, do not move the watermark"
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "0"
+      skip_hour_gate:
+        description: "1 = ignore the 20:00 Israel gate (daily mode testing only)"
+        required: true
+        default: "0"
+        type: choice
+        options:
+          - "0"
+          - "1"
+
+concurrency:
+  group: psychologist-notify
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Resolve run parameters
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MODE="${{ inputs.mode }}"
+            DRY="${{ inputs.dry_run }}"
+            SKIP="${{ inputs.skip_hour_gate }}"
+          elif [ "${{ github.event.schedule }}" = "0 17,18 * * *" ]; then
+            MODE="daily"
+            DRY="0"
+            SKIP="0"
+          else
+            MODE="risk"
+            DRY="0"
+            SKIP="0"
+          fi
+          echo "NOTIFY_MODE=$MODE"     >> "$GITHUB_ENV"
+          echo "DRY_RUN=$DRY"          >> "$GITHUB_ENV"
+          echo "SKIP_HOUR_GATE=$SKIP"  >> "$GITHUB_ENV"
+          echo "Resolved: mode=$MODE dry_run=$DRY skip_hour_gate=$SKIP"
+
+      - name: Run psychologist notifier
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GMAIL_SMTP_USER:           ${{ secrets.GMAIL_SMTP_USER }}
+          GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_FROM:                ${{ secrets.EMAIL_FROM }}
+          DAILY_HOUR_IL:             "20"
+        run: python tools/psychologist_notify.py
