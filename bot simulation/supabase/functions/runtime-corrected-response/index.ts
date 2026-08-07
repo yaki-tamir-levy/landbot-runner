@@ -746,6 +746,45 @@ async function appendTestLog(entry: Record<string, unknown>): Promise<void> {
       return;
     }
 
+    try {
+      const insertController = new AbortController();
+      const insertTimeout = setTimeout(
+        () => insertController.abort(),
+        TEST_LOG_TIMEOUT_MS,
+      );
+      try {
+        const inserted = await fetch(
+          `${supabaseUrl.replace(/\/$/, "")}/rest/v1/corrector_test_log`,
+          {
+            method: "POST",
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              "Content-Type": "application/json; charset=utf-8",
+              Prefer: "return=minimal",
+            },
+            body: JSON.stringify(entry),
+            signal: insertController.signal,
+          },
+        );
+        if (!inserted.ok) {
+          console.error(JSON.stringify({
+            event: "test_log_insert_failed",
+            status: inserted.status,
+            status_text: inserted.statusText,
+          }));
+        }
+        await inserted.body?.cancel();
+      } finally {
+        clearTimeout(insertTimeout);
+      }
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "test_log_insert_exception",
+        error_message: toError(error).message,
+      }));
+    }
+
     const day = new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Jerusalem",
       year: "numeric",
