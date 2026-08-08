@@ -1,158 +1,1351 @@
-# SESSION HANDOFF
+# מצב מזוקק ומשימות פתוחות
 
-**Last verified: 2026-07-27 (evening session)**
+**עודכן: 6 באוגוסט 2026** — סשן התראות המייל. מחליף את הגרסה הקודמת במלואה.
 
-Merge-on-update. Not append-only. Completed items move to DONE with a date; contradictions
-against the live DB are corrected, not accumulated.
+**כלל:** כל פריט כאן מסומן
 
-**Scope note:** stable architecture lives in `PROJECT_GUIDE.md` and `docs/ENCRYPTION.md`.
-This file holds only working state — what changed recently, what is mid-flight, what regressed.
-Do not duplicate architecture here.
+`מאומת`
 
----
+או
 
-## CORRECTIONS TO THE PREVIOUS VERSION
+`עדות`.
 
-The 2026-07-27 morning version carried three claims that live verification later disproved.
-
-**A. `start_conversation_v2` — NOT "recreated on every deploy".**
-Previous version: the 2-arg overload was dropped and "something recreates it on deploy".
-FALSE. A full-repo search found NO `CREATE FUNCTION` for it anywhere — no migration, no deploy
-SQL. The overload was an old leftover; the earlier DROP failed silently because it did not name
-the exact signature. It was dropped for good on 07-27 by full signature and verified gone by a
-live call. There is no regeneration mechanism.
-
-**B. "risk-scan is the only phrase-scan and it's dead" — INCOMPLETE.**
-The phrase scanner also lives inside `process_users_total_v2.mjs` (`phraseScanAndInsertRisks`),
-runs on the automatic hourly chain with `DRY_RUN=false`, and writes `match_method=2`. That path
-is healthy. `risk-scan.mjs` was a third, broken, redundant copy — now disabled.
-
-**C. "No match_method=2 rows means the phrase path is broken" — FALSE.**
-Proven by a live end-to-end test: a seeded phrase produced a `match_method=2` row immediately.
-The earlier absence just meant no listed phrase appeared in patient lines in the test data.
+פריט שאינו מאומת אינו בסיס לפעולה.
 
 ---
 
-## DONE — this session (2026-07-27 evening), verified live
+## 0. שינוי מצב — לקריאה ראשונה
 
-**1. Deleted `patient_identity_map_decrypted`** — closed the medical-data exposure.
-The View granted anon full rights and pulled the crypto key from `app_config`. Its only
-protection was a decode failure (the `db1:` prefix breaks Base64 on all 38 rows). Pre-checks:
-0 dependents, no function references it, no HTML reads it. Verified gone after DROP.
+**מנגנון התראות המייל לפסיכולוגים נבנה, נפרס, ואומת קצה־לקצה.**
 
-**2. Fixed `start_conversation_v2` overload** — dropped the 2-arg
-`(p_phone text, p_name text)` signature by full signature. Two clean signatures remain:
-`(p_patient_code uuid)` and `(p_phone, p_name, p_source)`. A live call returned a single uuid
-with no PGRST203 ambiguity. Root cause was the earlier silent DROP failure, not regeneration.
+`tools/psychologist_notify.py`
 
-**3. Disabled `risk-scan V2`** — `gh workflow disable "risk-scan V2"` -> `disabled_manually`.
-Redundant broken copy of the phrase path. The YAML still contains its `schedule:` block; final
-removal from the file is a separate step (OPEN).
+`.github/workflows/psychologist_notify.yml`
 
-**4. Verified the risk system end-to-end** — seeded one live conversation (fake phone
-`00000000000`, patient c32c06d5 test data) with two lines: one implicit, one containing a listed
-phrase. Result: two rows — `match_method=1` (model) and `match_method=2` (phrase). This proves
-the DB trigger fires, the queue processes, and both scan paths write. Test rows left in place
-(all patients are test data).
+`public.notification_watermark`
 
-**5. Confirmed the automatic processing chain** — `process-queue-worker-v2.yml` (cron `0 * * * *`)
-runs `process_queue_worker_v2.mjs`, which spawns `process_users_total_v2.mjs` per queue row with
-`DRY_RUN=false`. That spawned script runs BOTH scans in sequence (model at line 853, phrase at
-860-869). Queue feed is three-layer: DB trigger (immediate) + `reconcile-new-to-queue-v2` (safety
-net). Only ONE script does users_total_v2 NEW->DONE.
+קומיטים
 
-**6. Confirmed failure monitoring already exists** — GitHub emails the repo owner on any Actions
-failure (screenshot confirmed: "risk-scan V2: All jobs have failed"). No custom monitor needed.
-Covers Actions only, NOT pg_cron. The monitor we drafted (monitor-failures.yml, email_send.py)
-was discarded to avoid duplicating a built-in feature.
+`671db22`
 
-**7. Verified audit log is truly append-only** — a DELETE on `conversation_events_v2` was blocked
-by trigger `prevent_conversation_events_v2_change` with `conversation_events_v2 is append only`.
-There is a FK `conversation_events_v2_conversation_fk` -> `conversations_session_v2`, so a session
-already logged cannot be deleted at all. Working as designed.
+ו־
+
+`b6dd788`,
+
+שניהם ב־
+
+`origin/main`.
+
+**המשמעות התפעולית:** פסיכולוג המתווסף לגיליון מתחיל לקבל התראות בהרצה הבאה, ויכול להיכנס למערכת — **בלי שום פעולה מצדו ובלי שינוי בקוד או בסודות.**
 
 ---
 
-## OPEN
+## 1. חוסמי ייצור — לפי חומרה
 
-**1. `insert_conversation_v2` — highest remaining overload risk. TOP PRIORITY.**
-Two signatures with the SAME arity, differing only in the 2nd parameter type:
-`(p_phone text, p_conversation_id uuid, ...)` vs `(p_phone text, p_name text, ...)`.
-An untyped string conversation_id could land in the name field. Fix as we fixed
-start_conversation_v2: verify callers, then DROP the wrong signature BY FULL SIGNATURE.
-Lesson — DROP FUNCTION on a multi-overload name MUST name the exact signature or it fails silently.
+### 1.1 `bot-monitor` חשופה — החמור ביותר
 
-**2. BOT MONITOR enhancements — tomorrow's task.**
-(a) Add the assigned psychologist's name to the monitor display.
-(b) Add the end time to the `Conversation Ended` event. Structural gap: there is no `ended_at`
-column on `conversations_session_v2`, and `current_stage` never advances past
-`conversation_started`. May require adding explicit end-of-conversation recording.
+**מאומת בקריאה חיה מסביבה חיצונית, ללא כל אישור.**
 
-**3. `risk-scan.mjs` / risk-scan-v2.yml — finish the removal.**
-Workflow disabled but the file still has its `schedule:` block and the script still reads the
-dropped `users_tzvira_v2.name`. Either delete the workflow file, or (if kept as a manual tool)
-repoint the name lookup to `patient_identity_map` by `patient_code`.
+אין
 
-**4. Shadow columns on `risk_reviews_v2`** — `phone` + `name` still exist; viewer line 559 still
-selects them. Safe to drop now that the phrase path uses the integrated scanner (which resolves
-name differently). Verify no other consumer first.
+`x-landbot-secret`.
 
-**5. `talk_read_flags` vs `talk_read_flags_v2`** — viewer reads the no-suffix table (line 287),
-where the 3 psychologist policies live. The `_v2` version is abandoned AND carries two open
-policies: select on `auth.role()='authenticated'`, update on `true`. Remove those.
+אין
 
-**6. Missing write policies — verify intent.** `users_information_v2`, `users_tzvira_v2`,
-`patient_identity_map` have SELECT policies only. Likely deliberate (writes via SECURITY DEFINER).
+`JWT`.
 
-**7. Production blockers** — close the temporary open gate `users_viewer_risk_v2.html`; restore
-email auth + close the bypass login; connect the viewer to `rpc_get_users_tzvira_v2_viewer`.
+`CORS`
 
-**8. Safety-net reconciler** — the DB trigger IS firing (proven this session). Re-evaluate whether
-`reconcile-new-to-queue-v2` is still needed, or is now redundant.
+פתוח ב־
 
-**9. pg_cron failures** (not covered by GitHub's email): jobs 1 and 11 target a deleted function
-(delete them); job 24 needs a `pg_net` signature fix.
+`*`.
 
-**10. Five *.psbackup.* files on disk but gitignored** (`*.psbackup.*`), including two scripts.
-They cannot run anywhere. Decide keep-out-of-git vs delete.
+הפונקציה קוראת ל־
 
-**11. Unresolved timing note** — audit chain stamped 08:20 but the only relevant cron is minute 00.
-No minute-20 schedule exists in the repo. Needs GitHub Actions run history; low priority.
+`conversation_events_v2_view`,
+
+שעליו
+
+`RLS`
+
+**כבוי** ואפס מדיניות.
+
+**מה נחשף:** מזהי מטופלים, טלפונים ממוסכים, שמות מטפלים, מבנה השרשרת ותזמונים.
+
+**הכרעה נדרשת:** סגירת שער בכותרת סוד תשבור את
+
+`monitor/index.html`
+
+ב־
+
+`GitHub Pages`
+
+— סוד בדף פומבי אינו סוד.
+
+### 1.2 חשיפת המאגר הציבורי
+
+`ad37a97`
+
+נדחף למאגר ציבורי. 1,772 הוספות, מהן 47 מאושרות.
+
+**קיים בהיסטוריה:** כתובת מייל אישית, ושורה על מיקום ותוקף אישור גישה למסד.
+
+**ארבע הכרעות:** מעמד המאגר, החלפת אישור הגישה, כתיבה מחדש של ההיסטוריה, סקירת 1,512 השורות שלא נבדקו.
+
+### 1.3 ההתראה הקיימת משדרת מידע מזוהה — **חדש, 6.8.2026**
+
+`tools/risk_reviews_notify.py`
+
+בונה גוף הודעה בתבנית
+
+`<שם> | <טלפון> | <טקסט סיכון>`,
+
+שורות 405–413.
+
+ב־
+
+`Pushover`
+
+— עד חמש שורות, מוצג במסך הנעילה בלי לפתוח את המכשיר, עדיפות 1 וצליל
+
+`siren`.
+
+הקיצור ל־120 תווים קוסמטי ואינו נוגע בשם ובטלפון.
+
+ב־**מייל** — אותם שדות, **בלי קיצור ובלי תקרת חמש שורות.**
+
+**מעמד נוכחי:** מקובל כערוץ ניטור של בעל המערכת בלבד. **אינו מיועד להרחבה לפסיכולוגים** — לשם כך קיים המנגנון החדש.
+
+### 1.4 קוד בייצור שאינו בענף
+
+39 שורות בגרסה 36 של
+
+`runtime-corrected-response`
+
+— בלוק ה־
+
+`INSERT`
+
+ל־
+
+`corrector_test_log`.
+
+נפרס, לא נשמר בקומיט. **עדות** — לא אומת.
+
+### 1.5 שער פתוח ב־Viewer
+
+`users_viewer_risk_v2.html`
+
+ללא אימות, במכוון, לבדיקות.
+
+### 1.6 הפעלה ללא הגבלת זמן
+
+אין ניתוק לפי זמן ואין
+
+`signOut`
+
+יזום. האסימונים חוזרים בגוף התשובה ללא
+
+`cookie`.
 
 ---
 
-## Key learnings
+## 2. תקינות נתונים
 
-- **PostgREST function overloads are this project's most persistent failure mode.** Two overloads
-  that can both match one call cause PGRST203 and silent mis-routing. Fix by DROP with EXACT
-  signature — a name-only DROP fails silently and looks like the overload "came back".
+### 2.1 רשומות הפעלה יתומות
 
-- **A column drop breaks consumers outside the viewer.** The `users_tzvira_v2` migration was
-  verified against the viewer only and killed `scripts/risk-scan.mjs` for a day. Always check
-  `scripts/`, `tools/`, workflows, and DB functions.
+**מאומת 1.8.2026:** 160 רשומות ב־
 
-- **Don't build what already exists.** We nearly added a failure-monitor duplicating GitHub's
-  built-in email alerts. Check account-level features, not just the YAML, before building.
+`conversations_session_v2`.
 
-- **The audit log is genuinely append-only** and FK-linked to sessions — so seeded test
-  conversations cannot be deleted. Seed test data only with clearly fake phones; accept it becomes
-  permanent.
+8 ללא אף אירוע. 80 שיחות עם אירוע יחיד.
 
-- GitHub Pages serves stale cache independently of a browser hard-refresh. Match the header
-  timestamp SHA against the pushed SHA before concluding anything about viewer behavior.
+**הסיבה, עדות:**
 
-- Claude Code defaults to Manual approval — file writes silently wait. Choose "allow all edits
-  during this session". Reports in English to avoid RTL/encoding, written to
-  `powershell_text\POWERSHELL_TXT.txt`, overwrite, then read back to verify non-empty.
+`insert_conversation_v2`
 
-- **All 38 patients are test data.** One holds 98 of 127 sessions (min gap < 6s). Never derive
-  usage metrics from row counts.
+אינה ממציאה מזהה שיחה. מזהה ישן שנשלח מ־
+
+`Landbot`
+
+מתקבל ללא שגיאה. **התיקון ב־**
+
+`Landbot`.
+
+### 2.2 מטופל בלי שיוך — **מכוסה חלקית מ־6.8.2026**
+
+מטופל אחד נושא ממצאי סיכון ואין לו שורה ב־
+
+`users_information_v2`.
+
+שרשרת ההיתר ב־
+
+`RLS`
+
+נשענת על התאמה — ולכן **אינו נראה לאף פסיכולוג ב־**
+
+`Viewer`.
+
+**מה השתנה:** מנגנון ההתראות החדש מנתב פריטים כאלה לחשבון האדמין, בנוסח נפרד המורה לשייך מטפל. **החשיפה ב־**
+
+`Viewer`
+
+**עדיין קיימת** — הניתוב פותר את ההתראה, לא את הצפייה.
+
+### 2.3 משתמש ללא רשומה מקבילה
+
+משתמש רביעי ב־
+
+`auth.users`
+
+שאינו קיים ב־
+
+`psychologists_v2`.
+
+יעבור את שער האימות ויקבל מסך ריק.
+
+### 2.4 סמיכות טלפונים
+
+שני טלפוני מטפלים נבדלים בספרה אחרונה אחת, והאחד הוא חשבון המנהל. הטלפון הוא מפתח החיפוש בכניסה.
+
+### 2.5 אפס מוביל בטלפון המטפל — **חדש, 6.8.2026**
+
+`start-login`
+
+דורשת
+
+`^05\d{8}$`.
+
+**מאומת:** שלוש השורות הקיימות תואמות.
+
+**הסיכון:** שורה שתיכנס מהגיליון בלי אפס מוביל תיכשל בשקט — המשתמש יראה הודעת הצלחה ולא יקבל קוד.
 
 ---
 
-## Working rules
+## 3. תיקוני תיעוד — מאומתים, דורשים עדכון ב־PROJECT_GUIDE
 
-- On "סיום סשן": merge this file, then run the full Git cycle (add / commit / push) and verify
-  against `origin/main`.
-- Architecture goes in `PROJECT_GUIDE.md`. Encryption detail goes in `docs/ENCRYPTION.md`.
-  This file stays short.
+| סעיף | הטענה במדריך | מאומת 6.8.2026 |
+|---|---|---|
+| 10 | הלינק ב־`Pushover` מוביל לשיחה | **סטטי**, מהסוד `PUSHOVER_URL`, ללא מזהה מטופל |
+| 10 | `Pushover` נשלח מ־`pushover_notify.yml` בלבד | פועלי התור משגרים אותו גם ב־`workflow_dispatch` |
+| 10 | ניטור כשלים מכוסה | שיגור `Pushover` שנכשל **נבלע ב־`catch`** |
+| 8 | שני תהליכי גיבוי אינם רצים | שניהם `yml` תקין עם `cron` פעיל ארבע פעמים ביום |
+| 11 | אין ערוץ מייל לפסיכולוגים | קיים מ־6.8.2026 |
+
+**הפרכה:** שם הקובץ
+
+`process-queue-worker-v2.before_pushover.psbackup.yml`
+
+מטעה. ההפרש הוא **שורה אחת** — הזרקת
+
+`GH_WORKFLOW_TOKEN`.
+
+ה־
+
+`Pushover`
+
+חי ב־
+
+`scripts/process_queue_worker_v2.mjs`.
+
+**שחזור הגיבוי כתהליך פעיל יפיל את הפועל כולו** — הסקריפט קורא את המשתנה בטעינת המודול.
+
+---
+
+## 4. משימות פתוחות
+
+### מיידי
+
+1. לסגור את החשיפה של `bot-monitor`. **חוסם.**
+2. להכריע בארבע ההכרעות של המאגר הציבורי. **חוסם.**
+3. לקמט את 39 השורות של גרסה 36 ולדחוף.
+4. לסגור את `users_viewer_risk_v2.html`.
+5. **לבדוק בממשק** `Actions` **את מצב ההפעלה של שני קובצי הגיבוי** `pushover_notify.*.psbackup.yml`. אם פעילים — להשבית.
+
+### מנגנון ההתראות החדש — מעקב
+
+6. לוודא שההרצה המתוזמנת ב־20:00 שעון ישראל פועלת בפועל, בפעם הראשונה.
+7. לוודא שההרצה השעתית ב־`:30` תופסת ממצא סיכון חדש.
+8. **הנחיית הצטרפות לפסיכולוג:** לסמן את המייל כ`אינו ספאם` ולהוסיף את השולח לאנשי קשר. אומת שההודעה נוחתת בקטגוריה משנית ב־`Gmail`.
+9. סטטוסי "פתוח" הם רשימה קשיחה בקוד: `NEW`, `REVIEWED`, `VIEWED`. סטטוס חדש לא ייספר.
+10. סימן המים משווה מחרוזות, כי `time_key` היא `text`. **שינוי פורמט ישבור את ההשוואה בשקט.**
+
+### משוחרר
+
+11. למחוק `name` ו־`phone` מ־`risk_reviews_v2`. **קודם** להסיר משורות 559 ו־987 ב־`Viewer`.
+12. לתקן `get_last_users_thread_v2` לפענוח `name_enc`.
+
+### ניקוי
+
+13. למחוק `force_end_conversation_v2(p_suffix text)` — אין קורא.
+14. להסיר את כלי הסיום המאולץ לפני ייצור.
+15. `upsert_psychologist_from_sheet` — שתי חתימות, ארבעה מול שישה פרמטרים.
+    **סגור — 8.8.2026.** במסד חתימה אחת, `oid 320400`, שבעה פרמטרים.
+16. `set_disclaimed_agreed(p_phone text)` — משווה מול טלפון ממוסך, לעולם אינה מתאימה.
+17. כפילות מספרי גרסה בכותרת המוניטור.
+18. `IDENTITY_TABLE` בשורה 288 ב־`Viewer` — אינו בשימוש.
+19. הסרה סופית של `risk-scan V2`, כולל בלוק ה־`schedule`.
+
+### בירורים
+
+20. שלוש פונקציות פרוסות ללא מקור במאגר: `openai-completion`, `secure-users-information`, `crypto-tool`.
+21. שלוש פונקציות שגופן לא נקרא: `decrypt_user_text`, `get_all_phones`, `get_all_phones_and_talks`.
+22. אין רישום פריסה ואין `config.toml`.
+23. הגדרת הפרטיות של הבאקט `corrector-test-log`.
+24. `tools/log_append.ps1` מחוץ למעקב.
+25. `POWERSHELL_TXT.rtf` נדרס בכל כתיבה. שווה חותמת זמן בשם.
+26. **ערכי הפריסה של** `DEBUG_ENUM` **ו־**`ALLOWED_ORIGINS` **בפונקציות ההזדהות** — לא ניתנים לקריאה מהמאגר.
+27. **אין הגבלת קצב** ב־`start-login` וב־`verify-login`.
+
+### לא לתקן כרגע — החלטה מפורשת
+
+28. ליקויי הפרומפט שנצפו אחרי התיקון — לצבור עוד שיחות לפני שינוי נוסף.
+29. **`Hook` להתראה בסלולר בסיום משימת** `Claude Code` — נדחה במפורש לסשן המשך.
+
+---
+
+## 5. לקחים חדשים
+
+**סימן מים ריק אינו "אין שליחות" אלא "אין גבול".** טבלה שנוצרה ריקה הייתה גורמת להרצה הראשונה לשלוח את כל ההיסטוריה. **מנגנון סימן מים מחייב זריעה מפורשת לפני התזמון הראשון.**
+
+**היעדר ממצא במסד אינו ראיה להיעדר מנגנון.** מנגנון המייל הקיים לא נמצא בסקירת המסד משום שהוא חי ב־`GitHub Actions`, וכתובת הנמען יושבת בסוד ולא בקוד. **סודות אינם ניתנים לחיפוש.**
+
+**שם קובץ גיבוי אינו עדות למה שהשתנה.** `before_pushover` הבטיח שינוי `Pushover` והכיל שורת סוד בלבד.
+
+**ברירת מחדל של הרצה ידנית חייבת להיות הבטוחה.** `dry_run` מוגדר `"1"` בהרצה ידנית, `"0"` בהרצה מתוזמנת.
+
+**הוראות ביצוע מופרדות מהסבר.** פקודה להרצה עומדת בבלוק נפרד, בלי לוגיקה משולבת.
+
+**`git add` על קובץ בלי `git status` תחילה** גרר 1,512 שורות לא־מבוקרות למאגר ציבורי.
+
+**תיעוד אינו מקום למזהים אמיתיים.**
+
+**כל `fetch` יוצא מפונקציית קצה חייב מגבלת זמן.**
+
+**`limit` בלי `order by` אינו חיתוך — הוא הגרלה.**
+
+### ניקוי מיותרים במסד — עתידי, לא הותחל
+
+סדר מחייב: גיבוי מלא -> ורק אז מחיקה.
+במסד אין היסטוריה. DROP או CREATE OR REPLACE משמידים
+את העותק היחיד של גוף הפונקציה.
+
+היקף מאומת 7.8.2026:
+96 פונקציות בסכמה public, מהן 76 SECURITY DEFINER.
+כ-110,656 תווים, כ-2,800 שורות SQL.
+במאגר קיימות 4 בלבד, בשלושה קבצי SQL תחת
+supabase/migrations שלא עודכנו מאז 18.5.2026.
+92 פונקציות קיימות במסד ובו בלבד.
+
+כלי זיהוי — מאומת מה עובד ומה לא:
+- track_functions = none. פונקציות אינן נמדדות כלל,
+  pg_stat_user_functions ריקה. אין דרך לדעת אילו
+  פונקציות נקראו אי פעם.
+- pg_stat_user_tables פעילה על 81 טבלאות, ו-stats_reset
+  ריק. לכן טבלה עם אפס קריאות לא נקראה מעולם —
+  ראיה חזקה, לא השערה משם הטבלה.
+- תלויות במסד וחיפוש טקסטואלי בגופי כל הפונקציות
+  תופסים קריאות פנימיות במדויק.
+
+גבול קשיח: קוראים בקנבס של Landbot, בפונקציות הקצה
+וב-GitHub Actions אינם נראים במסד לעולם. היעדר קורא
+במסד אינו ראיה לנטישה — זה הכשל שאירע בסשן הזה.
+
+מועמדים ראשונים: תשע הטבלאות הישנות, PROJECT_GUIDE
+סעיף 4.6.
+
+---
+
+## 6. עדכון 8.8.2026 — מסלול טיפול בשני מסלולי הסנכרון
+
+### נסגר
+
+פריט 15 — `upsert_psychologist_from_sheet`, שתי חתימות. **סגור.**
+במסד חתימה אחת, `oid 320400`, שבעה פרמטרים.
+
+המשימה המתוכננת "התאמת מסלול הסנכרון מהגיליונות" — **הושלמה בשני הצדדים.**
+
+### תוקן
+
+הטענה "הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס את החלוקה
+הנוכחית" — **שגויה** לגבי `therapy_track`. שתי פונקציות הסנכרון מונות
+עמודות במפורש ב-`on conflict do update set` ואינן דורסות ערך קיים.
+הסיכון האמיתי הפוך: שורה חדשה מקבלת ברירת מחדל בשקט.
+
+**מיקום הנוסח השגוי:** הוא חוזר 28 פעמים בתוך הבלוק "מסלול טיפול —
+7.8.2026" שלהלן, ולא נגעתי בו. תיקונו במקום הוא חלק ממשימת איחוד
+הכפילויות, שהוצאה במפורש מגבולות המשימה הזו.
+
+### נפתח
+
+30. **תוכן קליני חסר.** `clinic_therapist` 84 תווים, `clinic_pre_patient`
+    92 תווים. מחזיקי מקום. **אין להעביר מטופל אמיתי ל־**`CLINIC`.
+31. **שני מטופלי בדיקה כבר במסלול** `CLINIC` — `222***222` ו-`444***444`.
+    שניהם `active = yes`.
+32. **`course_guide` איבדה תו אחד** בסנכרון של 8.8. לא הוסבר. הערך שלפני
+    קיים בשני הגיבויים.
+33. **ארבע שורות בטבלת הפרומפטים אינן נקראות:** `therapist`,
+    `pre_patient`, `nlp_corrector`, `clinic_corrector`. אין סימון שמבחין
+    ביניהן. **הוצע לסמן** `[לא בשימוש]` **בעמודת** `description` — טרם
+    בוצע.
+34. **הגיליונות עדיין מחזיקים רווחים מובילים.** בלתי מזיק — הפונקציה
+    מנקה בכניסה.
+35. **`SESSION_HANDOFF.md` מכיל את הבלוק "מסלול טיפול — 7.8.2026" 28
+    פעמים.** שרשור חוזר, ככל הנראה מ-`tools/log_append.ps1` שאינו במעקב.
+    **לא אומת.** הקובץ תפח ל-40,463 תווים כשהתוכן הייחודי הוא כרבע מזה.
+
+---
+
+### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.### מסלול טיפול — 7.8.2026
+
+בנוי ופעיל. הבחירה יושבת ב-get_prompt_v2 במסד.
+הקנבס מעביר מסלול ואינו מכיר את שמות הפרומפטים.
+
+מוסכם במפורש: הקורקטור משותף לשני המסלולים.
+runtime-corrected-response שולפת את השורה corrector
+בשאילתה קשיחה ואינה עוברת דרך get_prompt_v2.
+זהו החריג היחיד, והוא בהחלטה.
+
+כללי עריכת פרומפט מכאן והלאה:
+  מסלול NLP_CBT — לערוך בשורות nlp_
+  מסלול CLINIC — לערוך בשורות clinic_
+  הקורקטור — לערוך בשורה corrector בלבד
+  שלוש השורות המקוריות therapist ו-pre_patient אינן
+  נקראות עוד. אין למחוק אותן.
+
+## מתוכנן
+
+מחר — התאמת מסלול הסנכרון מהגיליונות:
+  שתי פונקציות הסנכרון אינן כותבות therapy_track
+  הגיליונות מחזיקים שיוכי מטופלים ישנים; סנכרון ידרוס
+  את החלוקה הנוכחית
+  הפסיכולוג שנוסף היום אינו קיים בגיליון
+  אכיפת התאמה מטופל/מטפל תמומש כאן, בשלב העדכון
+  להכריע מראש: האם הגיליון הופך למקור לערך המסלול
+
+תוכן קליני אמיתי לשתי השורות הנבחרות בפועל.
+עד אז אין להעביר מטופל אמיתי למסלול הקליני.
+
+ניקוי מיותרים במסד — גיבוי מלא לפני כל מחיקה.
+96 פונקציות בסכמה public, 4 מהן במאגר.
+track_functions = none, ולכן אין מדידת קריאות לפונקציות.
+pg_stat_user_tables פעילה ו-stats_reset ריק, ולכן טבלה
+עם אפס קריאות לא נקראה מעולם.
