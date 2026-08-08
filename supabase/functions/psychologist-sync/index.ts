@@ -104,6 +104,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
           p_active: active,
           p_organization: row.organization != null && row.organization !== '' ? String(row.organization) : null,
           p_text: row.text != null && row.text !== '' ? String(row.text) : null,
+          p_therapy_track: row.therapy_track != null && row.therapy_track !== ''
+            ? String(row.therapy_track) : null,
         }),
       });
 
@@ -112,6 +114,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
         try { errorBody = await rpcResponse.text(); } catch { errorBody = ""; }
         const errorMessage = /invalid_phone/.test(errorBody) ? "row_invalid_phone"
           : /email_required/.test(errorBody) ? "row_missing_email"
+          : /has_conflicting_patients/.test(errorBody) ? "row_track_conflict"
+          : /therapy_track_required/.test(errorBody) ? "row_missing_track"
+          : /invalid_therapy_track/.test(errorBody) ? "row_invalid_track"
           : `rpc_http_${rpcResponse.status}`;
         console.error(JSON.stringify({
           event: "psychologist_sync_row_failed",
