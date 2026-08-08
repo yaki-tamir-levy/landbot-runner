@@ -144,6 +144,7 @@ for (let i = 0; i < rows.length; i++) {
       p_active: getOptionalText(row, "active"),
       p_status: getOptionalText(row, "status"),
       p_psychologist: getOptionalText(row, "psychologist"),
+      p_therapy_track: getOptionalText(row, "therapy_track"),
     });
 
     if (error) {
