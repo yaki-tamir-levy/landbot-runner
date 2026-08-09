@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>שיחת היכרות</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@400;500&family=Assistant:wght@300;400;600&display=swap" rel="stylesheet">
+
+<style>
+:root{
+  --ground:#E9E6E1;
+  --surface:#FCFBF9;
+  --ink:#23201E;
+  --muted:#6E6862;
+  --hairline:#D2CDC5;
+  --accent:#55506B;
+  --accent-soft:#EAE7EF;
+  --warn:#7A3B34;
+  --ok:#4F6B57;
+
+  --display:"Frank Ruhl Libre", "Noto Serif Hebrew", Georgia, serif;
+  --body:"Assistant", "Segoe UI", system-ui, sans-serif;
+
+  --col:38rem;
+  --step:1.5rem;
+}
+
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:var(--body);
+  font-weight:400;
+  font-size:17px;
+  line-height:1.7;
+  min-height:100dvh;
+  display:flex;
+  flex-direction:column;
+}
+
+.shell{
+  width:100%;
+  max-width:var(--col);
+  margin:0 auto;
+  padding:0 1.25rem;
+  flex:1 1 auto;
+  display:flex;
+  flex-direction:column;
+}
+
+/* ---------- כותרת ---------- */
+
+.masthead{
+  padding:3rem 0 1.75rem;
+}
+.masthead h1{
+  font-family:var(--display);
+  font-weight:500;
+  font-size:2.1rem;
+  line-height:1.25;
+  margin:0 0 .6rem;
+  letter-spacing:-.01em;
+}
+.masthead p{
+  margin:0;
+  color:var(--muted);
+  font-weight:300;
+  font-size:1.02rem;
+  max-width:32rem;
+}
+
+/* ---------- שלב הזיהוי ---------- */
+
+.panel{
+  background:var(--surface);
+  border:1px solid var(--hairline);
+  border-radius:2px;
+  padding:1.75rem 1.5rem 1.5rem;
+  margin-bottom:2rem;
+}
+
+.lede{
+  margin:0 0 1.75rem;
+  padding-bottom:1.4rem;
+  border-bottom:1px solid var(--hairline);
+  font-weight:300;
+  font-size:1rem;
+  line-height:1.75;
+  color:#4A4642;
+}
+
+.field{margin-bottom:1.1rem}
+.field label{
+  display:block;
+  font-size:.85rem;
+  font-weight:600;
+  letter-spacing:.02em;
+  margin-bottom:.35rem;
+}
+.field input{
+  width:100%;
+  font-family:var(--body);
+  font-size:1rem;
+  padding:.7rem .8rem;
+  border:1px solid var(--hairline);
+  border-radius:2px;
+  background:#fff;
+  color:var(--ink);
+}
+.field input:focus{
+  outline:2px solid var(--accent);
+  outline-offset:1px;
+  border-color:var(--accent);
+}
+.field .hint{
+  display:block;
+  font-size:.8rem;
+  color:var(--muted);
+  margin-top:.3rem;
+  font-weight:300;
+}
+.field .err{
+  display:none;
+  font-size:.85rem;
+  color:var(--warn);
+  margin-top:.35rem;
+}
+.field.invalid .err{display:block}
+.field.invalid input{border-color:var(--warn)}
+
+button{
+  font-family:var(--body);
+  font-size:1rem;
+  font-weight:600;
+  cursor:pointer;
+  border-radius:2px;
+}
+.primary{
+  background:var(--accent);
+  color:#fff;
+  border:1px solid var(--accent);
+  padding:.75rem 1.5rem;
+}
+.primary:hover{background:#454063}
+.primary:disabled{opacity:.5;cursor:default}
+.primary:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+
+/* ---------- הודעת חסימה ---------- */
+
+.notice{
+  border-inline-start:3px solid var(--warn);
+  background:var(--surface);
+  padding:1.1rem 1.2rem;
+  margin-bottom:2rem;
+}
+.notice h2{
+  font-family:var(--display);
+  font-size:1.15rem;
+  margin:0 0 .4rem;
+  font-weight:500;
+}
+.notice p{margin:0;color:var(--muted);font-weight:300;font-size:.95rem}
+
+/* ---------- השיחה ---------- */
+
+.thread{
+  position:relative;
+  padding-inline-end:1.6rem;
+  flex:1 1 auto;
+}
+/* החוט: קו אנכי שגדל עם השיחה */
+.thread::before{
+  content:"";
+  position:absolute;
+  inset-block:0;
+  inset-inline-end:.45rem;
+  width:1px;
+  background:var(--hairline);
+}
+
+.turn{
+  position:relative;
+  margin-bottom:var(--step);
+  animation:rise .45s ease both;
+}
+.turn::before{
+  content:"";
+  position:absolute;
+  inset-inline-end:-1.32rem;
+  top:.75rem;
+  width:.55rem;
+  height:1px;
+  background:var(--hairline);
+}
+.turn.system::before{background:var(--accent)}
+
+@keyframes rise{
+  from{opacity:0;transform:translateY(.4rem)}
+  to{opacity:1;transform:none}
+}
+
+.turn .who{
+  font-size:.72rem;
+  letter-spacing:.09em;
+  color:var(--muted);
+  font-weight:600;
+  margin-bottom:.2rem;
+}
+/* ההבחנה בין הקולות נעשית בגופן, לא בבועות */
+.turn.system .text{
+  font-family:var(--display);
+  font-size:1.12rem;
+  line-height:1.65;
+}
+.turn.candidate .text{
+  font-family:var(--body);
+  font-weight:300;
+  color:#3B3733;
+  padding-inline-start:.9rem;
+  border-inline-start:2px solid var(--accent-soft);
+}
+.text{white-space:pre-wrap}
+
+.thinking{
+  display:flex;
+  gap:.3rem;
+  align-items:center;
+  padding:.4rem 0 var(--step);
+}
+.thinking span{
+  width:.36rem;height:.36rem;border-radius:50%;
+  background:var(--accent);opacity:.35;
+  animation:pulse 1.4s ease-in-out infinite;
+}
+.thinking span:nth-child(2){animation-delay:.2s}
+.thinking span:nth-child(3){animation-delay:.4s}
+@keyframes pulse{0%,100%{opacity:.25}50%{opacity:.85}}
+
+/* ---------- תיבת הכתיבה ---------- */
+
+.composer{
+  position:sticky;
+  bottom:0;
+  background:linear-gradient(to top, var(--ground) 72%, rgba(233,230,225,0));
+  padding:1rem 0 1.1rem;
+}
+.composer-inner{
+  display:flex;
+  gap:.6rem;
+  align-items:flex-end;
+  background:var(--surface);
+  border:1px solid var(--hairline);
+  border-radius:2px;
+  padding:.55rem .65rem;
+}
+.composer textarea{
+  flex:1 1 auto;
+  border:0;
+  resize:none;
+  font-family:var(--body);
+  font-size:1rem;
+  line-height:1.6;
+  background:transparent;
+  color:var(--ink);
+  max-height:9rem;
+  min-height:2.6rem;
+  padding:.25rem;
+}
+.composer textarea:focus{outline:none}
+.composer-inner:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.send{
+  background:var(--accent);
+  color:#fff;
+  border:0;
+  padding:.55rem 1.05rem;
+  font-size:.92rem;
+}
+.send:disabled{opacity:.4;cursor:default}
+
+.composer .meta{
+  display:flex;
+  justify-content:space-between;
+  gap:1rem;
+  font-size:.78rem;
+  color:var(--muted);
+  font-weight:300;
+  margin-top:.45rem;
+}
+.leave{
+  background:none;border:0;color:var(--muted);
+  font-size:.78rem;font-weight:400;text-decoration:underline;
+  padding:0;
+}
+
+/* ---------- סיום איסוף ---------- */
+
+.closing{
+  border:1px solid var(--accent);
+  background:var(--accent-soft);
+  padding:1.3rem 1.3rem;
+  margin:.5rem 0 2rem;
+}
+.closing h2{
+  font-family:var(--display);
+  font-size:1.25rem;
+  margin:0 0 .5rem;
+  font-weight:500;
+}
+.closing p{margin:0 0 .5rem;font-weight:300;font-size:.97rem;color:#4A4653}
+.closing p:last-child{margin-bottom:0}
+
+/* ---------- תחתית ---------- */
+
+footer{
+  border-top:1px solid var(--hairline);
+  margin-top:1rem;
+  padding:1rem 0 2rem;
+  font-size:.82rem;
+  color:var(--muted);
+  font-weight:300;
+}
+footer strong{font-weight:600;color:var(--ink)}
+
+.hidden{display:none !important}
+
+@media (max-width:480px){
+  body{font-size:16px}
+  .masthead{padding:2rem 0 1.25rem}
+  .masthead h1{font-size:1.75rem}
+  .panel{padding:1.25rem 1rem}
+}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation:none !important;transition:none !important}
+}
+</style>
+</head>
+
+<body>
+<div class="shell">
+
+  <header class="masthead">
+    <h1>שיחת היכרות</h1>
+    <p>לפני שנוכל לצרף אותך, נכיר אותך קצת. השיחה נשמרת, ואפשר לחזור אליה.</p>
+  </header>
+
+  <main id="main">
+
+    <!-- ========== שלב 1: זיהוי ========== -->
+    <section id="stage-identify" class="panel" aria-labelledby="identify-title">
+      <h2 id="identify-title" class="hidden">פרטי התחלה</h2>
+
+      <p class="lede">
+        בשיחה הבאה תספר על עצמך בחופשיות — אין טופס ואין רשימת שאלות קבועה.
+        כשייאסף מספיק, נודיע לך; לכן אין כאן כפתור סיום. איסוף הפרטים אינו קבלה:
+        המועמדות תישקל לאחר מכן, והעדכון יישלח לדוא"ל שתמסור. אפשר לפרוש בכל רגע,
+        ומה שנמסר עד אז נשמר.
+      </p>
+
+      <div class="field" id="f-name">
+        <label for="in-name">שם מלא</label>
+        <input id="in-name" type="text" autocomplete="name" spellcheck="false">
+        <span class="err">יש למלא שם.</span>
+      </div>
+
+      <div class="field" id="f-phone">
+        <label for="in-phone">טלפון נייד</label>
+        <input id="in-phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="05X-XXXXXXX">
+        <span class="hint">משמש כמזהה שלך במערכת.</span>
+        <span class="err">מספר נייד ישראלי בן עשר ספרות.</span>
+      </div>
+
+      <div class="field" id="f-email">
+        <label for="in-email">דוא"ל</label>
+        <input id="in-email" type="email" autocomplete="email" spellcheck="false">
+        <span class="hint">כל עדכון בהמשך יישלח לכתובת הזו.</span>
+        <span class="err">כתובת דוא"ל לא תקינה.</span>
+      </div>
+
+      <button class="primary" id="btn-start" type="button">התחלת השיחה</button>
+      <p class="hint" id="identify-status" role="status" style="margin-top:.8rem"></p>
+    </section>
+
+    <!-- ========== מצב: המספר תפוס ========== -->
+    <section id="stage-blocked" class="notice hidden" aria-labelledby="blocked-title">
+      <h2 id="blocked-title">המספר הזה כבר רשום</h2>
+      <p id="blocked-text"></p>
+    </section>
+
+    <!-- ========== שלב 2: השיחה ========== -->
+    <section id="stage-talk" class="hidden" aria-labelledby="talk-title">
+      <h2 id="talk-title" class="hidden">השיחה</h2>
+
+      <div class="thread" id="thread" aria-live="polite" aria-atomic="false"></div>
+
+      <div class="thinking hidden" id="thinking" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+
+      <div id="closing" class="closing hidden">
+        <h2>אספנו את כל מה שנדרש</h2>
+        <p>המועמדות שלך תישקל. נעדכן אותך בדוא"ל, ואפשר גם לחזור לכאן ולבדוק.</p>
+        <p>אין צורך לעשות דבר נוסף כעת.</p>
+      </div>
+
+      <div class="composer" id="composer">
+        <div class="composer-inner">
+          <textarea id="in-msg" rows="1" placeholder="כתוב כאן…" aria-label="ההודעה שלך"></textarea>
+          <button class="send" id="btn-send" type="button">שליחה</button>
+        </div>
+        <div class="meta">
+          <span id="send-status" role="status"></span>
+          <button class="leave" id="btn-leave" type="button">אפשר לפרוש</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <strong>במצוקה מיידית</strong> — ער"ן 1201 · נט"ל 1-800-363-363 · מוקד חירום 101.
+    השיחה כאן אינה טיפול ואינה מענה חירום.
+  </footer>
+
+</div>
+
+<script>
+/* =========================================================================
+   שכבת השיחה בלבד.
+   הדף אינו פונה למסד ואינו מחזיק שום מפתח.
+   כל פנייה עוברת דרך נקודת קצה אחת בצד השרת.
+   ========================================================================= */
+
+const CONFIG = {
+  // כתובת הבסיס של פונקציית השרת. ריק = מצב הדגמה.
+  API_BASE: "",
+  ENDPOINT_CHECK: "/intake-check",
+  ENDPOINT_TALK:  "/intake-talk",
+  MAX_CHARS: 1200
+};
+
+const MOCK = !CONFIG.API_BASE;
+
+const S = {
+  candidate: null,      // { name, phone, email }
+  messages: [],         // [{ role:'system'|'candidate', text }]
+  collecting: true,
+  busy: false
+};
+
+/* ---------- עזר ---------- */
+
+const $ = id => document.getElementById(id);
+
+function normalizePhone(raw){
+  const d = String(raw || "").replace(/\D/g, "");
+  if (/^972\d{9}$/.test(d)) return "0" + d.slice(3);
+  return d;
+}
+function validPhone(raw){ return /^05\d{8}$/.test(normalizePhone(raw)); }
+function validEmail(raw){ return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(raw||"").trim()); }
+
+function setInvalid(fieldId, bad){
+  $(fieldId).classList.toggle("invalid", !!bad);
+}
+
+/* ---------- ציור השיחה ---------- */
+
+function addTurn(role, text){
+  S.messages.push({ role, text });
+
+  const el = document.createElement("div");
+  el.className = "turn " + (role === "system" ? "system" : "candidate");
+
+  const who = document.createElement("div");
+  who.className = "who";
+  who.textContent = role === "system" ? "המערכת" : "אתה";
+
+  const body = document.createElement("div");
+  body.className = "text";
+  body.textContent = text;
+
+  el.appendChild(who);
+  el.appendChild(body);
+  $("thread").appendChild(el);
+
+  el.scrollIntoView({ behavior: "smooth", block: "end" });
+}
+
+function thinking(on){
+  $("thinking").classList.toggle("hidden", !on);
+  $("thinking").setAttribute("aria-hidden", String(!on));
+}
+
+function lockComposer(on){
+  S.busy = on;
+  $("btn-send").disabled = on;
+  $("in-msg").disabled = on;
+}
+
+/* ---------- שלב 1 ---------- */
+
+async function startConversation(){
+  const name  = $("in-name").value.trim();
+  const phone = $("in-phone").value.trim();
+  const email = $("in-email").value.trim();
+
+  const badName  = name.length < 2;
+  const badPhone = !validPhone(phone);
+  const badEmail = !validEmail(email);
+
+  setInvalid("f-name", badName);
+  setInvalid("f-phone", badPhone);
+  setInvalid("f-email", badEmail);
+  if (badName || badPhone || badEmail) return;
+
+  $("btn-start").disabled = true;
+  $("identify-status").textContent = "בודק את המספר…";
+
+  const normalized = normalizePhone(phone);
+
+  try {
+    const res = await checkPhone(normalized, email);
+
+    if (res.state === "taken") {
+      $("stage-identify").classList.add("hidden");
+      $("blocked-text").textContent =
+        "המספר משויך כבר למשתמש קיים, ולכן אי אפשר לפתוח דרכו שיחת היכרות. " +
+        "אם המספר שלך ואינך מצליח להיכנס — פנה לגורם שצירף אותך. " +
+        "אם הוקלד בטעות, רענן את הדף ונסה שוב.";
+      $("stage-blocked").classList.remove("hidden");
+      return;
+    }
+
+    S.candidate = { name, phone: normalized, email };
+    $("stage-identify").classList.add("hidden");
+    $("stage-talk").classList.remove("hidden");
+    $("in-msg").focus();
+
+    thinking(true);
+    const opening = await talk([]);
+    thinking(false);
+    addTurn("system", opening.text);
+
+  } catch (e) {
+    $("identify-status").textContent = "לא הצלחנו לפתוח את השיחה. נסה שוב בעוד רגע.";
+    $("btn-start").disabled = false;
+  }
+}
+
+/* ---------- שלב 2 ---------- */
+
+async function send(){
+  if (S.busy || !S.collecting) return;
+
+  const raw = $("in-msg").value.trim();
+  if (!raw) return;
+
+  if (raw.length > CONFIG.MAX_CHARS){
+    $("send-status").textContent = "ההודעה ארוכה מדי. נסה לקצר.";
+    return;
+  }
+
+  $("send-status").textContent = "";
+  $("in-msg").value = "";
+  $("in-msg").style.height = "auto";
+  addTurn("candidate", raw);
+
+  lockComposer(true);
+  thinking(true);
+
+  try {
+    const res = await talk(S.messages);
+    thinking(false);
+    addTurn("system", res.text);
+
+    if (res.collection_complete){
+      S.collecting = false;
+      $("composer").classList.add("hidden");
+      $("closing").classList.remove("hidden");
+      $("closing").scrollIntoView({ behavior:"smooth", block:"center" });
+    }
+  } catch (e) {
+    thinking(false);
+    $("send-status").textContent = "ההודעה לא נשלחה. נסה שוב.";
+  } finally {
+    lockComposer(false);
+    if (S.collecting) $("in-msg").focus();
+  }
+}
+
+function leave(){
+  $("composer").classList.add("hidden");
+  addTurn("system", "מה שסיפרת נשמר. אפשר לחזור לכאן בכל עת ולהמשיך מאותה נקודה.");
+}
+
+/* =========================================================================
+   שכבת הרשת — נקודת החיבור היחידה לצד השרת
+   ========================================================================= */
+
+async function checkPhone(phone, email){
+  if (MOCK) return mockCheck(phone);
+  const r = await fetch(CONFIG.API_BASE + CONFIG.ENDPOINT_CHECK, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ phone, email })
+  });
+  if (!r.ok) throw new Error("check failed");
+  return r.json();                     // { state: "open" | "taken" }
+}
+
+async function talk(messages){
+  if (MOCK) return mockTalk(messages);
+  const r = await fetch(CONFIG.API_BASE + CONFIG.ENDPOINT_TALK, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify({ candidate: S.candidate, messages })
+  });
+  if (!r.ok) throw new Error("talk failed");
+  return r.json();                     // { text, collection_complete }
+}
+
+/* =========================================================================
+   מצב הדגמה — לבדיקת הזרימה בלבד. אין בו מודל ואין בו היגיון אמיתי.
+   ========================================================================= */
+
+const MOCK_TAKEN = "0500000000";
+
+const MOCK_SCRIPT = [
+  "נעים להכיר. ספר לי בבקשה מה הביא אותך לפנות דווקא עכשיו.",
+  "תודה. כמה זמן זה נמשך?",
+  "האם היית בטיפול בעבר — ואם כן, מה עבד ומה פחות?",
+  "מי נמצא סביבך היום? משפחה, חברים, מישהו שאפשר לדבר איתו.",
+  "מה גילך ואיפה אתה גר?",
+  "ובאיזה שעות ביום נוח לך לשוחח?"
+];
+
+function delay(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+async function mockCheck(phone){
+  await delay(600);
+  return { state: phone === MOCK_TAKEN ? "taken" : "open" };
+}
+
+async function mockTalk(messages){
+  await delay(900);
+  const asked = messages.filter(m => m.role === "system").length;
+
+  if (asked === 0){
+    return {
+      text: "שלום " + S.candidate.name.split(" ")[0] + ". " + MOCK_SCRIPT[0],
+      collection_complete: false
+    };
+  }
+  if (asked < MOCK_SCRIPT.length){
+    return { text: MOCK_SCRIPT[asked], collection_complete: false };
+  }
+  return {
+    text: "תודה. יש לי את כל מה שנדרש בשלב הזה.",
+    collection_complete: true
+  };
+}
+
+/* ---------- חיווט ---------- */
+
+$("btn-start").addEventListener("click", startConversation);
+$("btn-send").addEventListener("click", send);
+$("btn-leave").addEventListener("click", leave);
+
+$("in-msg").addEventListener("input", e => {
+  e.target.style.height = "auto";
+  e.target.style.height = Math.min(e.target.scrollHeight, 144) + "px";
+});
+
+$("in-msg").addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey){
+    e.preventDefault();
+    send();
+  }
+});
+
+["in-name","in-phone","in-email"].forEach(id => {
+  $(id).addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); startConversation(); }
+  });
+});
+</script>
+</body>
+</html>
