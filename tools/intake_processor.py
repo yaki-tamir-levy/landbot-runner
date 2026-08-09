@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""
+intake_processor — המהלך המושהה של מסלול הקבלה.
+
+רץ אחת לרבע שעה מתוך GitHub Actions ומבצע, בסדר הזה:
+  1. איסוף שיחות שהסתיימו (15 דקות ללא הודעה)
+  2. לכל מועמד ממתין: קריאה למודל עם פרומפט ההכרעה
+  3. ספירת חוסרים בקוד -> קבלה או פסילה
+  4. יישום ההכרעה במסד
+  5. התראות: אדמין על הכול, יונתן על מי שהתקבל
+
+הכרעה נעשית בקוד. המודל מחלץ בלבד.
+כשל בקריאה או בפענוח = מבנה ריק = חסר = פסילה. לעולם לא אישור.
+
+משתני סביבה נדרשים:
+  SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENAI_API_KEY
+  GMAIL_USER, GMAIL_APP_PASSWORD
+  ADMIN_EMAIL, YONATAN_EMAIL
+  INTAKE_MODEL (רשות, ברירת מחדל gpt-5.4)
+"""
+
+import json
+import os
+import smtplib
+import sys
+from email.mime.text import MIMEText
+from email.utils import formataddr
+
+import requests
+
+SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
+SERVICE_KEY  = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+OPENAI_KEY   = os.environ["OPENAI_API_KEY"]
+MODEL        = os.environ.get("INTAKE_MODEL", "gpt-5.4")
+
+GMAIL_USER   = os.environ["GMAIL_USER"]
+GMAIL_PASS   = os.environ["GMAIL_APP_PASSWORD"]
+ADMIN_EMAIL  = os.environ["ADMIN_EMAIL"]
+YONATAN_EMAIL = os.environ["YONATAN_EMAIL"]
+
+IDLE_MINUTES = 15
+
+# שדות החובה. שינוי כאן משנה את קריטריון הקבלה.
+REQUIRED = ["age", "family_status", "household", "area", "occupation", "reason_for_coming"]
+
+ALL_FIELDS = REQUIRED + [
+    "duration", "daily_impact", "prior_therapy", "support", "expectations",
+]
+
+BACKGROUND_MAX = 900
+
+
+# ---------------------------------------------------------------- מסד
+
+def rpc(fn, args=None):
+    r = requests.post(
+        f"{SUPABASE_URL}/rest/v1/rpc/{fn}",
+        headers={
+            "Content-Type": "application/json",
+            "apikey": SERVICE_KEY,
+            "Authorization": f"Bearer {SERVICE_KEY}",
+        },
+        json=args or {},
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json() if r.text else None
+
+
+def get_prompt(key):
+    """דרך הפונקציה הרגילה בלבד. אין שאילתה ישירה לטבלת הפרומפטים."""
+    text = rpc("get_prompt_v2", {"p_prompt_key": key})
+    if not text:
+        raise RuntimeError(f"prompt '{key}' missing or empty")
+    return text
+
+
+# ---------------------------------------------------------------- מודל
+
+EMPTY = {f: "" for f in ALL_FIELDS}
+EMPTY.update({"missing": list(ALL_FIELDS), "background": "", "explicit_risk_statement": False})
+
+
+def extract(prompt, talk):
+    """מחזיר תמיד מבנה תקין. כשל מכל סוג -> מבנה ריק."""
+    try:
+        r = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {OPENAI_KEY}",
+            },
+            json={
+                "model": MODEL,
+                "temperature": 0,
+                "max_tokens": 1200,
+                "messages": [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": talk},
+                ],
+            },
+            timeout=120,
+        )
+        r.raise_for_status()
+        raw = r.json()["choices"][0]["message"]["content"].strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("not an object")
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  extraction failed -> treated as empty: {e}", file=sys.stderr)
+        return dict(EMPTY)
+
+    out = {f: str(data.get(f, "") or "").strip() for f in ALL_FIELDS}
+    out["background"] = str(data.get("background", "") or "").strip()[:BACKGROUND_MAX]
+    out["explicit_risk_statement"] = bool(data.get("explicit_risk_statement", False))
+
+    # רשימת החוסרים נגזרת בקוד, לא מהמודל. הוא עלול לטעות בה.
+    out["missing"] = [f for f in ALL_FIELDS if not out[f]]
+    return out
+
+
+def decide(fields):
+    """דטרמיניסטי. כל שדות החובה מלאים -> קבלה."""
+    return all(fields[f] for f in REQUIRED)
+
+
+# ---------------------------------------------------------------- התראות
+
+def send_mail(to_addr, subject, body):
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = formataddr(("Intake", GMAIL_USER))
+    msg["To"] = to_addr
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+        smtp.login(GMAIL_USER, GMAIL_PASS)
+        smtp.send_message(msg)
+
+
+def notify(result, accepted, missing, risk):
+    name  = result.get("name") or "(ללא שם)"
+    phone = result.get("phone") or "(ללא טלפון)"
+    email = result.get("email") or "(ללא דוא\"ל)"
+
+    status = "התקבל" if accepted else "נפסל"
+    lines = [
+        f"מועמד {status}",
+        "",
+        f"שם: {name}",
+        f"טלפון: {phone}",
+        f'דוא"ל: {email}',
+    ]
+    if not accepted and missing:
+        lines += ["", "פרטים חסרים: " + ", ".join(missing)]
+    if risk:
+        lines += ["", "*** נאמרה אמירה מפורשת על פגיעה עצמית ***"]
+
+    body = "\n".join(lines)
+
+    send_mail(ADMIN_EMAIL, f"[Intake] מועמד {status}: {name}", body)
+    if accepted:
+        send_mail(YONATAN_EMAIL, f"[Intake] מטופל חדש: {name}", body)
+
+
+# ---------------------------------------------------------------- ראשי
+
+def main():
+    swept = rpc("intake_sweep", {"p_idle_minutes": IDLE_MINUTES})
+    print(f"swept conversations: {swept}")
+
+    pending = rpc("intake_pending") or []
+    print(f"pending candidates: {len(pending)}")
+    if not pending:
+        return
+
+    prompt = get_prompt("intake_decision")
+
+    for cand in pending:
+        phone_hash = cand["phone_hash"]
+        talk = cand.get("talk") or ""
+        short = phone_hash[:8]
+
+        try:
+            fields = extract(prompt, talk)
+            accepted = decide(fields)
+            decision = "ACCEPTED" if accepted else "REJECTED"
+
+            result = rpc("intake_apply_decision", {
+                "p_phone_hash": phone_hash,
+                "p_decision":   decision,
+                "p_missing":    fields["missing"],
+                "p_background": fields["background"],
+                "p_risk":       fields["explicit_risk_statement"],
+            })
+
+            print(f"  {short}: {decision} (missing: {len(fields['missing'])})")
+
+            notify(result, accepted, fields["missing"], fields["explicit_risk_statement"])
+
+        except Exception as e:                               # noqa: BLE001
+            # כשל אינו מותיר מועמד תקוע בהמתנה נצחית — הוא מסומן לבדיקה
+            print(f"  {short}: ERROR {e}", file=sys.stderr)
+            try:
+                rpc("intake_mark_error", {"p_phone_hash": phone_hash})
+            except Exception:                                # noqa: BLE001
+                pass
+
+
+if __name__ == "__main__":
+    main()
