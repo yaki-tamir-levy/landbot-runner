@@ -42,17 +42,35 @@ GMAIL_PASS   = os.environ["GMAIL_APP_PASSWORD"]
 # הנמענים אינם הגדרה. הם נתון במסד, ונשלפים בזמן ריצה.
 ADMIN_EMAIL = None
 THERAPIST_EMAIL = None
+PATIENT_LINK = ""
 
 IDLE_MINUTES = 15
 
 # שדות החובה. שינוי כאן משנה את קריטריון הקבלה.
-REQUIRED = ["age", "family_status", "household", "area", "occupation", "reason_for_coming"]
+REQUIRED = [
+    "age", "family_status", "household", "area", "occupation",
+    "reason_for_coming", "duration", "daily_impact",
+]
 
 ALL_FIELDS = REQUIRED + [
     "duration", "daily_impact", "prior_therapy", "support", "expectations",
 ]
 
 BACKGROUND_MAX = 900
+
+FIELD_HE = {
+    "age":               "גיל",
+    "family_status":     "מצב משפחתי",
+    "household":         "עם מי אתה גר",
+    "area":              "אזור מגורים",
+    "occupation":        "במה אתה עוסק",
+    "reason_for_coming": "מה הביא אותך לפנות",
+    "duration":          "כמה זמן זה נמשך",
+    "daily_impact":      "איך זה משפיע על היומיום",
+    "prior_therapy":     "טיפול קודם",
+    "support":           "מי נמצא סביבך",
+    "expectations":      "מה היית רוצה לקבל מהתהליך",
+}
 
 
 # ---------------------------------------------------------------- מסד
@@ -145,14 +163,34 @@ def decide(fields):
 
 # ---------------------------------------------------------------- התראות
 
-def send_mail(to_addr, subject, body):
-    msg = MIMEText(body, "plain", "utf-8")
-    msg["Subject"] = subject
-    msg["From"] = formataddr(("Intake", GMAIL_USER))
-    msg["To"] = to_addr
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
-        smtp.login(GMAIL_USER, GMAIL_PASS)
-        smtp.send_message(msg)
+def send_mail(to_addr, subject, body, hash8=None, who=""):
+    """שולח, ורושם ליומן בכל מקרה. כשל בשליחה אינו מפיל את הקורא."""
+    try:
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = formataddr(("Intake", GMAIL_USER))
+        msg["To"] = to_addr
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+            smtp.login(GMAIL_USER, GMAIL_PASS)
+            smtp.send_message(msg)
+        log_event("mail_sent", hash8, f"{who} -> {to_addr}")
+        return True
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  mail to {to_addr} failed: {e}", file=sys.stderr)
+        log_event("mail_failed", hash8, f"{who} -> {to_addr}: {str(e)[:200]}")
+        return False
+
+
+def log_event(stage, hash8=None, detail=None):
+    try:
+        rpc("intake_log", {
+            "p_stage": stage,
+            "p_phone_hash": hash8,
+            "p_conversation_id": None,
+            "p_detail": detail,
+        })
+    except Exception:                                        # noqa: BLE001
+        pass
 
 
 def notify(result, accepted, missing, risk):
@@ -175,10 +213,50 @@ def notify(result, accepted, missing, risk):
 
     body = "\n".join(lines)
 
+    hash8 = (result.get("phone") or "")[-4:]
+
     if ADMIN_EMAIL:
-        send_mail(ADMIN_EMAIL, f"[Intake] מועמד {status}: {name}", body)
+        send_mail(ADMIN_EMAIL, f"[Intake] מועמד {status}: {name}", body,
+                  hash8, "admin")
     if accepted and THERAPIST_EMAIL:
-        send_mail(THERAPIST_EMAIL, f"[Intake] מטופל חדש: {name}", body)
+        send_mail(THERAPIST_EMAIL, f"[Intake] מטופל חדש: {name}", body,
+                  hash8, "therapist")
+
+    # והודעה למועמד עצמו
+    cand_mail = result.get("email")
+    if cand_mail and accepted:
+        lines = [
+            f"שלום {name},",
+            "",
+            "תודה על השיחה. הפרטים שמסרת התקבלו, ואפשר להתחיל.",
+            "",
+            "המטפל הווירטואלי כבר מכיר את מה שסיפרת, כך שלא תצטרך להתחיל מההתחלה.",
+        ]
+        if PATIENT_LINK:
+            lines += ["", "הכניסה לשיחה:", PATIENT_LINK]
+        lines += ["", "מאחלים לך הצלחה."]
+        send_mail(cand_mail, "התקבלת — אפשר להתחיל", "\n".join(lines),
+                  hash8, "candidate")
+
+    if cand_mail and not accepted:
+        # רק שדות החובה החסרים. השאר רצויים, ואין טעם לבקש אותם כתנאי.
+        needed = [f for f in REQUIRED if f in (missing or [])]
+
+        lines = [
+            f"שלום {name},",
+            "",
+            "תודה על השיחה. כדי להשלים את הבדיקה חסרים עוד כמה פרטים.",
+        ]
+        if needed:
+            lines += ["", "מה שנשאר להשלים:"]
+            lines += [f"— {FIELD_HE.get(f, f)}" for f in needed]
+        lines += [
+            "",
+            "אפשר לחזור לאותו קישור ולהשלים אותם — השיחה תמשיך מהנקודה שבה הפסקת,",
+            "ולא תצטרך לספר הכול שוב.",
+        ]
+        send_mail(cand_mail, "נשארו כמה פרטים להשלים", "\n".join(lines),
+                  hash8, "candidate")
 
 
 # ---------------------------------------------------------------- ראשי
@@ -206,16 +284,19 @@ def notify_new_candidates():
             "טרם הוכרע. הודעה נפרדת תישלח עם התוצאה.",
         ])
         if ADMIN_EMAIL:
-            send_mail(ADMIN_EMAIL, f"[Intake] מועמד חדש: {c.get('name') or c.get('hash8')}", body)
+            send_mail(ADMIN_EMAIL,
+                      f"[Intake] מועמד חדש: {c.get('name') or c.get('hash8')}",
+                      body, c.get("hash8"), "admin-new")
     print(f"new candidate notices: {len(fresh)}")
 
 
 def load_recipients():
     """שליפת הנמענים מהמסד. חסר נמען אינו עוצר את העיבוד — רק את ההתראה."""
-    global ADMIN_EMAIL, THERAPIST_EMAIL
+    global ADMIN_EMAIL, THERAPIST_EMAIL, PATIENT_LINK
     r = rpc("intake_recipients") or {}
     ADMIN_EMAIL = r.get("admin_email")
     THERAPIST_EMAIL = r.get("therapist_email")
+    PATIENT_LINK = (r.get("patient_link") or "").strip()
     if not ADMIN_EMAIL:
         print("WARNING: no active admin with an email in psychologists_v2", file=sys.stderr)
     if not THERAPIST_EMAIL:
