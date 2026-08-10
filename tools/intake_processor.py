@@ -31,7 +31,8 @@ import requests
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SERVICE_KEY  = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 OPENAI_KEY   = os.environ["OPENAI_API_KEY"]
-MODEL        = os.environ.get("INTAKE_MODEL", "gpt-5.4")
+# משתנה ריק אינו חסר. or תופס גם ערך ריק, get עם ברירת מחדל לא היה תופס.
+MODEL        = os.environ.get("INTAKE_MODEL") or "gpt-5.4"
 
 GMAIL_USER   = os.environ["GMAIL_USER"]
 GMAIL_PASS   = os.environ["GMAIL_APP_PASSWORD"]
@@ -164,7 +165,27 @@ def notify(result, accepted, missing, risk):
 
 # ---------------------------------------------------------------- ראשי
 
+def notify_new_candidates():
+    """התראה לאדמין על כל מועמד שנכנס, לפני ובלי קשר להכרעה."""
+    fresh = rpc("intake_new_candidates") or []
+    for c in fresh:
+        body = "\n".join([
+            "מועמד חדש נכנס לשיחת היכרות",
+            "",
+            f"שם: {c.get('name') or '(ללא שם)'}",
+            f"טלפון: {c.get('phone') or '(ללא טלפון)'}",
+            "דוא\"ל: " + (c.get("email") or "(ללא דוא\"ל)"),
+            f"נכנס: {c.get('at')}",
+            "",
+            "טרם הוכרע. הודעה נפרדת תישלח עם התוצאה.",
+        ])
+        send_mail(ADMIN_EMAIL, f"[Intake] מועמד חדש: {c.get('name') or c.get('hash8')}", body)
+    print(f"new candidate notices: {len(fresh)}")
+
+
 def main():
+    notify_new_candidates()
+
     swept = rpc("intake_sweep", {"p_idle_minutes": IDLE_MINUTES})
     print(f"swept conversations: {swept}")
 
