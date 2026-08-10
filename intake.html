@@ -364,7 +364,7 @@ footer strong{font-weight:600;color:var(--ink)}
 <div class="shell">
 
   <header class="masthead">
-    <h1>שיחת היכרות <span class="ver">v5</span></h1>
+    <h1>שיחת היכרות <span class="ver">v6</span></h1>
     <p>כמה דקות של היכרות, כדי שמי שילווה אותך יכיר אותך מראש.</p>
   </header>
 
@@ -559,16 +559,15 @@ async function startConversation(){
     }
 
     S.candidate = { name, phone: normalized, email };
-    $("stage-identify").classList.add("hidden");
-    $("stage-talk").classList.remove("hidden");
 
-    thinking(true);
+    // המסך אינו מתחלף עד שיש מה להציג בו.
+    $("identify-status").textContent = "פותח את השיחה…";
+
     try {
       const opening = await openConversation();
 
       if (opening.state === "pending"){
-        thinking(false);
-        $("stage-talk").classList.add("hidden");
+        $("stage-identify").classList.add("hidden");
         $("blocked-title").textContent = "השיחה שלך כבר נשלחה לבדיקה";
         $("blocked-text").textContent =
           "אספנו את הפרטים ואנחנו בודקים אותם. נעדכן אותך בדוא\"ל, " +
@@ -578,19 +577,22 @@ async function startConversation(){
       }
 
       if (opening.state === "taken"){
-        thinking(false);
-        $("stage-talk").classList.add("hidden");
+        $("stage-identify").classList.add("hidden");
         $("stage-blocked").classList.remove("hidden");
         return;
       }
 
       S.conversationId = opening.conversation_id;
       S.missing = Array.isArray(opening.missing) ? opening.missing : [];
+
+      $("stage-identify").classList.add("hidden");
+      $("stage-talk").classList.remove("hidden");
       addTurn("system", opening.text);
+
     } catch (err) {
-      addTurn("system", "לא הצלחנו לפתוח את השיחה. נסה שוב בעוד רגע.");
-    } finally {
-      thinking(false);
+      $("identify-status").textContent =
+        "לא הצלחנו לפתוח את השיחה. נסה שוב בעוד רגע.";
+      $("btn-start").disabled = false;
     }
 
   } catch (e) {
