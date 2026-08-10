@@ -15,8 +15,10 @@ intake_processor — המהלך המושהה של מסלול הקבלה.
 משתני סביבה נדרשים:
   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, OPENAI_API_KEY
   GMAIL_USER, GMAIL_APP_PASSWORD
-  ADMIN_EMAIL, YONATAN_EMAIL
   INTAKE_MODEL (רשות, ברירת מחדל gpt-5.4)
+
+כתובות הנמענים נשלפות מהמסד: האדמין מטבלת הפסיכולוגים,
+והמטפל לפי ההגדרה intake_psychologist_phone.
 """
 
 import json
@@ -36,8 +38,10 @@ MODEL        = os.environ.get("INTAKE_MODEL") or "gpt-5.4"
 
 GMAIL_USER   = os.environ["GMAIL_USER"]
 GMAIL_PASS   = os.environ["GMAIL_APP_PASSWORD"]
-ADMIN_EMAIL  = os.environ["ADMIN_EMAIL"]
-YONATAN_EMAIL = os.environ["YONATAN_EMAIL"]
+
+# הנמענים אינם הגדרה. הם נתון במסד, ונשלפים בזמן ריצה.
+ADMIN_EMAIL = None
+THERAPIST_EMAIL = None
 
 IDLE_MINUTES = 15
 
@@ -158,9 +162,10 @@ def notify(result, accepted, missing, risk):
 
     body = "\n".join(lines)
 
-    send_mail(ADMIN_EMAIL, f"[Intake] מועמד {status}: {name}", body)
-    if accepted:
-        send_mail(YONATAN_EMAIL, f"[Intake] מטופל חדש: {name}", body)
+    if ADMIN_EMAIL:
+        send_mail(ADMIN_EMAIL, f"[Intake] מועמד {status}: {name}", body)
+    if accepted and THERAPIST_EMAIL:
+        send_mail(THERAPIST_EMAIL, f"[Intake] מטופל חדש: {name}", body)
 
 
 # ---------------------------------------------------------------- ראשי
@@ -179,11 +184,25 @@ def notify_new_candidates():
             "",
             "טרם הוכרע. הודעה נפרדת תישלח עם התוצאה.",
         ])
-        send_mail(ADMIN_EMAIL, f"[Intake] מועמד חדש: {c.get('name') or c.get('hash8')}", body)
+        if ADMIN_EMAIL:
+            send_mail(ADMIN_EMAIL, f"[Intake] מועמד חדש: {c.get('name') or c.get('hash8')}", body)
     print(f"new candidate notices: {len(fresh)}")
 
 
+def load_recipients():
+    """שליפת הנמענים מהמסד. חסר נמען אינו עוצר את העיבוד — רק את ההתראה."""
+    global ADMIN_EMAIL, THERAPIST_EMAIL
+    r = rpc("intake_recipients") or {}
+    ADMIN_EMAIL = r.get("admin_email")
+    THERAPIST_EMAIL = r.get("therapist_email")
+    if not ADMIN_EMAIL:
+        print("WARNING: no active admin with an email in psychologists_v2", file=sys.stderr)
+    if not THERAPIST_EMAIL:
+        print("WARNING: no email for the configured intake psychologist", file=sys.stderr)
+
+
 def main():
+    load_recipients()
     notify_new_candidates()
 
     swept = rpc("intake_sweep", {"p_idle_minutes": IDLE_MINUTES})
