@@ -14,8 +14,8 @@
 :root{
   --ground:#E9E6E1;
   --surface:#FCFBF9;
-  --ink:#23201E;
-  --muted:#6E6862;
+  --ink:#1A1714;
+  --muted:#5C5650;
   --hairline:#D2CDC5;
   --accent:#55506B;
   --accent-soft:#EAE7EF;
@@ -38,8 +38,8 @@ body{
   color:var(--ink);
   font-family:var(--body);
   font-weight:400;
-  font-size:17px;
-  line-height:1.7;
+  font-size:18px;
+  line-height:1.75;
   min-height:100dvh;
   display:flex;
   flex-direction:column;
@@ -104,10 +104,10 @@ body{
   margin:0 0 1.75rem;
   padding-bottom:1.4rem;
   border-bottom:1px solid var(--hairline);
-  font-weight:300;
-  font-size:1rem;
-  line-height:1.75;
-  color:#4A4642;
+  font-weight:400;
+  font-size:1.02rem;
+  line-height:1.8;
+  color:#3A3632;
 }
 
 .field{margin-bottom:1.1rem}
@@ -230,13 +230,16 @@ button{
 /* ההבחנה בין הקולות נעשית בגופן, לא בבועות */
 .turn.system .text{
   font-family:var(--display);
-  font-size:1.12rem;
-  line-height:1.65;
+  font-size:1.3rem;
+  font-weight:500;
+  line-height:1.7;
+  color:#141210;
 }
 .turn.candidate .text{
   font-family:var(--body);
-  font-weight:300;
-  color:#3B3733;
+  font-weight:400;
+  font-size:1.05rem;
+  color:#2E2A26;
   padding-inline-start:.9rem;
   border-inline-start:2px solid var(--accent-soft);
 }
@@ -279,7 +282,7 @@ button{
   border:0;
   resize:none;
   font-family:var(--body);
-  font-size:1rem;
+  font-size:1.05rem;
   line-height:1.6;
   background:transparent;
   color:var(--ink);
@@ -361,7 +364,7 @@ footer strong{font-weight:600;color:var(--ink)}
 <div class="shell">
 
   <header class="masthead">
-    <h1>שיחת היכרות <span class="ver">v4</span></h1>
+    <h1>שיחת היכרות <span class="ver">v5</span></h1>
     <p>כמה דקות של היכרות, כדי שמי שילווה אותך יכיר אותך מראש.</p>
   </header>
 
@@ -558,7 +561,6 @@ async function startConversation(){
     S.candidate = { name, phone: normalized, email };
     $("stage-identify").classList.add("hidden");
     $("stage-talk").classList.remove("hidden");
-    $("in-msg").focus();
 
     thinking(true);
     try {
@@ -634,7 +636,6 @@ async function send(){
     $("send-status").textContent = "ההודעה לא נשלחה. נסה שוב.";
   } finally {
     lockComposer(false);
-    if (S.collecting) $("in-msg").focus();
   }
 }
 
