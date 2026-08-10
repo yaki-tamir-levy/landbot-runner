@@ -98,6 +98,8 @@ body{
   margin-bottom:2rem;
 }
 
+.lede p{margin:0 0 .7rem}
+.lede p:last-child{margin-bottom:0}
 .lede{
   margin:0 0 1.75rem;
   padding-bottom:1.4rem;
@@ -359,8 +361,8 @@ footer strong{font-weight:600;color:var(--ink)}
 <div class="shell">
 
   <header class="masthead">
-    <h1>שיחת היכרות <span class="ver">v3</span></h1>
-    <p>לפני שנוכל לצרף אותך, נכיר אותך קצת. השיחה נשמרת, ואפשר לחזור אליה.</p>
+    <h1>שיחת היכרות <span class="ver">v4</span></h1>
+    <p>כמה דקות של היכרות, כדי שמי שילווה אותך יכיר אותך מראש.</p>
   </header>
 
   <main id="main">
@@ -369,12 +371,13 @@ footer strong{font-weight:600;color:var(--ink)}
     <section id="stage-identify" class="panel" aria-labelledby="identify-title">
       <h2 id="identify-title" class="hidden">פרטי התחלה</h2>
 
-      <p class="lede">
-        בשיחה הבאה תספר על עצמך בחופשיות — אין טופס ואין רשימת שאלות קבועה.
-        כשייאסף מספיק, נודיע לך; לכן אין כאן כפתור סיום. איסוף הפרטים אינו קבלה:
-        המועמדות תישקל לאחר מכן, והעדכון יישלח לדוא"ל שתמסור. אפשר לפרוש בכל רגע,
-        ומה שנמסר עד אז נשמר.
-      </p>
+      <div class="lede">
+        <p>לפני שנשבץ אותך למטפל, נשמח להכיר אותך קצת. מה שתספר כאן יגיע אליו עוד
+        לפני השיחה הראשונה — כך לא תצטרך להתחיל מההתחלה ולספר הכול שוב.</p>
+        <p>השיחה חופשית: אין טופס ואין רשימת שאלות קבועה. כשייאסף מספיק, נודיע לך;
+        לכן אין כאן כפתור סיום. אפשר לפרוש בכל רגע, ומה שנמסר עד אז נשמר.</p>
+        <p>איסוף הפרטים אינו קבלה — המועמדות תישקל לאחר מכן, והעדכון יישלח לדוא"ל שתמסור.</p>
+      </div>
 
       <div class="field" id="f-name">
         <label for="in-name">שם מלא</label>
@@ -417,8 +420,9 @@ footer strong{font-weight:600;color:var(--ink)}
       </div>
 
       <div id="closing" class="closing hidden">
-        <h2>אספנו את כל מה שנדרש</h2>
-        <p>המועמדות שלך תישקל. נעדכן אותך בדוא"ל, ואפשר גם לחזור לכאן ולבדוק.</p>
+        <h2>תודה, אספנו את כל מה שנדרש</h2>
+        <p>מה שסיפרת יגיע למי שיקרא אותו לפני השיחה הראשונה.</p>
+        <p>המועמדות שלך תישקל, ונעדכן אותך בדוא"ל. אפשר גם לחזור לכאן ולבדוק.</p>
         <p>אין צורך לעשות דבר נוסף כעת.</p>
       </div>
 
@@ -461,6 +465,7 @@ const MOCK = !CONFIG.ENDPOINT;
 const S = {
   candidate: null,      // { name, phone, email }
   conversationId: null,
+  missing: [],
   messages: [],         // [{ role:'system'|'candidate', text }]
   collecting: true,
   busy: false
@@ -578,6 +583,7 @@ async function startConversation(){
       }
 
       S.conversationId = opening.conversation_id;
+      S.missing = Array.isArray(opening.missing) ? opening.missing : [];
       addTurn("system", opening.text);
     } catch (err) {
       addTurn("system", "לא הצלחנו לפתוח את השיחה. נסה שוב בעוד רגע.");
@@ -634,7 +640,7 @@ async function send(){
 
 function leave(){
   $("composer").classList.add("hidden");
-  addTurn("system", "מה שסיפרת נשמר. אפשר לחזור לכאן בכל עת ולהמשיך מאותה נקודה.");
+  addTurn("system", "תודה על מה שכבר סיפרת — הכול נשמר. אפשר לחזור לכאן בכל עת ולהמשיך בדיוק מאותה נקודה.");
 }
 
 /* =========================================================================
@@ -664,6 +670,7 @@ async function sendTurn(message){
   return call("talk", {
     conversation_id: S.conversationId,
     name: S.candidate.name,
+    missing: S.missing,
     message
   });
 }
