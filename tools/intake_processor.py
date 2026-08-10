@@ -89,25 +89,38 @@ EMPTY.update({"missing": list(ALL_FIELDS), "background": "", "explicit_risk_stat
 def extract(prompt, talk):
     """מחזיר תמיד מבנה תקין. כשל מכל סוג -> מבנה ריק."""
     try:
+        # Responses API - אותו מסלול שבו משתמשות שאר הפונקציות בפרויקט.
+        # chat/completions נדחה על ידי הדגם.
         r = requests.post(
-            "https://api.openai.com/v1/chat/completions",
+            "https://api.openai.com/v1/responses",
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {OPENAI_KEY}",
             },
             json={
                 "model": MODEL,
+                "instructions": prompt,
+                "input": [{"role": "user", "content": talk}],
                 "temperature": 0,
-                "max_tokens": 1200,
-                "messages": [
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": talk},
-                ],
+                "max_output_tokens": 1500,
+                "store": False,
             },
             timeout=120,
         )
+        if not r.ok:
+            print(f"  openai {r.status_code}: {r.text[:300]}", file=sys.stderr)
         r.raise_for_status()
-        raw = r.json()["choices"][0]["message"]["content"].strip()
+
+        payload = r.json()
+        raw = payload.get("output_text") or ""
+        if not raw:
+            parts = []
+            for item in payload.get("output", []):
+                for c in item.get("content", []):
+                    if isinstance(c.get("text"), str):
+                        parts.append(c["text"])
+            raw = "\n".join(parts)
+        raw = raw.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
         data = json.loads(raw)
         if not isinstance(data, dict):
@@ -170,8 +183,16 @@ def notify(result, accepted, missing, risk):
 
 # ---------------------------------------------------------------- ראשי
 
+def mail_ready():
+    return bool(GMAIL_USER and GMAIL_PASS)
+
+
 def notify_new_candidates():
     """התראה לאדמין על כל מועמד שנכנס, לפני ובלי קשר להכרעה."""
+    if not mail_ready():
+        print("WARNING: GMAIL_USER or GMAIL_APP_PASSWORD missing - no mail sent",
+              file=sys.stderr)
+        return
     fresh = rpc("intake_new_candidates") or []
     for c in fresh:
         body = "\n".join([
@@ -235,7 +256,11 @@ def main():
 
             print(f"  {short}: {decision} (missing: {len(fields['missing'])})")
 
-            notify(result, accepted, fields["missing"], fields["explicit_risk_statement"])
+            try:
+                notify(result, accepted, fields["missing"], fields["explicit_risk_statement"])
+            except Exception as mail_err:                    # noqa: BLE001
+                # ההכרעה כבר נרשמה. כשל בדואר אינו הופך אותה לשגיאה.
+                print(f"  {short}: mail failed: {mail_err}", file=sys.stderr)
 
         except Exception as e:                               # noqa: BLE001
             # כשל אינו מותיר מועמד תקוע בהמתנה נצחית — הוא מסומן לבדיקה
