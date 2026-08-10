@@ -68,6 +68,18 @@ body{
   margin:0 0 .6rem;
   letter-spacing:-.01em;
 }
+.masthead h1 .ver{
+  font-family:var(--body);
+  font-weight:600;
+  font-size:.8rem;
+  letter-spacing:.06em;
+  color:#fff;
+  background:var(--accent);
+  padding:.1rem .45rem;
+  border-radius:2px;
+  vertical-align:middle;
+  margin-inline-start:.5rem;
+}
 .masthead p{
   margin:0;
   color:var(--muted);
@@ -347,7 +359,7 @@ footer strong{font-weight:600;color:var(--ink)}
 <div class="shell">
 
   <header class="masthead">
-    <h1>שיחת היכרות</h1>
+    <h1>שיחת היכרות <span class="ver">v3</span></h1>
     <p>לפני שנוכל לצרף אותך, נכיר אותך קצת. השיחה נשמרת, ואפשר לחזור אליה.</p>
   </header>
 
@@ -439,17 +451,16 @@ footer strong{font-weight:600;color:var(--ink)}
    ========================================================================= */
 
 const CONFIG = {
-  // כתובת הבסיס של פונקציית השרת. ריק = מצב הדגמה.
-  API_BASE: "",
-  ENDPOINT_CHECK: "/intake-check",
-  ENDPOINT_TALK:  "/intake-talk",
+  // נקודת הקצה היחידה. ריק = מצב הדגמה מקומי.
+  ENDPOINT: "https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/intake",
   MAX_CHARS: 1200
 };
 
-const MOCK = !CONFIG.API_BASE;
+const MOCK = !CONFIG.ENDPOINT;
 
 const S = {
   candidate: null,      // { name, phone, email }
+  conversationId: null,
   messages: [],         // [{ role:'system'|'candidate', text }]
   collecting: true,
   busy: false
@@ -527,7 +538,7 @@ async function startConversation(){
   const normalized = normalizePhone(phone);
 
   try {
-    const res = await checkPhone(normalized, email);
+    const res = await checkPhone(normalized);
 
     if (res.state === "taken") {
       $("stage-identify").classList.add("hidden");
@@ -545,9 +556,34 @@ async function startConversation(){
     $("in-msg").focus();
 
     thinking(true);
-    const opening = await talk([]);
-    thinking(false);
-    addTurn("system", opening.text);
+    try {
+      const opening = await openConversation();
+
+      if (opening.state === "pending"){
+        thinking(false);
+        $("stage-talk").classList.add("hidden");
+        $("blocked-title").textContent = "השיחה שלך כבר נשלחה לבדיקה";
+        $("blocked-text").textContent =
+          "אספנו את הפרטים ואנחנו בודקים אותם. נעדכן אותך בדוא\"ל, " +
+          "ואפשר גם לחזור לכאן מאוחר יותר.";
+        $("stage-blocked").classList.remove("hidden");
+        return;
+      }
+
+      if (opening.state === "taken"){
+        thinking(false);
+        $("stage-talk").classList.add("hidden");
+        $("stage-blocked").classList.remove("hidden");
+        return;
+      }
+
+      S.conversationId = opening.conversation_id;
+      addTurn("system", opening.text);
+    } catch (err) {
+      addTurn("system", "לא הצלחנו לפתוח את השיחה. נסה שוב בעוד רגע.");
+    } finally {
+      thinking(false);
+    }
 
   } catch (e) {
     $("identify-status").textContent = "לא הצלחנו לפתוח את השיחה. נסה שוב בעוד רגע.";
@@ -577,7 +613,7 @@ async function send(){
   thinking(true);
 
   try {
-    const res = await talk(S.messages);
+    const res = await sendTurn(raw);
     thinking(false);
     addTurn("system", res.text);
 
@@ -605,67 +641,65 @@ function leave(){
    שכבת הרשת — נקודת החיבור היחידה לצד השרת
    ========================================================================= */
 
-async function checkPhone(phone, email){
-  if (MOCK) return mockCheck(phone);
-  const r = await fetch(CONFIG.API_BASE + CONFIG.ENDPOINT_CHECK, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify({ phone, email })
+async function call(action, payload){
+  if (MOCK) return mock(action, payload);
+  const r = await fetch(CONFIG.ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, ...payload })
   });
-  if (!r.ok) throw new Error("check failed");
-  return r.json();                     // { state: "open" | "taken" }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
 }
 
-async function talk(messages){
-  if (MOCK) return mockTalk(messages);
-  const r = await fetch(CONFIG.API_BASE + CONFIG.ENDPOINT_TALK, {
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify({ candidate: S.candidate, messages })
+async function checkPhone(phone){
+  return call("check", { phone });
+}
+
+async function openConversation(){
+  return call("start", S.candidate);
+}
+
+async function sendTurn(message){
+  return call("talk", {
+    conversation_id: S.conversationId,
+    name: S.candidate.name,
+    message
   });
-  if (!r.ok) throw new Error("talk failed");
-  return r.json();                     // { text, collection_complete }
 }
 
 /* =========================================================================
-   מצב הדגמה — לבדיקת הזרימה בלבד. אין בו מודל ואין בו היגיון אמיתי.
+   מצב הדגמה — נכנס לפעולה רק אם אין כתובת שרת. אין בו מודל.
    ========================================================================= */
 
 const MOCK_TAKEN = "0500000000";
-
 const MOCK_SCRIPT = [
   "נעים להכיר. ספר לי בבקשה מה הביא אותך לפנות דווקא עכשיו.",
   "תודה. כמה זמן זה נמשך?",
-  "האם היית בטיפול בעבר — ואם כן, מה עבד ומה פחות?",
-  "מי נמצא סביבך היום? משפחה, חברים, מישהו שאפשר לדבר איתו.",
-  "מה גילך ואיפה אתה גר?",
-  "ובאיזה שעות ביום נוח לך לשוחח?"
+  "הבנתי. מי נמצא סביבך היום?",
+  "תודה. מה אתה מצפה לקבל מהתהליך?"
 ];
+let mockAsked = 0;
 
-function delay(ms){ return new Promise(r => setTimeout(r, ms)); }
+async function mock(action, payload){
+  await new Promise(r => setTimeout(r, 700));
 
-async function mockCheck(phone){
-  await delay(600);
-  return { state: phone === MOCK_TAKEN ? "taken" : "open" };
-}
-
-async function mockTalk(messages){
-  await delay(900);
-  const asked = messages.filter(m => m.role === "system").length;
-
-  if (asked === 0){
+  if (action === "check"){
+    return { state: payload.phone === MOCK_TAKEN ? "taken" : "open" };
+  }
+  if (action === "start"){
+    mockAsked = 1;
     return {
-      text: "שלום " + S.candidate.name.split(" ")[0] + ". " + MOCK_SCRIPT[0],
+      state: "new",
+      conversation_id: "mock",
+      text: "שלום " + payload.name.split(" ")[0] + ". ספר לי קצת על עצמך.",
       collection_complete: false
     };
   }
-  if (asked < MOCK_SCRIPT.length){
-    return { text: MOCK_SCRIPT[asked], collection_complete: false };
+  if (mockAsked < MOCK_SCRIPT.length){
+    return { text: MOCK_SCRIPT[mockAsked++], collection_complete: false };
   }
-  return {
-    text: "תודה. יש לי את כל מה שנדרש בשלב הזה.",
-    collection_complete: true
-  };
+  return { text: "תודה.", collection_complete: true };
 }
 
 /* ---------- חיווט ---------- */
