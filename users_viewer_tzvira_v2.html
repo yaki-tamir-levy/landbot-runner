@@ -9,7 +9,7 @@
 
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>כל הסוגים</title>
+  <title>כל השיחות</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.1/dist/umd/supabase.js"></script>
   <style>
     :root { --bg:#f6f7fb; --card:#ffffff; --ink:#111827; --muted:#6b7280; --divider:#e5e7eb; --danger:#7f1d1d; --ok:#065f46; --hi:#fde68a; }
@@ -129,7 +129,7 @@ function getReviewerName(ev){
 
 <body>
 <div class="wrap">
-  <h2 id="pageTitle">כל הסוגים</h2>
+  <h2 id="pageTitle">כל השיחות</h2>
   <div class="hint" id="versionBadge" style="text-align:center; margin-top:-6px;"><span id="commitStamp">טוען גרסה…</span><span id="vBadge" style="opacity:.75"></span></div>
 
   <div id="statusBar"></div>
@@ -146,14 +146,18 @@ function getReviewerName(ev){
       <div><label>Name<br /><input id="fName" placeholder="שם" /></label></div>
       <div><label>From (YYYY.MM.DD)<br /><input id="fFrom" placeholder="2025.11.01" /></label></div>
       <div><label>To (YYYY.MM.DD)<br /><input id="fTo" placeholder="2025.11.30" /></label></div>
-      <div>
+      <!-- Shown to every signed-in user, from first paint. The selection takes effect
+           for everyone; only the page title still distinguishes an admin from a
+           psychologist, and only for the 'all' selection. -->
+      <div id="fKindWrap">
         <label>בחר סטטוס מטופל<br />
           <select id="fKind">
-            <option value="" selected>הכל</option>
-            <option value="1">מטפל וירטואלי</option>
-            <option value="2">מדריך קורס</option>
-            <option value="3">מטפל וירטואלי + מדריך בקורס</option>
-            <option value="4">טסט</option>
+            <option value="all" selected>הכל</option>
+            <option value="course">קורס</option>
+            <option value="clinic">קליני</option>
+            <option value="nlp">NLP</option>
+            <option value="risk_open">סיכון שלא טופל</option>
+            <option value="risk_any">סיכון כולל שטופל</option>
           </select>
         </label>
       </div>
@@ -484,7 +488,9 @@ function getReviewerName(ev){
     identityMap: {},       // identityCode(patient_code) -> {name, phone}
     identityLoadFailed: false,  // true only if the patient_identity_map fetch failed
     psychNameMap: {},      // identityCode(patient_code) -> psychologist_name (display only)
-    sourceMap: {}          // conversation_id -> conversations_session_v2.source (display only)
+    sourceMap: {},         // conversation_id -> conversations_session_v2.source (display only)
+    viewerName: '',        // viewer_identity().display_name — title only
+    viewerIsAdmin: false   // viewer_identity().is_admin — title only. Fails closed.
   };
 
   // Single normalization point for every patient_identity_map key.
@@ -608,6 +614,8 @@ function getReviewerName(ev){
     CACHE.identityLoadFailed = false;
     CACHE.psychNameMap = {};
     CACHE.sourceMap = {};
+    CACHE.viewerName = '';
+    CACHE.viewerIsAdmin = false;
 
     // conversation_id is fetched here because the header pill resolves the conversation
     // source through CACHE.sourceMap, which is keyed by it. Without it every row would
@@ -723,6 +731,34 @@ function getReviewerName(ev){
             console.warn('sourceMap load skipped: ' + (e && e.message ? e.message : e));
           });
       })
+      .then(function(){
+        // ADDITIVE, display-only: who is signed in, via the SECURITY DEFINER RPC
+        // viewer_identity() -> (display_name text, is_admin boolean). It decides the page
+        // title only. It is NOT a security boundary: row visibility is already enforced
+        // server-side by the RPCs and by RLS.
+        // Soft-fail exactly like the two stages above, and FAIL CLOSED: any error leaves
+        // viewerName '' and viewerIsAdmin false, so the title falls back to the neutral
+        // 'כל השיחות' rather than naming the wrong person. This must never break the load.
+        return supa.rpc('viewer_identity')
+          .then(function(res){
+            if (res && res.error) throw res.error;
+            var rows = (res && res.data) ? res.data : [];
+            var vr = rows.length ? rows[0] : null;
+            CACHE.viewerName = (vr && vr.display_name != null) ? String(vr.display_name) : '';
+            CACHE.viewerIsAdmin = !!(vr && vr.is_admin === true);
+            console.log('viewer_identity: is_admin=' + CACHE.viewerIsAdmin + ', display_name=' + CACHE.viewerName);
+          })
+          .catch(function(e){
+            console.warn('viewer_identity load skipped: ' + (e && e.message ? e.message : e));
+            CACHE.viewerName = '';
+            CACHE.viewerIsAdmin = false;
+          })
+          .then(function(){
+            // Applied on BOTH paths, success and failure: the title must reflect
+            // whoever is signed in, and on failure that is the fail-closed default.
+            updateTitlesFromStatus();
+          });
+      })
       .catch(function(e){
         setStatusErr('שגיאת טעינה: ' + (e && e.message ? e.message : e));
         throw e;
@@ -778,7 +814,8 @@ function getReviewerName(ev){
     }
     setStatusErr('');
     setStatusOk('מרנדר מקומית…');
-    var talkKind = (el.fKind.value || '').trim();
+    // Effective kind: the six-value whitelist applied to the select value.
+    var talkKind = currentKind();
     var rows = getFilteredRowsFromCache();
 
     ensureUsersInformationForRows(rows).then(function(){
@@ -793,18 +830,47 @@ function getReviewerName(ev){
       setStatusErr('שגיאת רינדור: ' + (e && e.message ? e.message : e));
     });
   }
+  // The localStorage key keeps its old name on purpose, so an existing browser profile is
+  // not orphaned. Its stored value, however, is now one of the six below; the old values
+  // ("", "1".."4") are no longer valid and normalizeKind() maps them to 'all'.
   var LS_STATUS_KEY = 'uvr_status_filter';
+
+  // The six conversation-kind values, in the order they appear in #fKind. Also the
+  // whitelist: anything not in this list is treated as 'all'.
+  var KIND_VALUES = ['all', 'course', 'clinic', 'nlp', 'risk_open', 'risk_any'];
+
   var STATUS_TITLE_MAP = {
-    "":  "כל הסוגים",
-    "1": "השיחות של המטפל הוירטואלי",
-    "2": "השיחות של מדריך הקורס",
-    "3": "השיחות של המטפל הוירטואלי + מדריך הקורס",
-    "4": "השיחות של טסט"
+    "all":       "כל השיחות",
+    "course":    "שיחות הדרכת קורס מסע הגיבור",
+    "clinic":    "שיחה קלינית",
+    "nlp":       "שיחת NLP",
+    "risk_open": "סיכונים שלא טופלו",
+    "risk_any":  "סיכונים שנמצאו"
   };
 
+  function normalizeKind(v){
+    var s = String(v == null ? '' : v).trim();
+    return (KIND_VALUES.indexOf(s) === -1) ? 'all' : s;
+  }
+
+  // The EFFECTIVE filter. Every signed-in user's selection takes effect; the only
+  // normalisation is the six-value whitelist.
+  function currentKind(){
+    return normalizeKind(el.fKind ? el.fKind.value : 'all');
+  }
+
+  // Title for both the <title> tag and the <h2>. The five explicit kinds read the same
+  // for everyone. Only 'all' differs: an admin sees every conversation, a psychologist
+  // sees their own patients and is told so by name.
   function updateTitlesFromStatus() {
-    var kind = (el.fKind && el.fKind.value) ? el.fKind.value : "";
-    var fullTitle = Object.prototype.hasOwnProperty.call(STATUS_TITLE_MAP, kind) ? STATUS_TITLE_MAP[kind] : "כל הסוגים";
+    var kind = normalizeKind(el.fKind ? el.fKind.value : 'all');
+    var vn = String(CACHE.viewerName == null ? '' : CACHE.viewerName).trim();
+    var fullTitle;
+    if (kind === 'all' && !CACHE.viewerIsAdmin && vn){
+      fullTitle = 'שיחות של מטופלי ' + vn;
+    } else {
+      fullTitle = Object.prototype.hasOwnProperty.call(STATUS_TITLE_MAP, kind) ? STATUS_TITLE_MAP[kind] : 'כל השיחות';
+    }
     document.title = fullTitle;
     var h2 = $("pageTitle");
     if (h2) h2.textContent = fullTitle;
@@ -813,7 +879,9 @@ function getReviewerName(ev){
   try {
     if (window.localStorage) {
       var savedStatus = localStorage.getItem(LS_STATUS_KEY);
-      if (savedStatus !== null) el.fKind.value = savedStatus;
+      // A stored value from the old status filter ("", "1".."4"), or any other unknown
+      // string, resolves to 'all' instead of selecting nothing.
+      if (savedStatus !== null) el.fKind.value = normalizeKind(savedStatus);
     }
   } catch(e) {}
 
@@ -1436,58 +1504,55 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
 
 
 
+  // SINGLE definition of "this risk still needs attention", extracted verbatim from the
+  // allCanceled loop of the header risk pill. The pill and the risk_open row filter both
+  // call it, so the two can never drift apart. VIEWED is the legacy spelling of REVIEWED.
+  function isRiskStatusOpen(statusVal){
+    var st = String(statusVal || 'NEW').trim();
+    if (!st) st = 'NEW';
+    return (st === 'NEW' || st === 'VIEWED' || st === 'REVIEWED');
+  }
+
   function render(rows, flagsMap, infoMap, talkKind){
     return new Promise(function(resolve){
       var parts = [], alerts = [];
       var hiddenCount = 0, shownCount = 0;
       var patientsShown = new Set();
 
+      // Row filter by CONVERSATION KIND. Replaces the old users_information_v2.status
+      // filter entirely: source comes from conversations_session_v2 via CACHE.sourceMap,
+      // track from users_information_v2.therapy_track via infoMap.
+      //   all      -> every row
+      //   course   -> src 'B'
+      //   clinic   -> src 'A' and track 'CLINIC'
+      //   nlp      -> src 'A' and track 'NLP_CBT'
+      // risk_any and risk_open are NOT decided here - they need the risk rows of this
+      // talk, which are loaded further down. See the risk gate inside nextRow().
       function isRowAllowed(row){
-        // Default: no override.
+        // Default: no override. The old _forceRisk override of this filter is gone -
+        // the rules above are absolute. _riskOverrideKind is still reset because the
+        // header comment further down still refers to it.
         if (row) row._riskOverrideKind = false;
 
-        // No status filter selected
-        if (!talkKind) return true;
+        var kind = String(talkKind || 'all').trim();
+        if (!kind || kind === 'all' || kind === 'risk_any' || kind === 'risk_open') return true;
 
-        var codeKey = (row && row.patient_code != null) ? String(row.patient_code).trim() : '';
-        if (!codeKey) return false;   // no patient_code -> skip, never fall back to phone
+        var convId = (row && row.conversation_id != null) ? String(row.conversation_id).trim() : '';
+        var srcRaw = (convId && CACHE.sourceMap) ? CACHE.sourceMap[convId] : '';
+        var src = String(srcRaw == null ? '' : srcRaw).trim();
 
-        var info = infoMap.get(codeKey);
-        if (!info || info.status == null) return false;
+        if (kind === 'course') return (src === 'B');
 
-        // Normalize both sides to trimmed strings: users_information_v2.status is TEXT,
-        // and the filter value arrives from the DOM as a string. A numeric 4 and the
-        // string '4' therefore compare identically.
-        var sKey = String(info.status).trim();
-        var kKey = String(talkKind).trim();
-
-        // Status filter logic (status 4 is fully isolated):
-        // 1: allow status 1 or 3
-        // 2: allow status 2 or 3
-        // 3: allow status 1, 2 or 3
-        // 4: allow status 4 only
-        var allowed = false;
-        if (kKey === '1'){
-          allowed = (sKey === '1' || sKey === '3');
-        } else if (kKey === '2'){
-          allowed = (sKey === '2' || sKey === '3');
-        } else if (kKey === '3'){
-          allowed = (sKey === '1' || sKey === '2' || sKey === '3');
-        } else if (kKey === '4'){
-          allowed = (sKey === '4');
-        } else {
-          allowed = true;
+        if (kind === 'clinic' || kind === 'nlp'){
+          if (src !== 'A') return false;
+          var codeKey = (row && row.patient_code != null) ? String(row.patient_code).trim() : '';
+          var info = codeKey ? infoMap.get(codeKey) : null;
+          var track = (info && info.therapy_track != null) ? String(info.therapy_track).trim() : '';
+          return (kind === 'clinic') ? (track === 'CLINIC') : (track === 'NLP_CBT');
         }
 
-        if (allowed) return true;
-
-        // If not allowed by status, still allow when talk has *force* risk (NEW/REVIEWED) -> mark as override
-        if (row && row._forceRisk){
-          row._riskOverrideKind = true;
-          return true;
-        }
-
-        return false;
+        // Unknown value -> behave like 'all' rather than blanking the page.
+        return true;
       }
 
       function nextRow(i){
@@ -1567,6 +1632,26 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
             if (st === 'NEW' || st === 'VIEWED' || st === 'REVIEWED') notRev.push(hits[h]);
           }
 
+          // Row filter, risk half. It lives here and not in isRowAllowed() because it
+          // needs `hits`, which only exists once loadRiskRows has resolved for this talk.
+          // Placed before the header is emitted and before any counter is touched, so a
+          // row dropped here is never counted.
+          //   risk_any  -> the talk has at least one risk row, handled or not
+          //   risk_open -> at least one of them is still open, per isRiskStatusOpen()
+          if (talkKind === 'risk_any' || talkKind === 'risk_open'){
+            var keepByRisk = false;
+            if (hits && hits.length){
+              if (talkKind === 'risk_any'){
+                keepByRisk = true;
+              } else {
+                for (var rq=0; rq<hits.length; rq++){
+                  if (isRiskStatusOpen(hits[rq].status)){ keepByRisk = true; break; }
+                }
+              }
+            }
+            if (!keepByRisk){ nextRow(i+1); return; }
+          }
+
           var k = keyOf(r.time_key, r.patient_code);
           var flag = k ? flagsMap.get(k) : null;   // no patient_code -> treated as not hidden
           var isHidden = !!(flag && flag.is_hidden);
@@ -1644,8 +1729,8 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
           if (hits && hits.length){
             var allCanceled = true;
             for (var rc=0; rc<hits.length; rc++){
-              var st = String(hits[rc].status || 'NEW').trim();
-              if (st === 'NEW' || st === 'VIEWED' || st === 'REVIEWED'){
+              // Same single test the risk_open row filter uses. See isRiskStatusOpen().
+              if (isRiskStatusOpen(hits[rc].status)){
                 allCanceled = false;
                 break;
               }
