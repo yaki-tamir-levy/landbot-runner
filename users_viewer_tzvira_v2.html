@@ -400,11 +400,14 @@ function getReviewerName(ev){
     var p = supa.from(USERS_INFO_TABLE)
       // Direct lookup by patient_code. Replaces the or(phone.eq...) variant matching
       // that produced the 400 error.
-      .select('status, patient_code')
+      .select('status, patient_code, therapy_track')
       .eq('patient_code', key)
       .limit(1)
       .then(function(res){
         var row = (res && res.data && res.data.length) ? res.data[0] : null;
+        // therapy_track is backfilled independently of status: the pill needs it even
+        // when status is empty, and putInfoTrack never touches the status field.
+        if (row) putInfoTrack(key, row.therapy_track);
         if (row && row.status != null && String(row.status).trim() !== ''){
           // backfill into CACHE.infoMap so filters/labels use it everywhere
           putInfoStatus(key, row.status);
@@ -441,7 +444,28 @@ function getReviewerName(ev){
     // Single canonical key: patient_code. No phone variants, no fallback.
     var k = String(patientCode == null ? '' : patientCode).trim();
     if (!k) return;
-    try{ CACHE.infoMap.set(k, { status: status }); } catch(e){}
+    // Merge instead of replace: the entry also carries therapy_track, and the two
+    // writers run in either order. Overwriting the whole object would drop the field
+    // written first. The status field itself keeps its exact previous semantics.
+    try{
+      var prev = CACHE.infoMap.get(k) || {};
+      prev.status = status;
+      CACHE.infoMap.set(k, prev);
+    } catch(e){}
+  }
+
+  // Same cache entry, same canonical key, separate field: users_information_v2.therapy_track.
+  // Stored RAW, exactly as it arrives from the DB — the pill prints it verbatim.
+  // Kept as its own writer so putInfoStatus keeps its current name, signature and call sites.
+  function putInfoTrack(patientCode, trackVal){
+    if (trackVal == null || String(trackVal).trim() === '') return;
+    var k = String(patientCode == null ? '' : patientCode).trim();
+    if (!k) return;
+    try{
+      var prev = CACHE.infoMap.get(k) || {};
+      prev.therapy_track = trackVal;
+      CACHE.infoMap.set(k, prev);
+    } catch(e){}
   }
 
   // ------------------------------------------------------------
@@ -453,13 +477,14 @@ function getReviewerName(ev){
     loaded: false,
     allRows: [],
     flagsMap: new Map(),   // key(time_key, patient_code) -> {is_hidden}
-    infoMap:  new Map(),   // patient_code -> {status}
+    infoMap:  new Map(),   // patient_code -> {status, therapy_track}
     riskMap:  new Map(),   // key(time_key, patient_code) -> [riskRows]
     riskKeySet: new Set(), // keys time_key+patient_code that have any risk
     riskForceKeySet: new Set(), // keys time_key+patient_code that have risk in status NEW/REVIEWED (VIEWED legacy)
     identityMap: {},       // identityCode(patient_code) -> {name, phone}
     identityLoadFailed: false,  // true only if the patient_identity_map fetch failed
-    psychNameMap: {}       // identityCode(patient_code) -> psychologist_name (display only)
+    psychNameMap: {},      // identityCode(patient_code) -> psychologist_name (display only)
+    sourceMap: {}          // conversation_id -> conversations_session_v2.source (display only)
   };
 
   // Single normalization point for every patient_identity_map key.
@@ -582,8 +607,12 @@ function getReviewerName(ev){
     CACHE.identityMap = {};
     CACHE.identityLoadFailed = false;
     CACHE.psychNameMap = {};
+    CACHE.sourceMap = {};
 
-    return fetchAllPaged(TABLE, 'id, time_key, patient_code, last_talk_tzvira, summarized_linked_talk', 'time_key')
+    // conversation_id is fetched here because the header pill resolves the conversation
+    // source through CACHE.sourceMap, which is keyed by it. Without it every row would
+    // read as 'לא ידוע'.
+    return fetchAllPaged(TABLE, 'id, time_key, patient_code, conversation_id, last_talk_tzvira, summarized_linked_talk', 'time_key')
       .then(function(allRows){
         CACHE.allRows = allRows || [];
         setStatusOk('נטענו ' + CACHE.allRows.length + ' שיחות. טוען RISK…');
@@ -602,11 +631,12 @@ function getReviewerName(ev){
           CACHE.flagsMap.set(fk, { is_hidden: !!fr.is_hidden });
         });
         setStatusOk('דגלי הסתרה נטענו (' + CACHE.flagsMap.size + '). טוען סטטוסים…');
-        return fetchAllPaged(USERS_INFO_TABLE, 'patient_code, status', 'patient_code');
+        return fetchAllPaged(USERS_INFO_TABLE, 'patient_code, status, therapy_track', 'patient_code');
       })
       .then(function(allInfo){
         (allInfo || []).forEach(function(ir){
           putInfoStatus(ir.patient_code, ir.status);
+          putInfoTrack(ir.patient_code, ir.therapy_track);
         });
         // CACHE.loaded is intentionally NOT set here. The identity map is still missing
         // at this point, and every filter trigger in the UI gates on CACHE.loaded.
@@ -666,6 +696,31 @@ function getReviewerName(ev){
           })
           .catch(function(e){
             console.warn('psychNameMap load skipped: ' + (e && e.message ? e.message : e));
+          });
+      })
+      .then(function(){
+        // ADDITIVE, display-only: conversation source via the SECURITY DEFINER RPC
+        // conversation_sources_for_viewer(). The RPC restricts the rows to what the
+        // signed-in user may see (admin = all, psychologist = own patients), so
+        // conversations_session_v2 is never exposed to the browser and no filtering
+        // happens client-side.
+        // Soft-fail exactly like psychNameMap: on any failure the map stays empty and
+        // the pill falls back to 'לא ידוע'. This must never break the load, and it is
+        // never consulted by a filter, a join key or a write path.
+        return supa.rpc('conversation_sources_for_viewer')
+          .then(function(res){
+            if (res && res.error) throw res.error;
+            var rows = (res && res.data) ? res.data : [];
+            rows.forEach(function(cr){
+              if (!cr) return;
+              var cid = String(cr.conversation_id == null ? '' : cr.conversation_id).trim();
+              if (!cid) return;
+              CACHE.sourceMap[cid] = (cr.source == null) ? '' : String(cr.source);
+            });
+            console.log('sourceMap entries: ' + Object.keys(CACHE.sourceMap).length);
+          })
+          .catch(function(e){
+            console.warn('sourceMap load skipped: ' + (e && e.message ? e.message : e));
           });
       })
       .catch(function(e){
@@ -1559,18 +1614,25 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
           headParts.push('<div class="head-sep">·</div>');
           headParts.push('<div class="head-phone">', phoneHtml, '</div>');
           headParts.push('<div class="head-psych">', psychHtml, '</div>');
-                              // למה השיחה נבחרה: (א) RISK override אם יש RISK, (ב) סוג שיחה לפי users_information.status,
-          // ואם אין מידע—נשתמש בסוג שנבחר בסלקציה הנוכחית (fKind) כ־fallback.
+                              // סוג השיחה, לכל שיחה בנפרד:
+          // מקור השיחה מ-conversations_session_v2.source דרך CACHE.sourceMap (מפתח conversation_id),
+          // ומסלול הטיפול מ-users_information_v2.therapy_track דרך infoMap (מפתח patient_code).
+          //   source = 'B'                        -> 'הדרכת קורס'
+          //   source = 'A' ומסלול לא ריק          -> ערך המסלול הגולמי, מודפס כפי שהוא
+          //   כל שאר המקרים                        -> 'לא ידוע'
+          // אין מיפוי ואין תרגום של ערך המסלול, ואין נפילה חזרה לערך הסלקציה (fKind).
           var kindTxt = 'לא ידוע';
           try{
-            var info2 = infoMap.get((r && r.patient_code != null) ? String(r.patient_code).trim() : '');
-            if (info2 && info2.status != null && String(info2.status).trim() !== ''){
-              kindTxt = statusLabel(info2.status);
-            } else {
-              var fk = (el && el.fKind ? String(el.fKind.value||'').trim() : '');
-              if (fk && fk !== 'all'){
-                kindTxt = statusLabel(fk);
-              }
+            var convId = (r && r.conversation_id != null) ? String(r.conversation_id).trim() : '';
+            var srcRaw = (convId && CACHE.sourceMap) ? CACHE.sourceMap[convId] : '';
+            var src = String(srcRaw == null ? '' : srcRaw).trim();
+            if (src === 'B'){
+              kindTxt = 'הדרכת קורס';
+            } else if (src === 'A'){
+              var info2 = infoMap.get((r && r.patient_code != null) ? String(r.patient_code).trim() : '');
+              // Raw value, printed verbatim. trim() is used for the emptiness test only.
+              var trackRaw = (info2 && info2.therapy_track != null) ? String(info2.therapy_track) : '';
+              if (trackRaw.trim() !== '') kindTxt = trackRaw;
             }
           } catch(e){}
           /* kind override exists (row._riskOverrideKind) but we no longer prefix UI with 'RISK override'. */
