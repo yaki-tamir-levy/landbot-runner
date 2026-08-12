@@ -15,6 +15,7 @@ on:
         options:
           - nlp_sim_patient_rules
           - nlp_sim_patient_rules_terse
+          - nlp_sim_patient_rules_agreeable
       patient_phone:
         description: "Simulated patient phone"
         required: true
@@ -23,6 +24,19 @@ on:
         description: "Seconds between rounds"
         required: true
         default: "3"
+  schedule:
+    # All times are UTC. GitHub Actions has no timezone support.
+    # Summer (IDT, UTC+3): 07:00/10:00/13:00 UTC = 10:00/13:00/16:00 Israel.
+    # WINTER (IST, UTC+2): these will land one hour later in Israel. Update then.
+    - cron: "0 7 * * *"
+    - cron: "10 7 * * *"
+    - cron: "20 7 * * *"
+    - cron: "0 10 * * *"
+    - cron: "10 10 * * *"
+    - cron: "20 10 * * *"
+    - cron: "0 13 * * *"
+    - cron: "10 13 * * *"
+    - cron: "20 13 * * *"
 
 concurrency:
   group: sim-conversation
@@ -41,14 +55,37 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Resolve patient for this run
+        id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "phone=${{ inputs.patient_phone }}" >> $GITHUB_OUTPUT
+            echo "rules=${{ inputs.rules_key }}" >> $GITHUB_OUTPUT
+            echo "rounds=${{ inputs.rounds }}" >> $GITHUB_OUTPUT
+            echo "delay=${{ inputs.round_delay }}" >> $GITHUB_OUTPUT
+          else
+            MIN=$(date -u +%M)
+            case "$MIN" in
+              00) echo "phone=0500000002" >> $GITHUB_OUTPUT
+                  echo "rules=nlp_sim_patient_rules" >> $GITHUB_OUTPUT ;;
+              10) echo "phone=0500000003" >> $GITHUB_OUTPUT
+                  echo "rules=nlp_sim_patient_rules_terse" >> $GITHUB_OUTPUT ;;
+              *)  echo "phone=0500000004" >> $GITHUB_OUTPUT
+                  echo "rules=nlp_sim_patient_rules_agreeable" >> $GITHUB_OUTPUT ;;
+            esac
+            echo "rounds=10" >> $GITHUB_OUTPUT
+            echo "delay=3" >> $GITHUB_OUTPUT
+          fi
+
       - name: Run simulated conversation
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LANDBOT_WEBHOOK_SECRET: ${{ secrets.LANDBOT_WEBHOOK_SECRET }}
-          SIM_ROUNDS: ${{ inputs.rounds }}
-          SIM_RULES_KEY: ${{ inputs.rules_key }}
-          SIM_PATIENT_PHONE: ${{ inputs.patient_phone }}
-          SIM_ROUND_DELAY: ${{ inputs.round_delay }}
+          SIM_ROUNDS: ${{ steps.pick.outputs.rounds }}
+          SIM_RULES_KEY: ${{ steps.pick.outputs.rules }}
+          SIM_PATIENT_PHONE: ${{ steps.pick.outputs.phone }}
+          SIM_ROUND_DELAY: ${{ steps.pick.outputs.delay }}
+          PYTHONUNBUFFERED: "1"
         run: python tools/sim_conversation.py

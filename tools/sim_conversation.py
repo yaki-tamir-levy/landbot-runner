@@ -59,28 +59,42 @@ ROUND_DELAY_SECONDS = float(os.environ.get("SIM_ROUND_DELAY", "3"))
 SIM_THERAPIST_KEY = os.environ.get("SIM_THERAPIST_KEY", "nlp_sim_therapist")
 SIM_PRE_PATIENT_KEY = os.environ.get("SIM_PRE_PATIENT_KEY", "nlp_sim_pre_patient")
 SIM_RULES_KEY = os.environ.get("SIM_RULES_KEY", "nlp_sim_patient_rules")
+SIM_FOCUS_KEY = os.environ.get("SIM_FOCUS_KEY", "")
+SIM_FOCUS_INDEX = os.environ.get("SIM_FOCUS_INDEX", "")
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 RUNTIME_URL = SUPABASE_URL + "/functions/v1/runtime-corrected-response"
 HTTP_TIMEOUT = 120
 
 
-def http_json(url, method, headers, payload=None):
+def http_json(url, method, headers, payload=None, retries=3):
     data = None
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(url, data=data, method=method)
-    for key, value in headers.items():
-        request.add_header(key, value)
-    try:
-        with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
-            body = response.read().decode("utf-8")
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", "replace")
-        raise SystemExit("HTTP {} on {}\n{}".format(error.code, url, detail))
-    if not body.strip():
-        return None
-    return json.loads(body)
+    last_error = ""
+    for attempt in range(1, retries + 1):
+        request = urllib.request.Request(url, data=data, method=method)
+        for key, value in headers.items():
+            request.add_header(key, value)
+        try:
+            with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT) as response:
+                body = response.read().decode("utf-8")
+            if not body.strip():
+                return None
+            return json.loads(body)
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", "replace")
+            last_error = "HTTP {} on {}\n{}".format(error.code, url, detail)
+            if error.code < 500 or attempt == retries:
+                raise SystemExit(last_error)
+        except urllib.error.URLError as error:
+            last_error = "URLError on {}: {}".format(url, error)
+            if attempt == retries:
+                raise SystemExit(last_error)
+        wait = 5 * attempt
+        print("retry {} of {} in {}s: {}".format(attempt, retries, wait, last_error.splitlines()[0]), flush=True)
+        time.sleep(wait)
+    raise SystemExit(last_error)
 
 
 def rpc(name, params):
@@ -121,6 +135,17 @@ def openai_text(model, instructions, user_input, temperature, max_tokens):
     return joined
 
 
+def pick_focus_topic(raw_topics):
+    topics = [line.strip() for line in raw_topics.splitlines() if line.strip()]
+    if not topics:
+        return ""
+    if SIM_FOCUS_INDEX.strip().isdigit():
+        return topics[int(SIM_FOCUS_INDEX.strip()) % len(topics)]
+    now = time.gmtime()
+    slot = now.tm_yday * 24 + now.tm_hour
+    return topics[slot % len(topics)]
+
+
 def build_patient_input(transcript, is_first):
     if is_first:
         return "This is the opening message of a new conversation. Write the first thing the patient says today."
@@ -156,6 +181,9 @@ def main():
     prompt20 = rpc("get_prompt_v2", {"p_prompt_key": SIM_THERAPIST_KEY, "p_therapy": None}) or ""
     pre_patient20 = rpc("get_prompt_v2", {"p_prompt_key": SIM_PRE_PATIENT_KEY, "p_therapy": None}) or ""
     patient_rules = rpc("get_prompt_v2", {"p_prompt_key": SIM_RULES_KEY, "p_therapy": None}) or ""
+    focus_key = SIM_FOCUS_KEY.strip() or ("nlp_sim_focus_" + PATIENT_PHONE)
+    focus_raw = rpc("get_prompt_v2", {"p_prompt_key": focus_key, "p_therapy": None}) or ""
+    focus_topic = pick_focus_topic(focus_raw)
     if not prompt20.strip() or not pre_patient20.strip():
         raise SystemExit("sim therapist or sim pre_patient prompt is empty")
     if not patient_rules.strip():
@@ -170,9 +198,18 @@ def main():
     if not conversation_id:
         raise SystemExit("start_conversation_v2 returned no conversation id")
     print("conversation_id: " + str(conversation_id))
-    print("track: " + track + " | rounds: " + str(ROUNDS) + " | rules: " + SIM_RULES_KEY)
+    print("track: " + track + " | rounds: " + str(ROUNDS) + " | rules: " + SIM_RULES_KEY, flush=True)
+    print("focus: " + (focus_topic or "NONE") + " | from: " + focus_key, flush=True)
 
     patient_instructions = patient_rules + "\n\nPatient profile:\n" + patient20
+    if focus_topic:
+        patient_instructions += (
+            "\n\nFocus for this session:\n"
+            + focus_topic
+            + "\nThis is what is on your mind today. Bring it up in your own words, "
+            "and let it stay the centre of gravity of the whole conversation. "
+            "You may drift, but keep returning to it. Do not announce it as a topic."
+        )
     transcript = []
     response20 = ""
 
