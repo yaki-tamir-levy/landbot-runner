@@ -1,0 +1,54 @@
+name: SIM Conversation (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: "Number of rounds"
+        required: true
+        default: "10"
+      rules_key:
+        description: "Patient rules prompt key"
+        required: true
+        default: "nlp_sim_patient_rules"
+        type: choice
+        options:
+          - nlp_sim_patient_rules
+          - nlp_sim_patient_rules_terse
+      patient_phone:
+        description: "Simulated patient phone"
+        required: true
+        default: "0500000002"
+      round_delay:
+        description: "Seconds between rounds"
+        required: true
+        default: "3"
+
+concurrency:
+  group: sim-conversation
+  cancel-in-progress: false
+
+jobs:
+  run-sim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run simulated conversation
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANDBOT_WEBHOOK_SECRET: ${{ secrets.LANDBOT_WEBHOOK_SECRET }}
+          SIM_ROUNDS: ${{ inputs.rounds }}
+          SIM_RULES_KEY: ${{ inputs.rules_key }}
+          SIM_PATIENT_PHONE: ${{ inputs.patient_phone }}
+          SIM_ROUND_DELAY: ${{ inputs.round_delay }}
+        run: python tools/sim_conversation.py
