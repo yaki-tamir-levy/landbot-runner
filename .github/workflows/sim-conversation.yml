@@ -19,7 +19,7 @@ on:
       patient_phone:
         description: "Simulated patient phone"
         required: true
-        default: "0500000002"
+        default: "9990000002"
       round_delay:
         description: "Seconds between rounds"
         required: true
@@ -66,11 +66,11 @@ jobs:
           else
             MIN=$(date -u +%M)
             case "$MIN" in
-              00) echo "phone=0500000002" >> $GITHUB_OUTPUT
+              00) echo "phone=9990000002" >> $GITHUB_OUTPUT
                   echo "rules=nlp_sim_patient_rules" >> $GITHUB_OUTPUT ;;
-              10) echo "phone=0500000003" >> $GITHUB_OUTPUT
+              10) echo "phone=9990000003" >> $GITHUB_OUTPUT
                   echo "rules=nlp_sim_patient_rules_terse" >> $GITHUB_OUTPUT ;;
-              *)  echo "phone=0500000004" >> $GITHUB_OUTPUT
+              *)  echo "phone=9990000004" >> $GITHUB_OUTPUT
                   echo "rules=nlp_sim_patient_rules_agreeable" >> $GITHUB_OUTPUT ;;
             esac
             echo "rounds=10" >> $GITHUB_OUTPUT
