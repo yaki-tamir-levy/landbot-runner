@@ -8,6 +8,7 @@ type RequestPayload = {
   question20: string;
   patient_id: string;
   session_id: string;
+  corrector_prompt_key?: string;
 };
 
 type CorrectorDecision = "PASS" | "REWRITE" | "FALLBACK";
@@ -163,7 +164,10 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     let correctorInstructions: string;
     try {
-      correctorInstructions = await fetchRuntimeCorrectorPrompt(correlationId);
+      correctorInstructions = await fetchRuntimeCorrectorPrompt(
+        correlationId,
+        payload.value.corrector_prompt_key,
+      );
     } catch (error) {
       const typedError = toError(error);
       if (
@@ -332,7 +336,25 @@ async function parseAndValidatePayload(
   return { ok: true, value: record as RequestPayload };
 }
 
-async function fetchRuntimeCorrectorPrompt(correlationId: string): Promise<string> {
+const DEFAULT_CORRECTOR_KEY = "corrector";
+const CORRECTOR_KEY_PATTERN = /^[a-z0-9_]{1,80}$/;
+
+async function fetchRuntimeCorrectorPrompt(
+  correlationId: string,
+  requestedKey?: string,
+): Promise<string> {
+  let promptKey = DEFAULT_CORRECTOR_KEY;
+  const candidateKey = (requestedKey ?? "").trim();
+  if (candidateKey.length > 0) {
+    if (CORRECTOR_KEY_PATTERN.test(candidateKey)) {
+      promptKey = candidateKey;
+    } else {
+      console.error(JSON.stringify({
+        event: "corrector_prompt_key_rejected",
+        correlation_id: correlationId,
+      }));
+    }
+  }
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseKey =
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
@@ -348,7 +370,12 @@ async function fetchRuntimeCorrectorPrompt(correlationId: string): Promise<strin
     throw new Error("runtime_corrector_prompt_fetch_failed");
   }
 
-  const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/prompt_information_v2?select=user_text&prompt_key=eq.corrector&limit=1`;
+  const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/prompt_information_v2?select=user_text&prompt_key=eq.${encodeURIComponent(promptKey)}&limit=1`;
+  console.log(JSON.stringify({
+    event: "corrector_prompt_selected",
+    correlation_id: correlationId,
+    prompt_key: promptKey,
+  }));
   const response = await fetch(url, {
     headers: {
       apikey: supabaseKey,

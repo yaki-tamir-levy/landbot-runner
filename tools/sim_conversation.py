@@ -64,6 +64,7 @@ SIM_FOCUS_KEY = os.environ.get("SIM_FOCUS_KEY", "")
 SIM_FOCUS_INDEX = os.environ.get("SIM_FOCUS_INDEX", "")
 SIM_ARCS_KEY = os.environ.get("SIM_ARCS_KEY", "nlp_sim_arcs")
 SIM_ARC_INDEX = os.environ.get("SIM_ARC_INDEX", "")
+SIM_CORRECTOR_KEY = os.environ.get("SIM_CORRECTOR_KEY", "nlp_sim_corrector")
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 RUNTIME_URL = SUPABASE_URL + "/functions/v1/runtime-corrected-response"
@@ -204,6 +205,7 @@ def main():
     print("track: " + track + " | rounds: " + str(ROUNDS) + " | rules: " + SIM_RULES_KEY, flush=True)
     print("focus: " + (focus_topic or "NONE") + " | from: " + focus_key, flush=True)
     print("arc: " + (session_arc or "NONE"), flush=True)
+    print("corrector: " + SIM_CORRECTOR_KEY, flush=True)
 
     patient_instructions = patient_rules + "\n\nPatient profile:\n" + patient20
     if focus_topic:
@@ -243,6 +245,7 @@ def main():
             "question20": question,
             "patient_id": PATIENT_PHONE,
             "session_id": str(conversation_id),
+            "corrector_prompt_key": SIM_CORRECTOR_KEY,
         }
         result = http_json(
             RUNTIME_URL,
