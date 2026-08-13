@@ -26,17 +26,18 @@ on:
         default: "3"
   schedule:
     # All times are UTC. GitHub Actions has no timezone support.
-    # Summer (IDT, UTC+3): 07:00/10:00/13:00 UTC = 10:00/13:00/16:00 Israel.
-    # WINTER (IST, UTC+2): these will land one hour later in Israel. Update then.
-    - cron: "0 7 * * *"
-    - cron: "10 7 * * *"
-    - cron: "20 7 * * *"
-    - cron: "0 10 * * *"
-    - cron: "10 10 * * *"
-    - cron: "20 10 * * *"
-    - cron: "0 13 * * *"
-    - cron: "10 13 * * *"
-    - cron: "20 13 * * *"
+    # Minutes are 03/13/23 on purpose: round-hour slots are the most congested
+    # and GitHub delays them. Summer (IDT): 07/10/13 UTC = 10:00/13:00/16:00 Israel.
+    # WINTER (IST): these land one hour later in Israel. Update then.
+    - cron: "3 7 * * *"
+    - cron: "13 7 * * *"
+    - cron: "23 7 * * *"
+    - cron: "3 10 * * *"
+    - cron: "13 10 * * *"
+    - cron: "23 10 * * *"
+    - cron: "3 13 * * *"
+    - cron: "13 13 * * *"
+    - cron: "23 13 * * *"
 
 concurrency:
   group: sim-conversation
@@ -64,14 +65,18 @@ jobs:
             echo "rounds=${{ inputs.rounds }}" >> $GITHUB_OUTPUT
             echo "delay=${{ inputs.round_delay }}" >> $GITHUB_OUTPUT
           else
-            MIN=$(date -u +%M)
+            SCHED="${{ github.event.schedule }}"
+            MIN="${SCHED%% *}"
+            echo "triggered by cron: $SCHED (minute field: $MIN)"
             case "$MIN" in
-              00) echo "phone=9990000002" >> $GITHUB_OUTPUT
+              3)  echo "phone=9990000002" >> $GITHUB_OUTPUT
                   echo "rules=nlp_sim_patient_rules" >> $GITHUB_OUTPUT ;;
-              10) echo "phone=9990000003" >> $GITHUB_OUTPUT
+              13) echo "phone=9990000003" >> $GITHUB_OUTPUT
                   echo "rules=nlp_sim_patient_rules_terse" >> $GITHUB_OUTPUT ;;
-              *)  echo "phone=9990000004" >> $GITHUB_OUTPUT
+              23) echo "phone=9990000004" >> $GITHUB_OUTPUT
                   echo "rules=nlp_sim_patient_rules_agreeable" >> $GITHUB_OUTPUT ;;
+              *)  echo "unexpected cron minute: $MIN" >&2
+                  exit 1 ;;
             esac
             echo "rounds=10" >> $GITHUB_OUTPUT
             echo "delay=3" >> $GITHUB_OUTPUT
