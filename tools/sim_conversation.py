@@ -11,6 +11,7 @@ environment. The .env file wins only where the process environment is silent.
 
 import json
 import os
+import random
 import time
 import urllib.error
 import urllib.request
@@ -61,6 +62,8 @@ SIM_PRE_PATIENT_KEY = os.environ.get("SIM_PRE_PATIENT_KEY", "nlp_sim_pre_patient
 SIM_RULES_KEY = os.environ.get("SIM_RULES_KEY", "nlp_sim_patient_rules")
 SIM_FOCUS_KEY = os.environ.get("SIM_FOCUS_KEY", "")
 SIM_FOCUS_INDEX = os.environ.get("SIM_FOCUS_INDEX", "")
+SIM_ARCS_KEY = os.environ.get("SIM_ARCS_KEY", "nlp_sim_arcs")
+SIM_ARC_INDEX = os.environ.get("SIM_ARC_INDEX", "")
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 RUNTIME_URL = SUPABASE_URL + "/functions/v1/runtime-corrected-response"
@@ -135,15 +138,13 @@ def openai_text(model, instructions, user_input, temperature, max_tokens):
     return joined
 
 
-def pick_focus_topic(raw_topics):
-    topics = [line.strip() for line in raw_topics.splitlines() if line.strip()]
-    if not topics:
+def pick_from_list(raw, override):
+    items = [line.strip() for line in raw.splitlines() if line.strip()]
+    if not items:
         return ""
-    if SIM_FOCUS_INDEX.strip().isdigit():
-        return topics[int(SIM_FOCUS_INDEX.strip()) % len(topics)]
-    now = time.gmtime()
-    slot = now.tm_yday * 24 + now.tm_hour
-    return topics[slot % len(topics)]
+    if override.strip().isdigit():
+        return items[int(override.strip()) % len(items)]
+    return random.choice(items)
 
 
 def build_patient_input(transcript, is_first):
@@ -183,7 +184,9 @@ def main():
     patient_rules = rpc("get_prompt_v2", {"p_prompt_key": SIM_RULES_KEY, "p_therapy": None}) or ""
     focus_key = SIM_FOCUS_KEY.strip() or ("nlp_sim_focus_" + PATIENT_PHONE)
     focus_raw = rpc("get_prompt_v2", {"p_prompt_key": focus_key, "p_therapy": None}) or ""
-    focus_topic = pick_focus_topic(focus_raw)
+    focus_topic = pick_from_list(focus_raw, SIM_FOCUS_INDEX)
+    arcs_raw = rpc("get_prompt_v2", {"p_prompt_key": SIM_ARCS_KEY, "p_therapy": None}) or ""
+    session_arc = pick_from_list(arcs_raw, SIM_ARC_INDEX)
     if not prompt20.strip() or not pre_patient20.strip():
         raise SystemExit("sim therapist or sim pre_patient prompt is empty")
     if not patient_rules.strip():
@@ -200,6 +203,7 @@ def main():
     print("conversation_id: " + str(conversation_id))
     print("track: " + track + " | rounds: " + str(ROUNDS) + " | rules: " + SIM_RULES_KEY, flush=True)
     print("focus: " + (focus_topic or "NONE") + " | from: " + focus_key, flush=True)
+    print("arc: " + (session_arc or "NONE"), flush=True)
 
     patient_instructions = patient_rules + "\n\nPatient profile:\n" + patient20
     if focus_topic:
@@ -209,6 +213,13 @@ def main():
             + "\nThis is what is on your mind today. Bring it up in your own words, "
             "and let it stay the centre of gravity of the whole conversation. "
             "You may drift, but keep returning to it. Do not announce it as a topic."
+        )
+    if session_arc:
+        patient_instructions += (
+            "\n\nHow this session goes:\n"
+            + session_arc
+            + "\nLet this shape how you open and how the conversation develops. "
+            "Do not state it directly; let it show in what you say and how you say it."
         )
     transcript = []
     response20 = ""
