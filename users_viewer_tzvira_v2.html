@@ -112,6 +112,9 @@
 
 
     .round-num{
+      display:block;
+      width:100%;
+      flex-basis:100%;
       margin-top:14px;
       margin-bottom:2px;
       opacity:.5;
@@ -1498,7 +1501,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
       }
     }
 
-    return html.join('\n');
+    return html.join('');
   }
 
 
