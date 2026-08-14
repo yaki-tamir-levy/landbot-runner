@@ -103,8 +103,25 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     const therapistModel = Deno.env.get("THERAPIST_MODEL") || DEFAULT_MODEL;
     const correctorModel = Deno.env.get("CORRECTOR_MODEL") || DEFAULT_MODEL;
+    let effectiveSummary = (payload.value.summarized20 ?? "").trim();
+    if (!effectiveSummary) {
+      effectiveSummary = await fetchAccumulatedSummary(
+        correlationId,
+        payload.value.patient_id,
+      );
+    }
+    console.log(JSON.stringify({
+      event: "summary_source",
+      correlation_id: correlationId,
+      from_request: (payload.value.summarized20 ?? "").trim().length,
+      final_length: effectiveSummary.length,
+    }));
+
     const therapistInstructions = buildTherapistInstructions(payload.value);
-    const candidateInput = buildCandidateInput(payload.value);
+    const candidateInput = buildCandidateInput({
+      ...payload.value,
+      summarized20: effectiveSummary,
+    });
 
     diagnosticTherapistModel = therapistModel;
     diagnosticTherapistInstructions = therapistInstructions;
@@ -334,6 +351,49 @@ async function parseAndValidatePayload(
   }
 
   return { ok: true, value: record as RequestPayload };
+}
+
+async function fetchAccumulatedSummary(
+  correlationId: string,
+  patientId: string,
+): Promise<string> {
+  const phone = (patientId ?? "").trim();
+  if (!phone) return "";
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+      ?? Deno.env.get("SUPABASE_ANON_KEY")
+      ?? Deno.env.get("SUPABASE_KEY")
+      ?? "";
+    if (!supabaseUrl || !serviceKey) return "";
+    const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/get_summarized_linked_talk_v2`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_phone: phone }),
+    });
+    if (!res.ok) {
+      console.error(JSON.stringify({
+        event: "summary_fetch_failed",
+        correlation_id: correlationId,
+        http_status: res.status,
+      }));
+      return "";
+    }
+    const data = await res.json();
+    const value = data?.summarized_linked_talk;
+    return typeof value === "string" ? value : "";
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "summary_fetch_exception",
+      correlation_id: correlationId,
+    }));
+    return "";
+  }
 }
 
 const DEFAULT_CORRECTOR_KEY = "corrector";
