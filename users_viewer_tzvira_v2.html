@@ -111,6 +111,15 @@
 
 
 
+    .round-num{
+      display:inline-block;
+      width:2.6em;
+      text-align:left;
+      margin-inline-end:.5em;
+      opacity:.55;
+      font-variant-numeric:tabular-nums;
+      user-select:none;
+    }
 </style>
 
 <script>
@@ -1461,6 +1470,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
       );
     }
 
+    var patientRound = 0;
     for (var i=0;i<dialogLines.length;i++){
       var ln = dialogLines[i];
       if (!ln) continue;
@@ -1474,7 +1484,9 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
       var badge = badgeForHit(la.hit);
 
       if (ln.speaker === 'patient'){
-        html.push('<div' + la.attrs + '><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
+        patientRound++;
+        var roundHtml = '<span class="round-num" dir="ltr">' + patientRound + '.</span>';
+        html.push('<div' + la.attrs + '>' + roundHtml + '<span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
       } else if (ln.speaker === 'therapist'){
         html.push('<div' + la.attrs + '><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
       } else {
