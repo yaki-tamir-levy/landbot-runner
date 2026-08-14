@@ -165,9 +165,28 @@ function israelNowParts() {
   return { ...map, micro };
 }
 
+function israelUtcOffsetMinutes(date) {
+  // Derive the real Israel offset for this instant, instead of assuming it.
+  const utc = new Date(date.toLocaleString("en-US", { timeZone: "UTC" }));
+  const israel = new Date(date.toLocaleString("en-US", { timeZone: "Asia/Jerusalem" }));
+  return Math.round((israel.getTime() - utc.getTime()) / 60000);
+}
+
+function israelOffsetSuffix(date) {
+  const minutes = israelUtcOffsetMinutes(date);
+  const sign = minutes < 0 ? "-" : "+";
+  const abs = Math.abs(minutes);
+  const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+  const mm = String(abs % 60).padStart(2, "0");
+  return mm === "00" ? `${sign}${hh}` : `${sign}${hh}:${mm}`;
+}
+
 function lastSummaryAtIsraelWithPlus00() {
+  // Name kept for compatibility with existing callers.
+  // The value is Israel wall-clock time, tagged with the REAL Israel offset.
+  const now = new Date();
   const p = israelNowParts();
-  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}.${p.micro}+00`;
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}.${p.micro}${israelOffsetSuffix(now)}`;
 }
 
 function summaryHeaderIsrael() {
