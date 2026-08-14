@@ -112,13 +112,13 @@
 
 
     .round-num{
-      display:inline-block;
-      width:2.6em;
-      text-align:left;
-      margin-inline-end:.5em;
-      opacity:.55;
+      margin-top:14px;
+      margin-bottom:2px;
+      opacity:.5;
+      font-weight:700;
       font-variant-numeric:tabular-nums;
       user-select:none;
+      text-align:right;
     }
 </style>
 
@@ -1485,8 +1485,8 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
 
       if (ln.speaker === 'patient'){
         patientRound++;
-        var roundHtml = '<span class="round-num" dir="ltr">' + patientRound + '.</span>';
-        html.push('<div' + la.attrs + '>' + roundHtml + '<span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
+        html.push('<div class="round-num" dir="ltr">' + patientRound + '.</div>');
+        html.push('<div' + la.attrs + '><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
       } else if (ln.speaker === 'therapist'){
         html.push('<div' + la.attrs + '><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
       } else {
