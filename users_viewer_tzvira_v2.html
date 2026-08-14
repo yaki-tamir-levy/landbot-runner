@@ -1490,6 +1490,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
         patientRound++;
         html.push('<div class="round-num" dir="ltr">' + patientRound + '.</div>');
         html.push('<div' + la.attrs + '><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
+        html.push('<div class="line-spacer"></div>');
       } else if (ln.speaker === 'therapist'){
         html.push('<div' + la.attrs + '><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
       } else {
