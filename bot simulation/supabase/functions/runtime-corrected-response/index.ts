@@ -205,6 +205,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
           model: correctorModel,
           correctorInstructions,
           acceptedPriorHistory: payload.value.tzvira,
+          crossSessionSummary: effectiveSummary,
           previousAcceptedTherapistResponse: payload.value.response20 ?? "",
           currentPatientMessage: payload.value.question20,
           candidateResponse: candidateText,
@@ -576,6 +577,7 @@ async function runCorrector(args: {
   model: string;
   correctorInstructions: string;
   acceptedPriorHistory: string;
+  crossSessionSummary: string;
   previousAcceptedTherapistResponse: string;
   currentPatientMessage: string;
   candidateResponse: string;
@@ -583,10 +585,11 @@ async function runCorrector(args: {
   const correctorPayload = {
     experiment: "runtime_corrected_response_edge_function",
     no_look_ahead_contract:
-      "runtime payload contains accepted prior history, previous accepted therapist response, current patient message, and current candidate response only",
+      "runtime payload contains accepted prior history (current conversation only), a separate cross-session summary (prior conversations, may be empty), previous accepted therapist response, current patient message, and current candidate response only",
     response_format_instruction:
       "Return one valid JSON object only with action, final_response, and reason_codes. No Markdown and no text outside JSON.",
     accepted_prior_history: args.acceptedPriorHistory,
+    cross_session_summary: args.crossSessionSummary,
     previous_accepted_therapist_response: args.previousAcceptedTherapistResponse,
     current_patient_message: args.currentPatientMessage,
     candidate_response: args.candidateResponse,
