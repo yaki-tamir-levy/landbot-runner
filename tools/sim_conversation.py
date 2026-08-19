@@ -9,13 +9,40 @@ Configuration is read from the repository .env file and from the process
 environment. The .env file wins only where the process environment is silent.
 """
 
+import hashlib
 import json
 import os
 import random
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
+
+
+PATIENT_INDEX_BY_PHONE = {
+    "9990000002": 0,  # Uri
+    "9990000003": 1,  # Shiran
+    "9990000004": 2,  # Miri
+}
+
+
+def compute_risk_round_selected(patient_phone):
+    """Deterministic per-cycle selection.
+
+    All three separate script invocations within the same daily cycle (same
+    UTC hour) independently compute the same seed and therefore agree on
+    exactly one selected patient, with no coordination between the processes.
+    """
+    now = datetime.now(timezone.utc)
+    cycle_id = now.strftime("%Y-%m-%d-%H")
+    seed_hex = hashlib.md5(cycle_id.encode("utf-8")).hexdigest()
+    chosen_index = int(seed_hex, 16) % 3
+    my_index = PATIENT_INDEX_BY_PHONE.get(patient_phone)
+    selected = my_index is not None and my_index == chosen_index
+    print("risk_round_check: cycle_id={} chosen_index={} my_index={} selected={}".format(
+        cycle_id, chosen_index, my_index, selected), flush=True)
+    return selected
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / ".env"
@@ -65,6 +92,7 @@ SIM_FOCUS_INDEX = os.environ.get("SIM_FOCUS_INDEX", "")
 SIM_ARCS_KEY = os.environ.get("SIM_ARCS_KEY", "nlp_sim_arcs")
 SIM_ARC_INDEX = os.environ.get("SIM_ARC_INDEX", "")
 SIM_CORRECTOR_KEY = os.environ.get("SIM_CORRECTOR_KEY", "nlp_sim_corrector")
+SIM_RISK_INJECTION_KEY = os.environ.get("SIM_RISK_INJECTION_KEY", "nlp_sim_risk_injection")
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 RUNTIME_URL = SUPABASE_URL + "/functions/v1/runtime-corrected-response"
@@ -109,6 +137,28 @@ def rpc(name, params):
         "Accept": "application/json",
     }
     return http_json(SUPABASE_URL + "/rest/v1/rpc/" + name, "POST", headers, params)
+
+
+def fetch_risk_injection():
+    """Return the injection block with the risk phrase substituted in.
+
+    Returns an empty string on any failure. This fails closed: a failed fetch
+    simply means no risk injection this round, never a crash.
+    """
+    try:
+        template = rpc("get_prompt_v2", {"p_prompt_key": SIM_RISK_INJECTION_KEY, "p_therapy": None}) or ""
+        if not template.strip():
+            print("risk_injection: prompt row not found, skipping", flush=True)
+            return ""
+        phrase_data = rpc("get_random_active_risk_phrase", {})
+        pattern = phrase_data.get("pattern") if isinstance(phrase_data, dict) else None
+        if not pattern:
+            print("risk_injection: no active phrase returned, skipping", flush=True)
+            return ""
+        return template.replace("__RISK_PHRASE__", pattern)
+    except (Exception, SystemExit) as error:
+        print("risk_injection: fetch failed ({}), skipping".format(error), flush=True)
+        return ""
 
 
 def openai_text(model, instructions, user_input, temperature, max_tokens):
@@ -223,6 +273,18 @@ def main():
             + "\nLet this shape how you open and how the conversation develops. "
             "Do not state it directly; let it show in what you say and how you say it."
         )
+
+    risk_mode_active = compute_risk_round_selected(PATIENT_PHONE)
+    if risk_mode_active:
+        injection = fetch_risk_injection()
+        if injection:
+            patient_instructions = patient_instructions + "\n\n" + injection
+            print("risk_injection: ACTIVE for this run", flush=True)
+        else:
+            print("risk_injection: selected but fetch failed, running without it", flush=True)
+    else:
+        print("risk_injection: not selected this cycle", flush=True)
+
     transcript = []
     response20 = ""
 
