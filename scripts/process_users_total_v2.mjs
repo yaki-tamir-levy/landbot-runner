@@ -67,6 +67,7 @@ async function rebuildUsersTotalRiskFieldsFromRiskReviews({ id, patient_code }) 
   url.searchParams.set("select", "line_num,short_risk,risk_reasons");
   url.searchParams.set("id", `eq.${id}`);
   url.searchParams.set("patient_code", `eq.${patient_code}`);
+  url.searchParams.set("match_method", "eq.1");
   url.searchParams.set("order", "line_num.asc");
 
   const res = await fetch(url, { headers: supaHeaders() });

@@ -173,6 +173,11 @@ def _supabase_get(
         # v03 behavior: filter only NEW
         params[status_field] = "eq.NEW"
 
+    # V2 phrase matches (match_method=2) are shadow-only.
+    # Only AI-detected risks may trigger notifications.
+    if table == "risk_reviews_v2":
+        params["match_method"] = "eq.1"
+
     r = requests.get(url, headers=headers, params=params, timeout=timeout_seconds)
     ctype = r.headers.get("content-type", "")
 

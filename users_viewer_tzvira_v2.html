@@ -585,6 +585,7 @@ function getReviewerName(ev){
     CACHE.riskKeySet = new Set();    // keys that have any risk
     CACHE.riskForceKeySet = new Set(); // keys that have risk in status NEW/REVIEWED (VIEWED legacy)
     (allRisk || []).forEach(function(rr){
+      if (String(rr && rr.match_method || '').trim() !== '1') return;
       var k = riskKey(rr && rr.id, rr && rr.time_key, rr && rr.patient_code);
       if (!k) return;   // no patient_code -> skip this row, never build a wrong key
       if (!String(rr && rr.id || '').trim()) return;

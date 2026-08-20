@@ -497,7 +497,7 @@ def run_risk(rest: Rest, mailer: Mailer) -> int:
 
     rows = rest.select(
         "risk_reviews_v2",
-        {"select": "patient_code,time_key,status", "order": "time_key.asc"},
+        {"select": "patient_code,time_key,status", "match_method": "eq.1", "order": "time_key.asc"},
     )
     grouped = group_rows(rows, patient_scope, watermarks)
 
@@ -550,6 +550,7 @@ def run_daily(rest: Rest, mailer: Mailer) -> int:
         "risk_reviews_v2",
         {
             "select": "patient_code,time_key,status",
+            "match_method": "eq.1",
             "status": status_filter,
             "order": "time_key.asc",
         },
