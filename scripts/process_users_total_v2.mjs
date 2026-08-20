@@ -255,14 +255,42 @@ function parseNumberedLines(text) {
   return out;
 }
 
+const VALID_SEVERITIES = ["high", "medium", "low"];
+const DEFAULT_SEVERITY = "medium";
+
+// Fail soft: an unexpected model value must never abort the queue.
+function normalizeSeverity(raw, context) {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (VALID_SEVERITIES.includes(v)) return v;
+  console.warn(
+    `[WARN] invalid severity ${JSON.stringify(String(raw ?? ""))} ${context} -> defaulting to ${DEFAULT_SEVERITY}`
+  );
+  return DEFAULT_SEVERITY;
+}
+
+// Model reason line format: -N- | <short reason> | <severity>
 function parseReasonsMap(text) {
   const items = parseNumberedLines(text);
   const map = new Map();
   for (const it of items) {
     const body = String(it.text ?? "");
-    const idx = body.indexOf("|");
-    const reason = idx >= 0 ? body.slice(idx + 1).trim() : body.trim();
-    map.set(it.line_no, reason);
+    const parts = body.split("|");
+
+    let reason;
+    let severity;
+
+    if (parts.length >= 3) {
+      reason = parts.slice(1, parts.length - 1).join("|").trim();
+      severity = normalizeSeverity(parts[parts.length - 1], `for line_num=${it.line_no}`);
+    } else if (parts.length === 2) {
+      reason = parts[1].trim();
+      severity = normalizeSeverity("", `(severity field missing) for line_num=${it.line_no}`);
+    } else {
+      reason = body.trim();
+      severity = normalizeSeverity("", `(severity field missing) for line_num=${it.line_no}`);
+    }
+
+    map.set(it.line_no, { reason, severity });
   }
   return map;
 }
@@ -527,7 +555,7 @@ async function supaFetchPrompt10() {
 
 async function supaFetchActiveRiskPhrases() {
   const url = new URL(`${SUPABASE_URL}/rest/v1/${RISK_PHRASES_TABLE}`);
-  url.searchParams.set("select", "pattern");
+  url.searchParams.set("select", "pattern,severity");
   url.searchParams.set("is_active", "eq.true");
   url.searchParams.set("order", "pattern.asc");
 
@@ -543,13 +571,16 @@ async function supaFetchActiveRiskPhrases() {
   }
 
   const patterns = (Array.isArray(rows) ? rows : [])
-    .map((r) => String(r?.pattern ?? "").trim())
-    .filter((p) => p.length > 0);
+    .map((r) => ({
+      pattern: String(r?.pattern ?? "").trim(),
+      severity: normalizeSeverity(r?.severity, `for risk_phrases.pattern=${JSON.stringify(String(r?.pattern ?? ""))}`),
+    }))
+    .filter((p) => p.pattern.length > 0);
 
   const seen = new Set();
   const out = [];
   for (const p of patterns) {
-    const k = p.toLowerCase();
+    const k = p.pattern.toLowerCase();
     if (seen.has(k)) continue;
     seen.add(k);
     out.push(p);
@@ -587,7 +618,33 @@ async function supaRiskReviewExists({ id, time_key, patient_code, line_num }) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
-async function phraseScanAndInsertRisks({ id, time_key, patient_code, phone, name, conversation_id, numberedText, activeRiskPhrases }) {
+// PHRASE_SCAN_ONLY runs without the model pass, so the match_method=1 line numbers
+// for this exact conversation are read back from risk_reviews_v2.
+async function supaFetchModelFlaggedLineNums({ id, time_key, patient_code }) {
+  const url = new URL(`${SUPABASE_URL}/rest/v1/${RISK_REVIEWS_TABLE}`);
+  url.searchParams.set("select", "line_num");
+  url.searchParams.set("id", `eq.${id}`);
+  url.searchParams.set("time_key", `eq.${time_key}`);
+  url.searchParams.set("patient_code", `eq.${patient_code}`);
+  url.searchParams.set("match_method", "eq.1");
+
+  const res = await fetch(url, { headers: supaHeaders() });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`Supabase GET risk_reviews_v2 model lines failed: ${res.status} ${text}`);
+
+  let rows = [];
+  try {
+    rows = JSON.parse(text);
+  } catch {
+    rows = [];
+  }
+
+  return (Array.isArray(rows) ? rows : [])
+    .map((r) => Number(r?.line_num))
+    .filter((n) => Number.isFinite(n));
+}
+
+async function phraseScanAndInsertRisks({ id, time_key, patient_code, phone, name, conversation_id, numberedText, activeRiskPhrases, modelFlaggedLineNums = [] }) {
   if (!Array.isArray(activeRiskPhrases) || activeRiskPhrases.length === 0) return 0;
 
   const lines = parseNumberedLines(numberedText);
@@ -602,14 +659,27 @@ async function phraseScanAndInsertRisks({ id, time_key, patient_code, phone, nam
     const _t = String(lineText ?? "").trimStart().toLowerCase();
     if (!(_t.startsWith("q:") || _t.startsWith("שאלה:"))) continue;
 
-    let matchedPattern = null;
-    for (const pattern of activeRiskPhrases) {
-      if (textContainsPattern(lineText, pattern)) {
-        matchedPattern = pattern;
+    let matchedPhrase = null;
+    for (const phrase of activeRiskPhrases) {
+      if (textContainsPattern(lineText, phrase?.pattern)) {
+        matchedPhrase = phrase;
         break;
       }
     }
-    if (!matchedPattern) continue;
+    if (!matchedPhrase) continue;
+
+    const matchedPattern = matchedPhrase.pattern;
+
+    // Reconciliation: a phrase-only high (no model finding on the very same line) is written as medium.
+    const modelConfirmed = Array.isArray(modelFlaggedLineNums) && modelFlaggedLineNums.includes(lineNum);
+    const baseSeverity = normalizeSeverity(matchedPhrase.severity, `for risk_phrases.pattern=${JSON.stringify(matchedPattern)}`);
+    const finalSeverity = baseSeverity === "high" && !modelConfirmed ? "medium" : baseSeverity;
+
+    if (finalSeverity !== baseSeverity) {
+      console.log(
+        `[INFO] patient_code=${patient_code} line_num=${lineNum} phrase severity high downgraded to medium (no match_method=1 finding on this line)`
+      );
+    }
 
     const exists = await supaRiskReviewExists({
       id,
@@ -630,6 +700,7 @@ async function phraseScanAndInsertRisks({ id, time_key, patient_code, phone, nam
         line_num: lineNum,
         short_risk: lineText,
         risk_reasons: matchedPattern,
+        severity: finalSeverity,
         match_method: "2",
       },
     ]);
@@ -850,6 +921,8 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     time_key: lastSummaryAt,
   });
 
+  const modelFlaggedLineNums = [];
+
   const reasonsTrim = String(reasons ?? "").trim();
   if (reasonsTrim) {
     const riskLines = parseNumberedLines(String(risk ?? "").trim());
@@ -866,8 +939,13 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
         name,
         line_num: rl.line_no,
         short_risk: rl.text,
-        risk_reasons: reasonsMap.get(rl.line_no) ?? "",
+        risk_reasons: reasonsMap.get(rl.line_no)?.reason ?? "",
+        severity: reasonsMap.get(rl.line_no)?.severity ?? DEFAULT_SEVERITY,
       }));
+
+    for (const r of reviewRows) {
+      modelFlaggedLineNums.push(r.line_num);
+    }
 
     if (reviewRows.length) {
       await insertRiskReviewsRows(reviewRows);
@@ -886,6 +964,7 @@ async function processOneRow(row, prompt10Text, activeRiskPhrases) {
     conversation_id,
     numberedText,
     activeRiskPhrases,
+    modelFlaggedLineNums,
   });
 
   if (phraseInserted > 0) {
@@ -947,6 +1026,8 @@ async function runPhraseScanOnly() {
     return;
   }
 
+  const modelFlaggedLineNums = await supaFetchModelFlaggedLineNums({ id, time_key, patient_code });
+
   const phraseInserted = await phraseScanAndInsertRisks({
     id,
     time_key,
@@ -956,6 +1037,7 @@ async function runPhraseScanOnly() {
     conversation_id,
     numberedText,
     activeRiskPhrases,
+    modelFlaggedLineNums,
   });
 
   console.log(`[DONE] PHRASE_SCAN_ONLY patient_code=${patient_code} inserted=${phraseInserted} time_key=${time_key}`);
