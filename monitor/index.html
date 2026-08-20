@@ -88,7 +88,70 @@
 
   <main id="app"></main>
 
+  <!--
+    Bootstrap block. Kept SEPARATE from the main script on purpose.
+    A parse error in one script element kills that element entirely -
+    no try/catch inside it can run, because it never gets compiled. That
+    is exactly what happened on 20.8.2026: "let supabase" collided with
+    the global the supabase-js UMD bundle defines, the whole main block
+    failed to parse, and the page sat on "Loading..." forever with no
+    version and no redirect. A second block still executes, so this one
+    stamps the version and installs the last-resort error handlers.
+    Deliberately written in ES5 with no template literals.
+  -->
   <script>
+    window.MONITOR_PAGE_VERSION = "1.6";
+
+    (function () {
+      function setMeta(text) {
+        var meta = document.getElementById("meta");
+        if (meta) {
+          meta.textContent = "Page " + window.MONITOR_PAGE_VERSION + " - " + text;
+        }
+      }
+
+      function fail(what, detail) {
+        setMeta(what);
+
+        var app = document.getElementById("app");
+        if (!app) return;
+
+        var box = document.createElement("div");
+        box.className = "error";
+        box.textContent = detail ? (what + ": " + detail) : what;
+
+        app.innerHTML = "";
+        app.appendChild(box);
+      }
+
+      window.monitorSetMeta = setMeta;
+      window.monitorFail = fail;
+
+      setMeta("starting");
+
+      window.addEventListener("error", function (event) {
+        fail(
+          "page script error",
+          (event && event.message) ? event.message : String(event && event.error),
+        );
+      });
+
+      window.addEventListener("unhandledrejection", function (event) {
+        var reason = event && event.reason;
+        fail(
+          "unhandled rejection",
+          (reason && reason.message) ? reason.message : String(reason),
+        );
+      });
+    })();
+  </script>
+
+  <script>
+    // Everything below runs inside an IIFE. Without it, a top-level
+    // "let supabase" collides with the global the UMD bundle defines and
+    // the whole block fails to parse. login_phone_v2.html has always used
+    // this pattern, which is why it never hit the bug.
+    (function () {
     const SUPABASE_URL = "https://qcwimczsiuxkarwfiyai.supabase.co";
 
     // Public anon key. Already published in login_phone_v2.html line 49;
@@ -105,7 +168,7 @@
     const LOGIN_PATH = "../login_phone_v2.html";
     const RETURN_TO = "monitor/index.html";
 
-    let supabase = null;
+    let sb = null;
     let refreshTimer = null;
 
     function goToLogin() {
@@ -120,9 +183,10 @@
     }
 
     function showError(message) {
-      const app = document.getElementById("app");
-      app.innerHTML =
-        `<div class="error">${escapeHtml(message)}</div>`;
+      // Routed through the bootstrap block so the header stops saying
+      // "Loading..." as well. The page must never sit on that with no
+      // indication of what went wrong.
+      window.monitorFail("stopped", message);
     }
 
     function formatTime(value) {
@@ -219,7 +283,7 @@
       const app = document.getElementById("app");
 
       meta.textContent =
-        `Conversation Trace - Version 1.5 ${data.version} - Last refresh: ${formatTime(data.refreshed_at)}`;
+        `Conversation Trace - Page ${window.MONITOR_PAGE_VERSION} / Function ${data.version} - Last refresh: ${formatTime(data.refreshed_at)}`;
 
       if (!data.conversations || data.conversations.length === 0) {
         app.innerHTML = "<p>No events found.</p>";
@@ -284,7 +348,7 @@
         // Re-read the session every cycle rather than caching the token,
         // so an access token refreshed in the background is picked up.
         const { data: sessionData, error: sessionError } =
-          await supabase.auth.getSession();
+          await sb.auth.getSession();
 
         if (sessionError) throw sessionError;
 
@@ -320,6 +384,8 @@
     }
 
     async function init() {
+      window.monitorSetMeta("connecting");
+
       if (!window.supabase ||
           typeof window.supabase.createClient !== "function") {
         showError(
@@ -328,7 +394,7 @@
         return;
       }
 
-      supabase = window.supabase.createClient(
+      sb = window.supabase.createClient(
         SUPABASE_URL,
         SUPABASE_ANON_KEY,
         {
@@ -340,7 +406,7 @@
         },
       );
 
-      const { data: sessionData } = await supabase.auth.getSession();
+      const { data: sessionData } = await sb.auth.getSession();
 
       if (!sessionData || !sessionData.session) {
         goToLogin();
@@ -351,7 +417,15 @@
       refreshTimer = setInterval(loadMonitor, REFRESH_MS);
     }
 
-    init();
+    // Nothing above this line may throw unhandled. init() is async, so a
+    // rejection would otherwise vanish silently and leave the page blank.
+    init().catch(function (error) {
+      window.monitorFail(
+        "startup failed",
+        (error && error.message) ? error.message : String(error),
+      );
+    });
+    })();
   </script>
 </body>
 </html>
