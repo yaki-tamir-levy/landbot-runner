@@ -141,7 +141,7 @@ function buildPayload(rows: EventRow[]) {
   );
 
   return {
-    version: "1.2",
+    version: "1.3",
     refreshed_at: new Date().toISOString(),
     count: conversations.length,
     conversations,
@@ -195,22 +195,84 @@ serve(async (req) => {
     );
   }
 
+  const authHeader =
+    req.headers.get("Authorization");
+
+  if (!authHeader) {
+    return new Response(
+      JSON.stringify({
+        error: "missing_authorization",
+      }),
+      {
+        status: 401,
+        headers: {
+          ...corsHeaders,
+          "content-type":
+            "application/json; charset=utf-8",
+        },
+      },
+    );
+  }
+
   const supabase = createClient(
     supabaseUrl,
     supabaseAnonKey,
+    {
+      global: {
+        headers: {
+          Authorization: authHeader,
+        },
+      },
+    },
   );
 
+  // Reads through get_bot_monitor_events(), a SECURITY DEFINER wrapper
+  // that filters on current_user_is_admin() in its own body. The view
+  // itself is revoked from anon and authenticated, so this RPC is the
+  // only path in. The modifiers below are applied by PostgREST to the
+  // function result set, exactly as they were applied to the view.
   const { data, error } = await supabase
-    .from("conversation_events_v2_view")
-    .select("*")
+    .rpc("get_bot_monitor_events")
     .gte("created_at", MONITOR_CUTOFF_ISO)
     .order("created_at", { ascending: false })
     .limit(200);
 
   if (error) {
+    const code = String(
+      (error as { code?: string }).code ?? "",
+    );
+
+    const message = String(error.message ?? "");
+
+    // A missing EXECUTE grant surfaces as SQLSTATE 42501; a malformed or
+    // expired token surfaces as a PGRST3xx code or a JWS decode failure.
+    // Neither is reported verbatim to the caller, and both are given a
+    // status the browser can act on by sending the user back to login.
+    const isPermission = code === "42501";
+
+    const isBadToken = code.startsWith("PGRST3") ||
+      message.includes("JWS") ||
+      message.includes("JWT");
+
+    if (isPermission || isBadToken) {
+      return new Response(
+        JSON.stringify({
+          error: isPermission ? "forbidden" : "invalid_token",
+        }),
+        {
+          status: isPermission ? 403 : 401,
+          headers: {
+            ...corsHeaders,
+            "content-type":
+              "application/json; charset=utf-8",
+          },
+        },
+      );
+    }
+
     return new Response(
       JSON.stringify({
-        error: error.message,
+        error: message,
       }),
       {
         status: 500,

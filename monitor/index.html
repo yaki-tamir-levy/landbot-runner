@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>BOT Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     body {
       margin: 0;
@@ -88,8 +89,41 @@
   <main id="app"></main>
 
   <script>
-    const API_URL = "https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/bot-monitor";
+    const SUPABASE_URL = "https://qcwimczsiuxkarwfiyai.supabase.co";
+
+    // Public anon key. Already published in login_phone_v2.html line 49;
+    // repeating it here adds no exposure. It is not what grants access -
+    // get_bot_monitor_events() is granted to authenticated only, and its
+    // body filters on current_user_is_admin().
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI";
+
+    const API_URL = `${SUPABASE_URL}/functions/v1/bot-monitor`;
     const REFRESH_MS = 10000;
+
+    // This page sits one directory below the repository root; the login
+    // page sits at the root. Both hops verified against URL resolution.
+    const LOGIN_PATH = "../login_phone_v2.html";
+    const RETURN_TO = "monitor/index.html";
+
+    let supabase = null;
+    let refreshTimer = null;
+
+    function goToLogin() {
+      if (refreshTimer !== null) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+
+      window.location.replace(
+        `${LOGIN_PATH}?return_to=${encodeURIComponent(RETURN_TO)}`,
+      );
+    }
+
+    function showError(message) {
+      const app = document.getElementById("app");
+      app.innerHTML =
+        `<div class="error">${escapeHtml(message)}</div>`;
+    }
 
     function formatTime(value) {
       const date = value ? new Date(value) : new Date();
@@ -185,7 +219,7 @@
       const app = document.getElementById("app");
 
       meta.textContent =
-        `Conversation Trace - Version 1.4 ${data.version} - Last refresh: ${formatTime(data.refreshed_at)}`;
+        `Conversation Trace - Version 1.5 ${data.version} - Last refresh: ${formatTime(data.refreshed_at)}`;
 
       if (!data.conversations || data.conversations.length === 0) {
         app.innerHTML = "<p>No events found.</p>";
@@ -246,13 +280,33 @@
     }
 
     async function loadMonitor() {
-      const app = document.getElementById("app");
-
       try {
+        // Re-read the session every cycle rather than caching the token,
+        // so an access token refreshed in the background is picked up.
+        const { data: sessionData, error: sessionError } =
+          await supabase.auth.getSession();
+
+        if (sessionError) throw sessionError;
+
+        const session = sessionData && sessionData.session;
+        if (!session || !session.access_token) {
+          goToLogin();
+          return;
+        }
+
         const response = await fetch(`${API_URL}?t=${Date.now()}`, {
           method: "GET",
           cache: "no-store",
+          headers: {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": `Bearer ${session.access_token}`,
+          },
         });
+
+        if (response.status === 401 || response.status === 403) {
+          goToLogin();
+          return;
+        }
 
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
@@ -261,13 +315,43 @@
         const data = await response.json();
         render(data);
       } catch (error) {
-        app.innerHTML =
-          `<div class="error">Failed to load BOT Monitor: ${escapeHtml(error.message)}</div>`;
+        showError(`Failed to load BOT Monitor: ${error.message}`);
       }
     }
 
-    loadMonitor();
-    setInterval(loadMonitor, REFRESH_MS);
+    async function init() {
+      if (!window.supabase ||
+          typeof window.supabase.createClient !== "function") {
+        showError(
+          "Supabase library did not load. Reload the page and try again.",
+        );
+        return;
+      }
+
+      supabase = window.supabase.createClient(
+        SUPABASE_URL,
+        SUPABASE_ANON_KEY,
+        {
+          auth: {
+            persistSession: true,
+            autoRefreshToken: true,
+            detectSessionInUrl: true,
+          },
+        },
+      );
+
+      const { data: sessionData } = await supabase.auth.getSession();
+
+      if (!sessionData || !sessionData.session) {
+        goToLogin();
+        return;
+      }
+
+      await loadMonitor();
+      refreshTimer = setInterval(loadMonitor, REFRESH_MS);
+    }
+
+    init();
   </script>
 </body>
 </html>
