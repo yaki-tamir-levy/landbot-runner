@@ -47,6 +47,15 @@
       font-weight:700; border:2px solid #d1d5db; border-radius:10px; padding:8px 10px; background:#fff; min-width:140px; text-align:center
     }
     .btn-home{font-weight:400; min-width:150px; border-width:1px}
+    /* Inline copy of the header .btn-home, placed next to each RISK badge.
+       Same class, same delegated handler - only the size is reduced, because a
+       150px button does not fit inside a transcript line. */
+    .btn-home.btn-home-inline{
+      min-width:0; padding:1px 8px; margin-inline-start:6px; border-radius:999px;
+      font-size:13px; font-weight:900; line-height:1.5; vertical-align:middle;
+      border:1px solid #d1d5db; background:#fff; cursor:pointer; text-align:center
+    }
+    .btn-home.btn-home-inline:hover{ background:#f3f4f6 }
     .btn-selected{ background:#f3e8ff !important; border-color:#e9d5ff !important; }
     .btn-placeholder{ display:none; }
     .btn-state-active{ background:#dcfce7; border-color:#bbf7d0; }
@@ -1418,7 +1427,11 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
       var cls = 'open';
       if (stDb === 'VIEWED' || stDb === 'REVIEWED') { label = 'צפיתי'; cls = 'open'; }
       if (stDb === 'CHECKED') { label = 'מבטל סיכון'; cls = 'checked'; }
-      return ' <span class="risk-badge ' + cls + '">' + escapeHtml(label) + '</span>';
+      // The button carries the SAME .btn-home class as the one in the talk header,
+      // so the existing delegated handler on el.out runs it - no new scroll code and
+      // no new destination. Icon + identical title, because the inline slot is narrow.
+      return ' <span class="risk-badge ' + cls + '">' + escapeHtml(label) + '</span>'
+           + ' <button type="button" class="btn-home btn-home-inline" title="חזרה למסך הראשון" aria-label="חזרה למסך הראשון">⌂</button>';
     }
 
     function controlsForHit(talkId, lineNum, hit){
