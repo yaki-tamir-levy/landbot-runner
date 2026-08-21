@@ -1,4 +1,4 @@
-name: SIM Conversation (manual)
+name: SIM Conversation (scheduled + manual)
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ on:
           - nlp_sim_patient_rules_terse
           - nlp_sim_patient_rules_agreeable
       patient_phone:
-        description: "Simulated patient phone"
+        description: "Simulated patient phone (NLP_CBT 999000000 2/3/4, CLINIC 888000000 1/2/3)"
         required: true
         default: "9990000002"
       round_delay:
@@ -26,18 +26,31 @@ on:
         default: "3"
   schedule:
     # All times are UTC. GitHub Actions has no timezone support.
-    # Minutes are 03/13/23 on purpose: round-hour slots are the most congested
-    # and GitHub delays them. Summer (IDT): 07/10/13 UTC = 10:00/13:00/16:00 Israel.
+    # Minutes are 03/13/23/33/43/53 on purpose: round-hour slots are the most
+    # congested and GitHub delays them. Summer (IDT): 07/10/13 UTC =
+    # 10:00/13:00/16:00 Israel.
     # WINTER (IST): these land one hour later in Israel. Update then.
+    # The minute field is also the patient selector - see "Resolve patient for
+    # this run" below. 03/13/23 are the NLP_CBT patients, 33/43/53 the CLINIC
+    # patients. Six runs per hour slot, still ten minutes apart.
     - cron: "3 7 * * *"
     - cron: "13 7 * * *"
     - cron: "23 7 * * *"
+    - cron: "33 7 * * *"
+    - cron: "43 7 * * *"
+    - cron: "53 7 * * *"
     - cron: "3 10 * * *"
     - cron: "13 10 * * *"
     - cron: "23 10 * * *"
+    - cron: "33 10 * * *"
+    - cron: "43 10 * * *"
+    - cron: "53 10 * * *"
     - cron: "3 13 * * *"
     - cron: "13 13 * * *"
     - cron: "23 13 * * *"
+    - cron: "33 13 * * *"
+    - cron: "43 13 * * *"
+    - cron: "53 13 * * *"
 
 concurrency:
   group: sim-conversation
@@ -68,12 +81,26 @@ jobs:
             SCHED="${{ github.event.schedule }}"
             MIN="${SCHED%% *}"
             echo "triggered by cron: $SCHED (minute field: $MIN)"
+            # The therapist and corrector prompts are NOT chosen here. The
+            # script reads therapy_track from the patient row and resolves them
+            # itself, so 999* runs get the nlp_sim_* prompts and 888* runs get
+            # the clinic_sim_* prompts. Only the patient persona is set here.
             case "$MIN" in
+              # NLP_CBT track
               3)  echo "phone=9990000002" >> $GITHUB_OUTPUT
                   echo "rules=nlp_sim_patient_rules" >> $GITHUB_OUTPUT ;;
               13) echo "phone=9990000003" >> $GITHUB_OUTPUT
                   echo "rules=nlp_sim_patient_rules_terse" >> $GITHUB_OUTPUT ;;
               23) echo "phone=9990000004" >> $GITHUB_OUTPUT
+                  echo "rules=nlp_sim_patient_rules_agreeable" >> $GITHUB_OUTPUT ;;
+              # CLINIC track. The persona prompts are track-neutral and are
+              # deliberately shared with the NLP_CBT patients above; no
+              # clinic_sim_patient_rules* row exists in prompt_information_v2.
+              33) echo "phone=8880000001" >> $GITHUB_OUTPUT
+                  echo "rules=nlp_sim_patient_rules" >> $GITHUB_OUTPUT ;;
+              43) echo "phone=8880000002" >> $GITHUB_OUTPUT
+                  echo "rules=nlp_sim_patient_rules_terse" >> $GITHUB_OUTPUT ;;
+              53) echo "phone=8880000003" >> $GITHUB_OUTPUT
                   echo "rules=nlp_sim_patient_rules_agreeable" >> $GITHUB_OUTPUT ;;
               *)  echo "unexpected cron minute: $MIN" >&2
                   exit 1 ;;

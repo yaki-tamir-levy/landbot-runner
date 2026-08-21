@@ -20,28 +20,48 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-PATIENT_INDEX_BY_PHONE = {
-    "9990000002": 0,  # Uri
-    "9990000003": 1,  # Shiran
-    "9990000004": 2,  # Miri
+# One roster per therapy track. The draw is made separately for each track,
+# so every cycle selects exactly one NLP_CBT patient AND, independently of it,
+# exactly one CLINIC patient. The salt keeps the two draws uncorrelated; the
+# empty NLP_CBT salt reproduces the seed used before CLINIC was added, so the
+# existing three patients keep behaving exactly as they did.
+RISK_ROSTER_BY_TRACK = {
+    "NLP_CBT": {
+        "salt": "",
+        "phones": ["9990000002", "9990000003", "9990000004"],  # Uri, Shiran, Miri
+    },
+    "CLINIC": {
+        "salt": "|CLINIC",
+        "phones": ["8880000001", "8880000002", "8880000003"],
+    },
 }
 
 
-def compute_risk_round_selected(patient_phone):
-    """Deterministic per-cycle selection.
+def compute_risk_round_selected(patient_phone, track):
+    """Deterministic per-cycle, per-track selection.
 
-    All three separate script invocations within the same daily cycle (same
-    UTC hour) independently compute the same seed and therefore agree on
-    exactly one selected patient, with no coordination between the processes.
+    Every script invocation within the same daily cycle (same UTC hour) and the
+    same track independently computes the same seed, and they therefore agree
+    on exactly one selected patient inside that track, with no coordination
+    between the processes. Each track draws on its own, so an NLP_CBT run and a
+    CLINIC run in the same cycle never influence one another.
     """
     now = datetime.now(timezone.utc)
     cycle_id = now.strftime("%Y-%m-%d-%H")
-    seed_hex = hashlib.md5(cycle_id.encode("utf-8")).hexdigest()
-    chosen_index = int(seed_hex, 16) % 3
-    my_index = PATIENT_INDEX_BY_PHONE.get(patient_phone)
+    normalized = (track or "").strip().upper()
+    roster = RISK_ROSTER_BY_TRACK.get(normalized)
+    if roster is None:
+        print("risk_round_check: cycle_id={} track={!r} has no roster, selected=False".format(
+            cycle_id, track), flush=True)
+        return False
+    phones = roster["phones"]
+    seed_input = cycle_id + roster["salt"]
+    seed_hex = hashlib.md5(seed_input.encode("utf-8")).hexdigest()
+    chosen_index = int(seed_hex, 16) % len(phones)
+    my_index = phones.index(patient_phone) if patient_phone in phones else None
     selected = my_index is not None and my_index == chosen_index
-    print("risk_round_check: cycle_id={} chosen_index={} my_index={} selected={}".format(
-        cycle_id, chosen_index, my_index, selected), flush=True)
+    print("risk_round_check: cycle_id={} track={} seed_input={} chosen_index={} my_index={} selected={}".format(
+        cycle_id, normalized, seed_input, chosen_index, my_index, selected), flush=True)
     return selected
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -84,15 +104,42 @@ ROUNDS = int(os.environ.get("SIM_ROUNDS", "10"))
 SOURCE = os.environ.get("SIM_SOURCE", "A")
 PATIENT_MODEL = os.environ.get("SIM_PATIENT_MODEL", "gpt-5.4")
 ROUND_DELAY_SECONDS = float(os.environ.get("SIM_ROUND_DELAY", "3"))
-SIM_THERAPIST_KEY = os.environ.get("SIM_THERAPIST_KEY", "nlp_sim_therapist")
+SIM_THERAPIST_KEY_OVERRIDE = os.environ.get("SIM_THERAPIST_KEY", "").strip()
 SIM_PRE_PATIENT_KEY = os.environ.get("SIM_PRE_PATIENT_KEY", "nlp_sim_pre_patient")
 SIM_RULES_KEY = os.environ.get("SIM_RULES_KEY", "nlp_sim_patient_rules")
 SIM_FOCUS_KEY = os.environ.get("SIM_FOCUS_KEY", "")
 SIM_FOCUS_INDEX = os.environ.get("SIM_FOCUS_INDEX", "")
 SIM_ARCS_KEY = os.environ.get("SIM_ARCS_KEY", "nlp_sim_arcs")
 SIM_ARC_INDEX = os.environ.get("SIM_ARC_INDEX", "")
-SIM_CORRECTOR_KEY = os.environ.get("SIM_CORRECTOR_KEY", "nlp_sim_corrector")
+SIM_CORRECTOR_KEY_OVERRIDE = os.environ.get("SIM_CORRECTOR_KEY", "").strip()
 SIM_RISK_INJECTION_KEY = os.environ.get("SIM_RISK_INJECTION_KEY", "nlp_sim_risk_injection")
+
+TRACK_PROMPT_KEYS = {
+    "NLP_CBT": {"therapist": "nlp_sim_therapist", "corrector": "nlp_sim_corrector"},
+    "CLINIC": {"therapist": "clinic_sim_therapist", "corrector": "clinic_sim_corrector"},
+}
+DEFAULT_TRACK = "NLP_CBT"
+
+
+def resolve_prompt_keys(track):
+    """Pick therapist and corrector prompt keys from the patient therapy_track.
+
+    An explicit environment variable always wins, so a manual run can still
+    force any prompt key. An unknown track falls back to NLP_CBT, which keeps
+    the pre-existing behaviour for every patient that is not CLINIC.
+    """
+    normalized = (track or "").strip().upper()
+    keys = TRACK_PROMPT_KEYS.get(normalized)
+    if keys is None:
+        print("prompt_keys: unknown track {!r}, falling back to {}".format(track, DEFAULT_TRACK), flush=True)
+        keys = TRACK_PROMPT_KEYS[DEFAULT_TRACK]
+    therapist_key = SIM_THERAPIST_KEY_OVERRIDE or keys["therapist"]
+    corrector_key = SIM_CORRECTOR_KEY_OVERRIDE or keys["corrector"]
+    print("prompt_keys: track={} therapist={} corrector={} (env override: therapist={} corrector={})".format(
+        normalized or "NONE", therapist_key, corrector_key,
+        bool(SIM_THERAPIST_KEY_OVERRIDE), bool(SIM_CORRECTOR_KEY_OVERRIDE)), flush=True)
+    return therapist_key, corrector_key
+
 
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 RUNTIME_URL = SUPABASE_URL + "/functions/v1/runtime-corrected-response"
@@ -230,7 +277,9 @@ def main():
     if not patient20.strip():
         raise SystemExit("patient profile (user_text) is empty")
 
-    prompt20 = rpc("get_prompt_v2", {"p_prompt_key": SIM_THERAPIST_KEY, "p_therapy": None}) or ""
+    therapist_key, corrector_key = resolve_prompt_keys(track)
+
+    prompt20 = rpc("get_prompt_v2", {"p_prompt_key": therapist_key, "p_therapy": None}) or ""
     pre_patient20 = rpc("get_prompt_v2", {"p_prompt_key": SIM_PRE_PATIENT_KEY, "p_therapy": None}) or ""
     patient_rules = rpc("get_prompt_v2", {"p_prompt_key": SIM_RULES_KEY, "p_therapy": None}) or ""
     focus_key = SIM_FOCUS_KEY.strip() or ("nlp_sim_focus_" + PATIENT_PHONE)
@@ -239,7 +288,8 @@ def main():
     arcs_raw = rpc("get_prompt_v2", {"p_prompt_key": SIM_ARCS_KEY, "p_therapy": None}) or ""
     session_arc = pick_from_list(arcs_raw, SIM_ARC_INDEX)
     if not prompt20.strip() or not pre_patient20.strip():
-        raise SystemExit("sim therapist or sim pre_patient prompt is empty")
+        raise SystemExit("sim therapist or sim pre_patient prompt is empty: "
+                         + therapist_key + " / " + SIM_PRE_PATIENT_KEY)
     if not patient_rules.strip():
         raise SystemExit("sim patient rules prompt is empty: " + SIM_RULES_KEY)
 
@@ -255,7 +305,8 @@ def main():
     print("track: " + track + " | rounds: " + str(ROUNDS) + " | rules: " + SIM_RULES_KEY, flush=True)
     print("focus: " + (focus_topic or "NONE") + " | from: " + focus_key, flush=True)
     print("arc: " + (session_arc or "NONE"), flush=True)
-    print("corrector: " + SIM_CORRECTOR_KEY, flush=True)
+    print("therapist: " + therapist_key, flush=True)
+    print("corrector: " + corrector_key, flush=True)
 
     patient_instructions = patient_rules + "\n\nPatient profile:\n" + patient20
     if focus_topic:
@@ -274,7 +325,7 @@ def main():
             "Do not state it directly; let it show in what you say and how you say it."
         )
 
-    risk_mode_active = compute_risk_round_selected(PATIENT_PHONE)
+    risk_mode_active = compute_risk_round_selected(PATIENT_PHONE, track)
     if risk_mode_active:
         injection = fetch_risk_injection()
         if injection:
@@ -307,7 +358,7 @@ def main():
             "question20": question,
             "patient_id": PATIENT_PHONE,
             "session_id": str(conversation_id),
-            "corrector_prompt_key": SIM_CORRECTOR_KEY,
+            "corrector_prompt_key": corrector_key,
         }
         result = http_json(
             RUNTIME_URL,

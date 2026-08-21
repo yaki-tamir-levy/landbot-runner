@@ -47,15 +47,18 @@
       font-weight:700; border:2px solid #d1d5db; border-radius:10px; padding:8px 10px; background:#fff; min-width:140px; text-align:center
     }
     .btn-home{font-weight:400; min-width:150px; border-width:1px}
-    /* Inline copy of the header .btn-home, placed next to each RISK badge.
-       Same class, same delegated handler - only the size is reduced, because a
-       150px button does not fit inside a transcript line. */
-    .btn-home.btn-home-inline{
-      min-width:0; padding:1px 8px; margin-inline-start:6px; border-radius:999px;
-      font-size:13px; font-weight:900; line-height:1.5; vertical-align:middle;
-      border:1px solid #d1d5db; background:#fff; cursor:pointer; text-align:center
+    /* Own row under every risk transcript line, holding the risk badge and a
+       full-size .btn-home. The button is NOT shrunk: it carries the plain
+       .btn-home class and nothing else, so it is identical to the header button
+       - same label, same 150px min-width, same border and padding. It cannot sit
+       inside the transcript line at that width, hence the separate row. */
+    .risk-actions{
+      display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+      margin:4px 0 2px 0; padding:0 4px;
     }
-    .btn-home.btn-home-inline:hover{ background:#f3f4f6 }
+    .risk-actions .risk-badge{ margin-inline-start:0 }
+    .risk-actions .btn-home{ cursor:pointer }
+    .risk-actions .btn-home:hover{ background:#f3f4f6 }
     .btn-selected{ background:#f3e8ff !important; border-color:#e9d5ff !important; }
     .btn-placeholder{ display:none; }
     .btn-state-active{ background:#dcfce7; border-color:#bbf7d0; }
@@ -92,6 +95,10 @@
     .risk-badge{ display:inline-block; margin-inline-start:8px; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:900; border:1px solid #ddd; background:#fff; }
     .risk-badge.open{ border-color:#fecaca; background:#ffe4e6; }
     .risk-badge.checked{ border-color:#bbf7d0; background:#d1fae5; color:#065f46; }
+    /* Three-tier severity tint. Only ever applied to the NEW/RISK badge. */
+    .risk-badge.sev-high{ border-color:#fca5a5; background:#fee2e2; color:#7f1d1d; }
+    .risk-badge.sev-medium{ border-color:#fdba74; background:#ffedd5; color:#7c2d12; }
+    .risk-badge.sev-low{ border-color:#fde047; background:#fef9c3; color:#713f12; }
     .risk-selected{ box-shadow:0 0 0 3px var(--hi) inset; }
     #statusBar{margin:10px 0}
     #statusBar .err{background:#fee2e2;border:1px solid #fecaca;color:#7f1d1d;padding:10px;border-radius:10px}
@@ -1347,6 +1354,9 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
         reviewer: rr.reviewer || '',
         short_risk: rr.short_risk || '',
         risk_reasons: rr.risk_reasons || '',
+        // Both columns are already in the SELECT list; they were being dropped here.
+        severity: (rr.severity != null ? String(rr.severity) : ''),
+        match_method: (rr.match_method != null ? String(rr.match_method) : ''),
         review_notes: (rr.review_notes != null ? String(rr.review_notes) : '')
       });
     });
@@ -1420,6 +1430,10 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
       return { attrs: attrs, hit: hit, lineNum: n };
     }
 
+    // Severity is stored lowercase in risk_reviews_v2. Anything outside these
+    // three keys - including NULL - leaves the badge exactly as it was.
+    var SEVERITY_WORD = { high: 'חמור', medium: 'בינוני', low: 'חלש' };
+
     function badgeForHit(hit){
       if (!hit) return '';
       var stDb = normStatus(hit.status);
@@ -1427,11 +1441,29 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
       var cls = 'open';
       if (stDb === 'VIEWED' || stDb === 'REVIEWED') { label = 'צפיתי'; cls = 'open'; }
       if (stDb === 'CHECKED') { label = 'מבטל סיכון'; cls = 'checked'; }
-      // The button carries the SAME .btn-home class as the one in the talk header,
-      // so the existing delegated handler on el.out runs it - no new scroll code and
-      // no new destination. Icon + identical title, because the inline slot is narrow.
-      return ' <span class="risk-badge ' + cls + '">' + escapeHtml(label) + '</span>'
-           + ' <button type="button" class="btn-home btn-home-inline" title="חזרה למסך הראשון" aria-label="חזרה למסך הראשון">⌂</button>';
+      // The severity word and tint are for the untreated RISK badge only. A badge
+      // that already says צפיתי or מבטל סיכון is left untouched.
+      if (label === 'RISK'){
+        var sev = String(hit.severity || '').trim().toLowerCase();
+        var word = SEVERITY_WORD[sev];
+        if (word){
+          label = 'RISK · ' + word;
+          cls += ' sev-' + sev;
+        }
+      }
+      return '<span class="risk-badge ' + cls + '">' + escapeHtml(label) + '</span>';
+    }
+
+    // The badge and a full-size "חזרה למסך הראשון" button, on their own row under
+    // the transcript line. The button carries the SAME .btn-home class as the one
+    // in the talk header and nothing else, so the existing delegated handler on
+    // el.out runs it - no new scroll code and no new destination.
+    function riskActionsRow(hit){
+      if (!hit) return '';
+      return '<div class="risk-actions">'
+           + badgeForHit(hit)
+           + '<button type="button" class="btn-home" title="חזרה למסך הראשון">חזרה למסך הראשון</button>'
+           + '</div>';
     }
 
     function controlsForHit(talkId, lineNum, hit){
@@ -1498,17 +1530,22 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
       }
 
       var la = lineAttrs(ln);
-      var badge = badgeForHit(la.hit);
+      // Empty string for every line without a risk hit, so a plain line renders
+      // exactly as before - no extra element and no extra marking.
+      var riskRow = riskActionsRow(la.hit);
 
       if (ln.speaker === 'patient'){
         patientRound++;
         html.push('<div class="round-num" dir="ltr">' + patientRound + '.</div>');
-        html.push('<div' + la.attrs + '><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
+        html.push('<div' + la.attrs + '><span class="speaker speaker-patient">' + escapeHtml(patientName) + ':</span> ' + escapeHtml(ln.body || '') + '</div>');
+        html.push(riskRow);
         html.push('<div class="line-spacer"></div>');
       } else if (ln.speaker === 'therapist'){
-        html.push('<div' + la.attrs + '><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + badge + '</div>');
+        html.push('<div' + la.attrs + '><span class="speaker speaker-therapist">המטפל:</span> ' + escapeHtml(ln.body || '') + '</div>');
+        html.push(riskRow);
       } else {
-        html.push('<div' + la.attrs + '>' + escapeHtml(ln.body || '') + badge + '</div>');
+        html.push('<div' + la.attrs + '>' + escapeHtml(ln.body || '') + '</div>');
+        html.push(riskRow);
       }
 
       if (la.hit){
