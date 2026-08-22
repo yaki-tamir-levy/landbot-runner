@@ -80,6 +80,13 @@
     .pill[data-act="goto"]{ cursor:pointer; }
     .pill[data-act="goto"]:hover{ filter:brightness(0.98); box-shadow:0 0 0 2px #fecaca inset; }
     .pill[data-act="goto"]:focus{ outline:3px solid var(--hi); outline-offset:2px; }
+    /* Severity tint for the summary chips. Same three colours as .risk-badge.sev-*,
+       written as a parallel rule because .pill and .risk-badge have different size,
+       padding and base colours - reusing the .risk-badge classes here would shrink
+       the chip. Specificity (0,2,0) beats the plain .pill rule above. */
+    .pill.sev-high{ border-color:#fca5a5; background:#fee2e2; color:#7f1d1d; }
+    .pill.sev-medium{ border-color:#fdba74; background:#ffedd5; color:#7c2d12; }
+    .pill.sev-low{ border-color:#fde047; background:#fef9c3; color:#713f12; }
     .btn-open-risk{ font-weight:900; background:#ffd1d6; border:2px solid #fca5a5; padding:6px 12px; border-radius:10px; }
     .btn-open-risk:hover{ filter:brightness(0.98) }
     .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
@@ -349,6 +356,11 @@ function getReviewerName(ev){
   var FLAGS_TABLE       = "talk_read_flags";
   var USERS_INFO_TABLE  = "users_information_v2";
   var IDENTITY_TABLE    = "patient_identity_map";
+
+  // Severity is stored lowercase in risk_reviews_v2. Anything outside these three
+  // keys - including NULL - leaves the badge, and the summary chip, exactly as it
+  // was. Single definition, shared by badgeForHit() and by the alertHost chips.
+  var SEVERITY_WORD = { high: 'חמור', medium: 'בינוני', low: 'חלש' };
   // Shown when patient_identity_map fails to load. Name/phone search resolves its
   // needles through identityFromMap, so an empty map means those two filters can
   // never match — the user must be told, not left with a silent empty result.
@@ -1430,10 +1442,6 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
       return { attrs: attrs, hit: hit, lineNum: n };
     }
 
-    // Severity is stored lowercase in risk_reviews_v2. Anything outside these
-    // three keys - including NULL - leaves the badge exactly as it was.
-    var SEVERITY_WORD = { high: 'חמור', medium: 'בינוני', low: 'חלש' };
-
     function badgeForHit(hit){
       if (!hit) return '';
       var stDb = normStatus(hit.status);
@@ -1637,10 +1645,17 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
               top.push('<div class="when">' + escapeHtml(AA.time) + '</div><div>');
               for (var z=0; z<AA.items.length; z++){
                 var it = AA.items[z];
+                // Severity word and tint, same table as the in-dialog RISK badge.
+                // An empty, missing or unrecognised severity leaves both the text and
+                // the class list exactly as they were before this block existed.
+                var sevKey = String(it.severity || '').trim().toLowerCase();
+                var sevWord = SEVERITY_WORD[sevKey];
+                var chipCls = 'pill mono' + (sevWord ? (' sev-' + sevKey) : '');
+                var chipTxt = it.text + (sevWord ? (' · ' + sevWord) : '');
                 if (it.targetId){
-                  top.push('<span class="pill mono" title="הקש לפתיחת הסיכון" role="button" tabindex="0" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">' + escapeHtml(it.text) + '</span> ');
+                  top.push('<span class="' + chipCls + '" title="הקש לפתיחת הסיכון" role="button" tabindex="0" data-act="goto" data-target="' + escapeHtml(it.targetId) + '">' + escapeHtml(chipTxt) + '</span> ');
                 } else {
-                  top.push('<span class="pill mono" title="לא נמצא עוגן בטקסט">' + escapeHtml(it.text) + '</span> ');
+                  top.push('<span class="' + chipCls + '" title="לא נמצא עוגן בטקסט">' + escapeHtml(chipTxt) + '</span> ');
                 }
               }
               top.push('</div></div>');
@@ -1739,7 +1754,10 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
               items.push({
                 text: (hh2.risk_reasons || hh2.short_risk || ('line ' + hh2.line_num)),
                 targetId: hh2.targetId || '',
-                reviewer: (hh2.reviewer != null ? String(hh2.reviewer).trim() : '')
+                reviewer: (hh2.reviewer != null ? String(hh2.reviewer).trim() : ''),
+                // Already present on the hit (bindRiskToDialog) and already in both
+                // SELECT lists. It was simply being dropped here.
+                severity: (hh2.severity != null ? String(hh2.severity) : '')
               });
             }
             alerts.push({
