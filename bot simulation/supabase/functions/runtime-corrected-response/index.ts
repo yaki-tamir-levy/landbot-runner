@@ -1,9 +1,9 @@
 type RequestPayload = {
-  prompt20: string;
-  pre_patient20: string;
-  patient20: string;
-  summarized20: string;
-  tzvira: string;
+  prompt20?: string;
+  pre_patient20?: string;
+  patient20?: string;
+  summarized20?: string;
+  tzvira?: string;
   response20?: string;
   question20: string;
   patient_id: string;
@@ -25,11 +25,6 @@ const CANDIDATE_TIMEOUT_MS = 60_000;
 const CORRECTOR_TIMEOUT_MS = 60_000;
 
 const REQUIRED_TEXT_FIELDS = [
-  "prompt20",
-  "pre_patient20",
-  "patient20",
-  "summarized20",
-  "tzvira",
   "question20",
   "patient_id",
   "session_id",
@@ -51,6 +46,13 @@ const REASON_CODES = [
 ] as const;
 
 const REASON_CODE_SET = new Set<string>(REASON_CODES);
+
+const TRACK_PROMPT_KEYS: Record<string, { therapist: string; prePatient: string; corrector: string }> = {
+  CLINIC: { therapist: "clinic_therapist", prePatient: "clinic_pre_patient", corrector: "clinic_corrector" },
+  NLP_CBT: { therapist: "nlp_therapist", prePatient: "nlp_pre_patient", corrector: "corrector" },
+};
+
+const DEFAULT_THERAPY_TRACK = "NLP_CBT";
 
 Deno.serve(async (request: Request): Promise<Response> => {
   const correlationId = crypto.randomUUID();
@@ -103,35 +105,58 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     const therapistModel = Deno.env.get("THERAPIST_MODEL") || DEFAULT_MODEL;
     const correctorModel = Deno.env.get("CORRECTOR_MODEL") || DEFAULT_MODEL;
-    let effectiveSummary = (payload.value.summarized20 ?? "").trim();
-    if (!effectiveSummary) {
-      effectiveSummary = await fetchAccumulatedSummary(
-        correlationId,
-        payload.value.patient_id,
-      );
-    }
-    console.log(JSON.stringify({
-      event: "summary_source",
-      correlation_id: correlationId,
-      from_request: (payload.value.summarized20 ?? "").trim().length,
-      final_length: effectiveSummary.length,
-    }));
+    const serverTzvira = await fetchCurrentConversationTzvira(
+      correlationId,
+      payload.value.patient_id,
+    );
+    const effectiveTzvira = serverTzvira?.tzvira ?? "";
+    const effectiveSummary = await fetchAccumulatedSummary(
+      correlationId,
+      payload.value.patient_id,
+    );
 
-    const therapistInstructions = buildTherapistInstructions(payload.value);
+    const patientContext = await fetchPatientContext(correlationId, payload.value.patient_id);
+    const keys = TRACK_PROMPT_KEYS[patientContext.therapyTrack]
+      ?? TRACK_PROMPT_KEYS[DEFAULT_THERAPY_TRACK];
+    let therapistPrompt: string;
+    let prePatientPrompt: string;
+    let correctorPrompt: string;
+    try {
+      therapistPrompt = await fetchPromptByKey(correlationId, keys.therapist);
+      prePatientPrompt = await fetchPromptByKey(correlationId, keys.prePatient);
+      correctorPrompt = await fetchPromptByKey(correlationId, keys.corrector);
+    } catch (error) {
+      const typedError = toError(error);
+      if (
+        typedError.message === "runtime_corrector_prompt_fetch_failed" ||
+        typedError.message === "missing_runtime_corrector_prompt"
+      ) {
+        httpStatus = 502;
+        return jsonResponse({ ok: false, error: typedError.message }, httpStatus);
+      }
+      throw error;
+    }
+
+    const therapistInstructions = buildTherapistInstructions({
+      therapistPrompt,
+      prePatientPrompt,
+      patient20: patientContext.patientBio,
+    });
     const candidateInput = buildCandidateInput({
       ...payload.value,
       summarized20: effectiveSummary,
+      tzvira: effectiveTzvira,
     });
 
     diagnosticTherapistModel = therapistModel;
     diagnosticTherapistInstructions = therapistInstructions;
     diagnosticCandidateInput = candidateInput;
     diagnosticPayload = {
-      prompt20: payload.value.prompt20,
-      pre_patient20: payload.value.pre_patient20,
-      patient20: payload.value.patient20,
-      summarized20: payload.value.summarized20,
-      tzvira: payload.value.tzvira,
+      prompt20: payload.value.prompt20 ?? "",
+      pre_patient20: payload.value.pre_patient20 ?? "",
+      patient20: payload.value.patient20 ?? "",
+      summarized20: payload.value.summarized20 ?? "",
+      tzvira: payload.value.tzvira ?? "",
       response20: payload.value.response20 ?? "",
       question20: payload.value.question20,
       patient_id: payload.value.patient_id,
@@ -145,11 +170,11 @@ Deno.serve(async (request: Request): Promise<Response> => {
       therapistInstructions,
       candidateInput,
       payload: {
-        prompt20: payload.value.prompt20,
-        pre_patient20: payload.value.pre_patient20,
-        patient20: payload.value.patient20,
-        summarized20: payload.value.summarized20,
-        tzvira: payload.value.tzvira,
+        prompt20: payload.value.prompt20 ?? "",
+        pre_patient20: payload.value.pre_patient20 ?? "",
+        patient20: payload.value.patient20 ?? "",
+        summarized20: payload.value.summarized20 ?? "",
+        tzvira: payload.value.tzvira ?? "",
         response20: payload.value.response20 ?? "",
         question20: payload.value.question20,
         patient_id: payload.value.patient_id,
@@ -179,23 +204,6 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     candidateSuccess = true;
 
-    let correctorInstructions: string;
-    try {
-      correctorInstructions = await fetchRuntimeCorrectorPrompt(
-        correlationId,
-        payload.value.corrector_prompt_key,
-      );
-    } catch (error) {
-      const typedError = toError(error);
-      if (
-        typedError.message === "runtime_corrector_prompt_fetch_failed" ||
-        typedError.message === "missing_runtime_corrector_prompt"
-      ) {
-        return jsonResponse({ ok: false, error: typedError.message }, 502);
-      }
-      throw error;
-    }
-
     try {
       const correctorStartedAt = Date.now();
       let correctorResult: CorrectorResult;
@@ -203,8 +211,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
         correctorResult = await runCorrector({
           apiKey: openAiApiKey,
           model: correctorModel,
-          correctorInstructions,
-          acceptedPriorHistory: payload.value.tzvira,
+          correctorInstructions: correctorPrompt,
+          acceptedPriorHistory: effectiveTzvira,
           crossSessionSummary: effectiveSummary,
           previousAcceptedTherapistResponse: payload.value.response20 ?? "",
           currentPatientMessage: payload.value.question20,
@@ -354,6 +362,123 @@ async function parseAndValidatePayload(
   return { ok: true, value: record as RequestPayload };
 }
 
+async function fetchCurrentConversationTzvira(
+  correlationId: string,
+  patientId: string,
+): Promise<{ tzvira: string; rowCount: number } | null> {
+  const phone = (patientId ?? "").trim();
+  if (!phone) return null;
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+      ?? Deno.env.get("SUPABASE_ANON_KEY")
+      ?? Deno.env.get("SUPABASE_KEY")
+      ?? "";
+    if (!supabaseUrl || !serviceKey) return null;
+    const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/get_current_conversation_tzvira_v2`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_phone: phone }),
+    });
+    if (!res.ok) {
+      console.error(JSON.stringify({
+        event: "tzvira_fetch_failed",
+        correlation_id: correlationId,
+        http_status: res.status,
+      }));
+      return null;
+    }
+    const data = await res.json();
+    const value = data?.tzvira;
+    const rowCount = typeof data?.row_count === "number" ? data.row_count : 0;
+    return { tzvira: typeof value === "string" ? value : "", rowCount };
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "tzvira_fetch_exception",
+      correlation_id: correlationId,
+    }));
+    return null;
+  }
+}
+
+function maskPhoneForUsersInformation(rawPhone: string): string {
+  const digits = (rawPhone ?? "").replace(/[^0-9]/g, "");
+  if (digits.length === 0) return "";
+  if (digits.length <= 6) return digits;
+  return `${digits.slice(0, 3)}***${digits.slice(-3)}`;
+}
+
+async function fetchPatientContext(
+  correlationId: string,
+  patientId: string,
+): Promise<{ therapyTrack: string; patientBio: string }> {
+  const fallback = { therapyTrack: DEFAULT_THERAPY_TRACK, patientBio: "" };
+  const phone = maskPhoneForUsersInformation(patientId ?? "");
+  if (!phone) return fallback;
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+      ?? Deno.env.get("SUPABASE_ANON_KEY")
+      ?? Deno.env.get("SUPABASE_KEY")
+      ?? "";
+    if (!supabaseUrl || !serviceKey) return fallback;
+    const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/users_information_v2?select=therapy_track,user_text&phone=eq.${encodeURIComponent(phone)}&limit=2`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) {
+      console.error(JSON.stringify({
+        event: "patient_context_fetch_failed",
+        correlation_id: correlationId,
+        http_status: res.status,
+      }));
+      return fallback;
+    }
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length === 0) {
+      console.error(JSON.stringify({
+        event: "patient_context_not_found",
+        correlation_id: correlationId,
+      }));
+      return fallback;
+    }
+    if (data.length > 1) {
+      console.error(JSON.stringify({
+        event: "patient_context_ambiguous",
+        correlation_id: correlationId,
+        row_count: data.length,
+      }));
+      return fallback;
+    }
+    const row = data[0] as Record<string, unknown>;
+    const rawTrack = typeof row.therapy_track === "string" ? row.therapy_track.trim() : "";
+    const rawBio = typeof row.user_text === "string" ? row.user_text.trim() : "";
+    const therapyTrack = rawTrack.length > 0 ? rawTrack : DEFAULT_THERAPY_TRACK;
+    console.log(JSON.stringify({
+      event: "therapy_track_resolved",
+      correlation_id: correlationId,
+      therapy_track: therapyTrack,
+      patient_bio_length: rawBio.length,
+    }));
+    return { therapyTrack, patientBio: rawBio };
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "patient_context_fetch_exception",
+      correlation_id: correlationId,
+    }));
+    return fallback;
+  }
+}
+
 async function fetchAccumulatedSummary(
   correlationId: string,
   patientId: string,
@@ -416,6 +541,14 @@ async function fetchRuntimeCorrectorPrompt(
       }));
     }
   }
+  return await fetchPromptByKey(correlationId, promptKey);
+}
+
+async function fetchPromptByKey(
+  correlationId: string,
+  key: string,
+): Promise<string> {
+  const promptKey = key;
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseKey =
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ||
@@ -433,7 +566,7 @@ async function fetchRuntimeCorrectorPrompt(
 
   const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/prompt_information_v2?select=user_text&prompt_key=eq.${encodeURIComponent(promptKey)}&limit=1`;
   console.log(JSON.stringify({
-    event: "corrector_prompt_selected",
+    event: "prompt_selected",
     correlation_id: correlationId,
     prompt_key: promptKey,
   }));
@@ -505,11 +638,15 @@ async function fetchRuntimeCorrectorPrompt(
   return prompt;
 }
 
-function buildTherapistInstructions(payload: RequestPayload): string {
+function buildTherapistInstructions(args: {
+  therapistPrompt: string;
+  prePatientPrompt: string;
+  patient20: string;
+}): string {
   return [
-    payload.prompt20,
-    payload.pre_patient20,
-    payload.patient20,
+    args.therapistPrompt,
+    args.prePatientPrompt,
+    args.patient20,
     "",
     "Mandatory operational rules for this runtime request:",
     "- Reply in Hebrew only.",
@@ -526,10 +663,10 @@ function buildTherapistInstructions(payload: RequestPayload): string {
 function buildCandidateInput(payload: RequestPayload): string {
   return [
     "summarized20:",
-    payload.summarized20,
+    payload.summarized20 ?? "",
     "",
     "tzvira:",
-    payload.tzvira,
+    payload.tzvira ?? "",
     "",
     "response20:",
     payload.response20 ?? "",
