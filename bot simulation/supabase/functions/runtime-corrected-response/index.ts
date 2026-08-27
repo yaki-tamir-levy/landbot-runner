@@ -84,6 +84,14 @@ const CLINIC_MOVES_WITH_ECHO = [
 
 const CLINIC_ECHO_COOLDOWN_TURNS = 3;
 
+// Fragmentation warning window: how many recent turns are inspected, and how
+// many of them must be fragmented before the reinforced instruction is injected.
+const CLINIC_FRAGMENT_WINDOW_TURNS = 3;
+const CLINIC_FRAGMENT_WARNING_THRESHOLD = 2;
+
+const CLINIC_FRAGMENT_WARNING_LINE =
+  "אזהרה מוגברת: התשובות האחרונות שלך פיצלו לשני רכיבים יותר מדי. התשובה הזו חייבת להיות משפט יחיד, בלי שום חיבור מנוגד או משלים - לא \"לא X אלא Y\", לא \"גם...וגם\", לא \"בין...לבין\".";
+
 Deno.serve(async (request: Request): Promise<Response> => {
   const correlationId = crypto.randomUUID();
   const startedAt = Date.now();
@@ -152,6 +160,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const isClinicTrack = patientContext.therapyTrack === CLINIC_TRACK;
     let clinicMoveHistory: string[] = [];
     let clinicRequiredMove = "";
+    let clinicFragmentWarning = false;
     if (isClinicTrack) {
       clinicMoveHistory = await fetchClinicMoveHistory(
         correlationId,
@@ -163,6 +172,18 @@ Deno.serve(async (request: Request): Promise<Response> => {
         correlation_id: correlationId,
         history_length: clinicMoveHistory.length,
         required_move: clinicRequiredMove,
+      }));
+
+      const clinicFragmentHistory = await fetchClinicFragmentHistory(
+        correlationId,
+        payload.value.session_id,
+      );
+      clinicFragmentWarning = decideFragmentWarning(clinicFragmentHistory);
+      console.log(JSON.stringify({
+        event: "clinic_fragment_warning_decided",
+        correlation_id: correlationId,
+        history_length: clinicFragmentHistory.length,
+        fragment_warning: clinicFragmentWarning,
       }));
     }
 
@@ -190,6 +211,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       prePatientPrompt,
       patient20: patientContext.patientBio,
       requiredMove: clinicRequiredMove,
+      fragmentWarning: clinicFragmentWarning,
     });
     const candidateInput = buildCandidateInput({
       ...payload.value,
@@ -301,6 +323,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
             clinicMoveHistory.length + 1,
             clinicMove,
           );
+          await recordClinicFragment(
+            correlationId,
+            payload.value.session_id,
+            clinicMoveHistory.length + 1,
+            correctorResult?.reason_codes?.includes("OVER_ANALYSIS") ?? false,
+          );
         }
         return jsonResponse({
           ok: true,
@@ -338,6 +366,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
           clinicMoveHistory.length + 1,
           clinicMove,
         );
+        await recordClinicFragment(
+          correlationId,
+          payload.value.session_id,
+          clinicMoveHistory.length + 1,
+          correctorResult?.reason_codes?.includes("OVER_ANALYSIS") ?? false,
+        );
       }
       return jsonResponse({
         ok: true,
@@ -369,6 +403,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
           payload.value.session_id,
           clinicMoveHistory.length + 1,
           clinicMove,
+        );
+        // The corrector produced no verdict on this path, so there is no
+        // OVER_ANALYSIS signal to read. Absence of evidence is logged as false.
+        await recordClinicFragment(
+          correlationId,
+          payload.value.session_id,
+          clinicMoveHistory.length + 1,
+          false,
         );
       }
       return jsonResponse({
@@ -662,6 +704,77 @@ async function fetchClinicMoveHistory(
 }
 
 /**
+ * CLINIC only. Returns the fragmented flags already logged for this session,
+ * ordered by turn_number ascending. Never throws: any failure - configuration,
+ * network, missing table - degrades to an empty history, which the decision
+ * function reads as "no evidence of fragmentation".
+ */
+async function fetchClinicFragmentHistory(
+  correlationId: string,
+  sessionId: string,
+): Promise<boolean[]> {
+  const session = (sessionId ?? "").trim();
+  if (!session) return [];
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+      ?? Deno.env.get("SUPABASE_ANON_KEY")
+      ?? Deno.env.get("SUPABASE_KEY")
+      ?? "";
+    if (!supabaseUrl || !serviceKey) return [];
+    const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/clinic_fragment_log` +
+      `?select=fragmented&session_id=eq.${encodeURIComponent(session)}` +
+      `&order=turn_number.asc`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) {
+      await res.body?.cancel();
+      console.error(JSON.stringify({
+        event: "clinic_fragment_history_fetch_failed",
+        correlation_id: correlationId,
+        http_status: res.status,
+      }));
+      return [];
+    }
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    const flags: boolean[] = [];
+    for (const item of data) {
+      if (!item || typeof item !== "object") continue;
+      const fragmented = (item as Record<string, unknown>).fragmented;
+      if (typeof fragmented === "boolean") flags.push(fragmented);
+    }
+    return flags;
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "clinic_fragment_history_fetch_exception",
+      correlation_id: correlationId,
+    }));
+    return [];
+  }
+}
+
+/**
+ * CLINIC only. Reads the last CLINIC_FRAGMENT_WINDOW_TURNS entries - fewer when
+ * the history is shorter - and returns true when at least
+ * CLINIC_FRAGMENT_WARNING_THRESHOLD of them were fragmented. An empty history
+ * returns false.
+ */
+function decideFragmentWarning(fragmentHistory: boolean[]): boolean {
+  const window = fragmentHistory.slice(-CLINIC_FRAGMENT_WINDOW_TURNS);
+  let fragmented = 0;
+  for (const flag of window) {
+    if (flag) fragmented += 1;
+  }
+  return fragmented >= CLINIC_FRAGMENT_WARNING_THRESHOLD;
+}
+
+/**
  * CLINIC only. Picks the move the model is ordered to perform this turn.
  * First turn is always simple_presence. Otherwise echo is barred while it
  * appeared in any of the last CLINIC_ECHO_COOLDOWN_TURNS turns.
@@ -807,6 +920,74 @@ async function recordClinicMove(
   }
 }
 
+/**
+ * CLINIC only. Writes whether the delivered turn was flagged as fragmented,
+ * using the corrector signal OVER_ANALYSIS. Mirrors recordClinicMove: a write
+ * failure is logged and swallowed, because the patient response is already
+ * decided and must not depend on this table.
+ */
+async function recordClinicFragment(
+  correlationId: string,
+  sessionId: string,
+  turnNumber: number,
+  fragmented: boolean,
+): Promise<void> {
+  const session = (sessionId ?? "").trim();
+  if (!session) return;
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+      ?? Deno.env.get("SUPABASE_ANON_KEY")
+      ?? Deno.env.get("SUPABASE_KEY")
+      ?? "";
+    if (!supabaseUrl || !serviceKey) {
+      console.error(JSON.stringify({
+        event: "clinic_fragment_log_skipped",
+        correlation_id: correlationId,
+        reason: "supabase_configuration_missing",
+      }));
+      return;
+    }
+    const res = await fetch(
+      `${supabaseUrl.replace(/\/$/, "")}/rest/v1/clinic_fragment_log`,
+      {
+        method: "POST",
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": "application/json; charset=utf-8",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          session_id: session,
+          turn_number: turnNumber,
+          fragmented,
+        }),
+      },
+    );
+    await res.body?.cancel();
+    if (!res.ok) {
+      console.error(JSON.stringify({
+        event: "clinic_fragment_log_insert_failed",
+        correlation_id: correlationId,
+        http_status: res.status,
+      }));
+      return;
+    }
+    console.log(JSON.stringify({
+      event: "clinic_fragment_logged",
+      correlation_id: correlationId,
+      turn_number: turnNumber,
+      fragmented,
+    }));
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "clinic_fragment_log_insert_exception",
+      correlation_id: correlationId,
+    }));
+  }
+}
+
 const DEFAULT_CORRECTOR_KEY = "corrector";
 const CORRECTOR_KEY_PATTERN = /^[a-z0-9_]{1,80}$/;
 
@@ -928,12 +1109,21 @@ function buildTherapistInstructions(args: {
   prePatientPrompt: string;
   patient20: string;
   requiredMove?: string;
+  fragmentWarning?: boolean;
 }): string {
   // The move line is injected only for CLINIC. Every other track passes an
   // empty requiredMove and gets exactly the instructions it got before.
   const requiredMove = (args.requiredMove ?? "").trim();
+  // The reinforced warning rides on the move line: it is added only when the
+  // move line itself exists, so no other track can ever receive it.
   const movePrefix = requiredMove.length > 0
-    ? [`מהלך התשובה הזו: ${requiredMove}`, ""]
+    ? (args.fragmentWarning === true
+      ? [
+        `מהלך התשובה הזו: ${requiredMove}`,
+        CLINIC_FRAGMENT_WARNING_LINE,
+        "",
+      ]
+      : [`מהלך התשובה הזו: ${requiredMove}`, ""])
     : [];
   const formatRule = requiredMove.length > 0
     ? "- Return one valid JSON object only, with the keys move and response. No Markdown and no text outside JSON."
