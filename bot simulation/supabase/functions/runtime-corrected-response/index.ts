@@ -54,6 +54,36 @@ const TRACK_PROMPT_KEYS: Record<string, { therapist: string; prePatient: string;
 
 const DEFAULT_THERAPY_TRACK = "NLP_CBT";
 
+const CLINIC_TRACK = "CLINIC";
+
+const CLINIC_MOVE_TYPES = [
+  "echo",
+  "simple_presence",
+  "normalization",
+  "widening",
+  "deepening",
+  "other",
+] as const;
+
+const CLINIC_MOVE_TYPE_SET = new Set<string>(CLINIC_MOVE_TYPES);
+
+const CLINIC_MOVES_WITHOUT_ECHO = [
+  "simple_presence",
+  "normalization",
+  "widening",
+  "deepening",
+] as const;
+
+const CLINIC_MOVES_WITH_ECHO = [
+  "echo",
+  "simple_presence",
+  "normalization",
+  "widening",
+  "deepening",
+] as const;
+
+const CLINIC_ECHO_COOLDOWN_TURNS = 3;
+
 Deno.serve(async (request: Request): Promise<Response> => {
   const correlationId = crypto.randomUUID();
   const startedAt = Date.now();
@@ -118,6 +148,24 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const patientContext = await fetchPatientContext(correlationId, payload.value.patient_id);
     const keys = TRACK_PROMPT_KEYS[patientContext.therapyTrack]
       ?? TRACK_PROMPT_KEYS[DEFAULT_THERAPY_TRACK];
+
+    const isClinicTrack = patientContext.therapyTrack === CLINIC_TRACK;
+    let clinicMoveHistory: string[] = [];
+    let clinicRequiredMove = "";
+    if (isClinicTrack) {
+      clinicMoveHistory = await fetchClinicMoveHistory(
+        correlationId,
+        payload.value.session_id,
+      );
+      clinicRequiredMove = decideRequiredMove(clinicMoveHistory);
+      console.log(JSON.stringify({
+        event: "clinic_move_decided",
+        correlation_id: correlationId,
+        history_length: clinicMoveHistory.length,
+        required_move: clinicRequiredMove,
+      }));
+    }
+
     let therapistPrompt: string;
     let prePatientPrompt: string;
     let correctorPrompt: string;
@@ -141,6 +189,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       therapistPrompt,
       prePatientPrompt,
       patient20: patientContext.patientBio,
+      requiredMove: clinicRequiredMove,
     });
     const candidateInput = buildCandidateInput({
       ...payload.value,
@@ -202,6 +251,16 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return jsonResponse({ ok: false, error: "candidate_generation_failed" }, httpStatus);
     }
 
+    // CLINIC only. candidateText is reassigned to the extracted response so that
+    // every downstream consumer - corrector, logs, HTTP body - sees the patient
+    // facing text and never the raw JSON envelope.
+    let clinicMove = "other";
+    if (isClinicTrack) {
+      const parsedCandidate = parseClinicCandidate(correlationId, candidateText);
+      clinicMove = parsedCandidate.move;
+      candidateText = parsedCandidate.response;
+    }
+
     candidateSuccess = true;
 
     try {
@@ -235,6 +294,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
           corrector_decision: "PASS",
           reason_codes: [],
         });
+        if (isClinicTrack) {
+          await recordClinicMove(
+            correlationId,
+            payload.value.session_id,
+            clinicMoveHistory.length + 1,
+            clinicMove,
+          );
+        }
         return jsonResponse({
           ok: true,
           answer: formatDiagnosticAnswer(candidateText, "לא נדרש תיקון."),
@@ -264,6 +331,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
         corrector_decision: "REWRITE",
         reason_codes: correctorResult.reason_codes,
       });
+      if (isClinicTrack) {
+        await recordClinicMove(
+          correlationId,
+          payload.value.session_id,
+          clinicMoveHistory.length + 1,
+          clinicMove,
+        );
+      }
       return jsonResponse({
         ok: true,
         answer: formatDiagnosticAnswer(candidateText, rewrite),
@@ -288,6 +363,14 @@ Deno.serve(async (request: Request): Promise<Response> => {
         corrector_decision: "FALLBACK",
         reason_codes: [],
       });
+      if (isClinicTrack) {
+        await recordClinicMove(
+          correlationId,
+          payload.value.session_id,
+          clinicMoveHistory.length + 1,
+          clinicMove,
+        );
+      }
       return jsonResponse({
         ok: true,
         answer: formatDiagnosticAnswer(candidateText, "הבדיקה לא הושלמה, ולכן לא בוצע תיקון."),
@@ -522,6 +605,208 @@ async function fetchAccumulatedSummary(
   }
 }
 
+/**
+ * CLINIC only. Returns the move_type values already logged for this session,
+ * ordered by turn_number ascending. Never throws: any failure - configuration,
+ * network, missing table - degrades to an empty history, which the decision
+ * function reads as "first turn".
+ */
+async function fetchClinicMoveHistory(
+  correlationId: string,
+  sessionId: string,
+): Promise<string[]> {
+  const session = (sessionId ?? "").trim();
+  if (!session) return [];
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+      ?? Deno.env.get("SUPABASE_ANON_KEY")
+      ?? Deno.env.get("SUPABASE_KEY")
+      ?? "";
+    if (!supabaseUrl || !serviceKey) return [];
+    const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/clinic_move_log` +
+      `?select=move_type&session_id=eq.${encodeURIComponent(session)}` +
+      `&order=turn_number.asc`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) {
+      await res.body?.cancel();
+      console.error(JSON.stringify({
+        event: "clinic_move_history_fetch_failed",
+        correlation_id: correlationId,
+        http_status: res.status,
+      }));
+      return [];
+    }
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    const moves: string[] = [];
+    for (const item of data) {
+      if (!item || typeof item !== "object") continue;
+      const moveType = (item as Record<string, unknown>).move_type;
+      if (typeof moveType === "string") moves.push(moveType);
+    }
+    return moves;
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "clinic_move_history_fetch_exception",
+      correlation_id: correlationId,
+    }));
+    return [];
+  }
+}
+
+/**
+ * CLINIC only. Picks the move the model is ordered to perform this turn.
+ * First turn is always simple_presence. Otherwise echo is barred while it
+ * appeared in any of the last CLINIC_ECHO_COOLDOWN_TURNS turns.
+ */
+function decideRequiredMove(moveHistory: string[]): string {
+  if (moveHistory.length === 0) {
+    return "simple_presence";
+  }
+
+  // Turns elapsed after the last echo: 0 means the previous turn was echo, so
+  // turnsSinceEcho < 3 is exactly "echo appeared in one of the last three turns".
+  const lastEchoIndex = moveHistory.lastIndexOf("echo");
+  const turnsSinceEcho = lastEchoIndex === -1
+    ? Number.POSITIVE_INFINITY
+    : moveHistory.length - 1 - lastEchoIndex;
+
+  const pool = turnsSinceEcho < CLINIC_ECHO_COOLDOWN_TURNS
+    ? CLINIC_MOVES_WITHOUT_ECHO
+    : CLINIC_MOVES_WITH_ECHO;
+
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+/**
+ * CLINIC only. Splits the model output into the logged move and the patient
+ * facing response. A malformed envelope is never fatal: the whole raw text
+ * becomes the response and the move is recorded as "other".
+ */
+function parseClinicCandidate(
+  correlationId: string,
+  rawText: string,
+): { move: string; response: string } {
+  const fallback = { move: "other", response: rawText };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText.trim());
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "clinic_json_parse_failed",
+      correlation_id: correlationId,
+      reason: "not_json",
+    }));
+    return fallback;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    console.error(JSON.stringify({
+      event: "clinic_json_parse_failed",
+      correlation_id: correlationId,
+      reason: "not_json_object",
+    }));
+    return fallback;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const rawResponse = typeof record.response === "string" ? record.response.trim() : "";
+  if (rawResponse.length === 0) {
+    console.error(JSON.stringify({
+      event: "clinic_json_parse_failed",
+      correlation_id: correlationId,
+      reason: "missing_response",
+    }));
+    return fallback;
+  }
+
+  const rawMove = typeof record.move === "string" ? record.move.trim() : "";
+  const move = CLINIC_MOVE_TYPE_SET.has(rawMove) ? rawMove : "other";
+  if (move !== rawMove) {
+    console.error(JSON.stringify({
+      event: "clinic_move_value_rejected",
+      correlation_id: correlationId,
+    }));
+  }
+
+  return { move, response: rawResponse };
+}
+
+/**
+ * CLINIC only. Writes the move that was actually delivered, after the
+ * corrector has run. A write failure is logged and swallowed: the patient
+ * response is already decided and must not depend on this table.
+ */
+async function recordClinicMove(
+  correlationId: string,
+  sessionId: string,
+  turnNumber: number,
+  moveType: string,
+): Promise<void> {
+  const session = (sessionId ?? "").trim();
+  if (!session) return;
+  const safeMove = CLINIC_MOVE_TYPE_SET.has(moveType) ? moveType : "other";
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+      ?? Deno.env.get("SUPABASE_ANON_KEY")
+      ?? Deno.env.get("SUPABASE_KEY")
+      ?? "";
+    if (!supabaseUrl || !serviceKey) {
+      console.error(JSON.stringify({
+        event: "clinic_move_log_skipped",
+        correlation_id: correlationId,
+        reason: "supabase_configuration_missing",
+      }));
+      return;
+    }
+    const res = await fetch(
+      `${supabaseUrl.replace(/\/$/, "")}/rest/v1/clinic_move_log`,
+      {
+        method: "POST",
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": "application/json; charset=utf-8",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          session_id: session,
+          turn_number: turnNumber,
+          move_type: safeMove,
+        }),
+      },
+    );
+    await res.body?.cancel();
+    if (!res.ok) {
+      console.error(JSON.stringify({
+        event: "clinic_move_log_insert_failed",
+        correlation_id: correlationId,
+        http_status: res.status,
+      }));
+      return;
+    }
+    console.log(JSON.stringify({
+      event: "clinic_move_logged",
+      correlation_id: correlationId,
+      turn_number: turnNumber,
+      move_type: safeMove,
+    }));
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "clinic_move_log_insert_exception",
+      correlation_id: correlationId,
+    }));
+  }
+}
+
 const DEFAULT_CORRECTOR_KEY = "corrector";
 const CORRECTOR_KEY_PATTERN = /^[a-z0-9_]{1,80}$/;
 
@@ -642,8 +927,20 @@ function buildTherapistInstructions(args: {
   therapistPrompt: string;
   prePatientPrompt: string;
   patient20: string;
+  requiredMove?: string;
 }): string {
+  // The move line is injected only for CLINIC. Every other track passes an
+  // empty requiredMove and gets exactly the instructions it got before.
+  const requiredMove = (args.requiredMove ?? "").trim();
+  const movePrefix = requiredMove.length > 0
+    ? [`מהלך התשובה הזו: ${requiredMove}`, ""]
+    : [];
+  const formatRule = requiredMove.length > 0
+    ? "- Return one valid JSON object only, with the keys move and response. No Markdown and no text outside JSON."
+    : "- Plain text only; no Markdown, numbering decorations, tables, or JSON.";
+
   return [
+    ...movePrefix,
     args.therapistPrompt,
     args.prePatientPrompt,
     args.patient20,
@@ -651,7 +948,7 @@ function buildTherapistInstructions(args: {
     "Mandatory operational rules for this runtime request:",
     "- Reply in Hebrew only.",
     "- Maintain gender consistency with the patient and prior context.",
-    "- Plain text only; no Markdown, numbering decorations, tables, or JSON.",
+    formatRule,
     "- Ask at most one question.",
     "- Do not repeat a proposal that was already rejected or did not fit.",
     "- Do not repeat the same empathy phrasing or emotional reflection from the previous therapist response.",
