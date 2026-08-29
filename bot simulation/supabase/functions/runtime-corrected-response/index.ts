@@ -84,6 +84,15 @@ const CLINIC_MOVES_WITH_ECHO = [
 
 const CLINIC_ECHO_COOLDOWN_TURNS = 3;
 
+// CORS support - added so this function can be called directly from a
+// browser (the new no-Landbot מיתר client), not only server-to-server from
+// Landbot as before. Purely additive: does not change any POST behavior.
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "content-type, x-landbot-secret",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 // Fragmentation warning window: how many recent turns are inspected, and how
 // many of them must be fragmented before the reinforced instruction is injected.
 const CLINIC_FRAGMENT_WINDOW_TURNS = 3;
@@ -91,6 +100,44 @@ const CLINIC_FRAGMENT_WARNING_THRESHOLD = 2;
 
 const CLINIC_FRAGMENT_WARNING_LINE =
   "אזהרה מוגברת: התשובות האחרונות שלך פיצלו לשני רכיבים יותר מדי. התשובה הזו חייבת להיות משפט יחיד, בלי שום חיבור מנוגד או משלים - לא \"לא X אלא Y\", לא \"גם...וגם\", לא \"בין...לבין\".";
+
+// Self-repetition: how many of the most recent delivered responses are
+// compared for a shared, substantial sentence. A window of 3 also catches a
+// repeat with one different turn in between, not only immediately adjacent
+// repeats. Comparison is at the SENTENCE level, not the full-response level:
+// the real failure observed in production was a shared trailing sentence
+// ("how can I help you now?") inside otherwise-different responses, which a
+// full-string comparison would miss entirely.
+const CLINIC_REPEAT_CHECK_WINDOW = 3;
+const MIN_SENTENCE_LENGTH_FOR_REPEAT_CHECK = 12;
+
+const CLINIC_REPEAT_WARNING_LINE =
+  "אזהרה מוגברת: אחד המשפטים בתשובותיך הקודמות בשיחה הזו כבר הופיע כמעט מילה במילה. אסור לחזור על אותו משפט או על ניסוח קרוב אליו, גם לא כחלק מתשובה שונה בשאר תוכנה. אם המטופל ביקש עזרה בפועל ולא קיבל - ענה עכשיו בפועל (הצעה קטנה אחת) או הסבר בכנות שלא ענית קודם. אל תשקף, אל תשאל שאלה נגדית, ואל תשתמש שוב באותה שאלה שכבר שאלת.";
+
+/**
+ * Normalizes text for repetition comparison: trims, collapses whitespace,
+ * strips punctuation that carries no meaning for this comparison. Two
+ * responses differing only in punctuation or spacing still count as the
+ * same text.
+ */
+function normalizeForRepeatCheck(text: string): string {
+  return text
+    .trim()
+    .replace(/[\s\u200f\u200e]+/g, " ")
+    .replace(/[.,!?"'\u05f3\u05f4]/g, "")
+    .toLowerCase();
+}
+
+/**
+ * Splits a response into normalized sentences, discarding short ones (short
+ * common phrases like "כן." would otherwise trigger false positives).
+ */
+function extractSignificantSentences(text: string): string[] {
+  return text
+    .split(/[.!?]+/)
+    .map(normalizeForRepeatCheck)
+    .filter((s) => s.length >= MIN_SENTENCE_LENGTH_FOR_REPEAT_CHECK);
+}
 
 Deno.serve(async (request: Request): Promise<Response> => {
   const correlationId = crypto.randomUUID();
@@ -117,6 +164,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
   } | null = null;
 
   try {
+    if (request.method === "OPTIONS") {
+      return new Response("ok", { headers: CORS_HEADERS });
+    }
     if (request.method !== "POST") {
       httpStatus = 405;
       return jsonResponse({ ok: false, error: "method_not_allowed" }, httpStatus);
@@ -161,6 +211,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     let clinicMoveHistory: string[] = [];
     let clinicRequiredMove = "";
     let clinicFragmentWarning = false;
+    let clinicRepeatWarning = false;
     if (isClinicTrack) {
       clinicMoveHistory = await fetchClinicMoveHistory(
         correlationId,
@@ -184,6 +235,18 @@ Deno.serve(async (request: Request): Promise<Response> => {
         correlation_id: correlationId,
         history_length: clinicFragmentHistory.length,
         fragment_warning: clinicFragmentWarning,
+      }));
+
+      const clinicResponseHistory = await fetchClinicResponseHistory(
+        correlationId,
+        payload.value.session_id,
+      );
+      clinicRepeatWarning = decideRepeatWarning(clinicResponseHistory);
+      console.log(JSON.stringify({
+        event: "clinic_repeat_warning_decided",
+        correlation_id: correlationId,
+        history_length: clinicResponseHistory.length,
+        repeat_warning: clinicRepeatWarning,
       }));
     }
 
@@ -210,8 +273,10 @@ Deno.serve(async (request: Request): Promise<Response> => {
       therapistPrompt,
       prePatientPrompt,
       patient20: patientContext.patientBio,
+      patientName: patientContext.patientName,
       requiredMove: clinicRequiredMove,
       fragmentWarning: clinicFragmentWarning,
+      repeatWarning: clinicRepeatWarning,
     });
     const candidateInput = buildCandidateInput({
       ...payload.value,
@@ -329,6 +394,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
             clinicMoveHistory.length + 1,
             correctorResult?.reason_codes?.includes("OVER_ANALYSIS") ?? false,
           );
+          await recordClinicResponse(
+            correlationId,
+            payload.value.session_id,
+            clinicMoveHistory.length + 1,
+            candidateText,
+          );
         }
         return jsonResponse({
           ok: true,
@@ -372,6 +443,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
           clinicMoveHistory.length + 1,
           correctorResult?.reason_codes?.includes("OVER_ANALYSIS") ?? false,
         );
+        await recordClinicResponse(
+          correlationId,
+          payload.value.session_id,
+          clinicMoveHistory.length + 1,
+          rewrite,
+        );
       }
       return jsonResponse({
         ok: true,
@@ -411,6 +488,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
           payload.value.session_id,
           clinicMoveHistory.length + 1,
           false,
+        );
+        await recordClinicResponse(
+          correlationId,
+          payload.value.session_id,
+          clinicMoveHistory.length + 1,
+          candidateText,
         );
       }
       return jsonResponse({
@@ -541,8 +624,8 @@ function maskPhoneForUsersInformation(rawPhone: string): string {
 async function fetchPatientContext(
   correlationId: string,
   patientId: string,
-): Promise<{ therapyTrack: string; patientBio: string }> {
-  const fallback = { therapyTrack: DEFAULT_THERAPY_TRACK, patientBio: "" };
+): Promise<{ therapyTrack: string; patientBio: string; patientName: string }> {
+  const fallback = { therapyTrack: DEFAULT_THERAPY_TRACK, patientBio: "", patientName: "" };
   const phone = maskPhoneForUsersInformation(patientId ?? "");
   if (!phone) return fallback;
   try {
@@ -552,6 +635,44 @@ async function fetchPatientContext(
       ?? Deno.env.get("SUPABASE_KEY")
       ?? "";
     if (!supabaseUrl || !serviceKey) return fallback;
+
+    // Name, decrypted server-side. Uses the same RPC the identification flow
+    // already relies on; service_role still has EXECUTE on it (only anon and
+    // authenticated were revoked). A failure here is non-fatal - the name is
+    // an enrichment, not a requirement, so track/bio resolution proceeds
+    // regardless.
+    let patientName = "";
+    try {
+      const nameRes = await fetch(
+        `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/get_last_users_thread_v2`,
+        {
+          method: "POST",
+          headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ p_phone: patientId }),
+        },
+      );
+      if (nameRes.ok) {
+        const nameData = await nameRes.json();
+        const nameRow = Array.isArray(nameData) && nameData.length === 1
+          ? (nameData[0] as Record<string, unknown>)
+          : null;
+        if (nameRow && typeof nameRow.name === "string") {
+          patientName = nameRow.name.trim();
+        }
+      } else {
+        await nameRes.body?.cancel();
+      }
+    } catch (_nameError) {
+      console.error(JSON.stringify({
+        event: "patient_name_fetch_exception",
+        correlation_id: correlationId,
+      }));
+    }
+
     const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/users_information_v2?select=therapy_track,user_text&phone=eq.${encodeURIComponent(phone)}&limit=2`;
     const res = await fetch(url, {
       headers: {
@@ -566,7 +687,7 @@ async function fetchPatientContext(
         correlation_id: correlationId,
         http_status: res.status,
       }));
-      return fallback;
+      return { ...fallback, patientName };
     }
     const data = await res.json();
     if (!Array.isArray(data) || data.length === 0) {
@@ -574,7 +695,7 @@ async function fetchPatientContext(
         event: "patient_context_not_found",
         correlation_id: correlationId,
       }));
-      return fallback;
+      return { ...fallback, patientName };
     }
     if (data.length > 1) {
       console.error(JSON.stringify({
@@ -582,7 +703,7 @@ async function fetchPatientContext(
         correlation_id: correlationId,
         row_count: data.length,
       }));
-      return fallback;
+      return { ...fallback, patientName };
     }
     const row = data[0] as Record<string, unknown>;
     const rawTrack = typeof row.therapy_track === "string" ? row.therapy_track.trim() : "";
@@ -593,8 +714,9 @@ async function fetchPatientContext(
       correlation_id: correlationId,
       therapy_track: therapyTrack,
       patient_bio_length: rawBio.length,
+      patient_name_present: patientName.length > 0,
     }));
-    return { therapyTrack, patientBio: rawBio };
+    return { therapyTrack, patientBio: rawBio, patientName };
   } catch (_e) {
     console.error(JSON.stringify({
       event: "patient_context_fetch_exception",
@@ -772,6 +894,85 @@ function decideFragmentWarning(fragmentHistory: boolean[]): boolean {
     if (flag) fragmented += 1;
   }
   return fragmented >= CLINIC_FRAGMENT_WARNING_THRESHOLD;
+}
+
+/**
+ * CLINIC only. Returns the delivered response_text values already logged for
+ * this session, ordered by turn_number ascending. Never throws: any failure
+ * degrades to an empty history, which the decision function reads as "no
+ * evidence of repetition".
+ */
+async function fetchClinicResponseHistory(
+  correlationId: string,
+  sessionId: string,
+): Promise<string[]> {
+  const session = (sessionId ?? "").trim();
+  if (!session) return [];
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+      ?? Deno.env.get("SUPABASE_ANON_KEY")
+      ?? Deno.env.get("SUPABASE_KEY")
+      ?? "";
+    if (!supabaseUrl || !serviceKey) return [];
+    const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/clinic_response_log` +
+      `?select=response_text&session_id=eq.${encodeURIComponent(session)}` +
+      `&order=turn_number.asc`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        Accept: "application/json",
+      },
+    });
+    if (!res.ok) {
+      await res.body?.cancel();
+      console.error(JSON.stringify({
+        event: "clinic_response_history_fetch_failed",
+        correlation_id: correlationId,
+        http_status: res.status,
+      }));
+      return [];
+    }
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    const texts: string[] = [];
+    for (const item of data) {
+      if (!item || typeof item !== "object") continue;
+      const text = (item as Record<string, unknown>).response_text;
+      if (typeof text === "string") texts.push(text);
+    }
+    return texts;
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "clinic_response_history_fetch_exception",
+      correlation_id: correlationId,
+    }));
+    return [];
+  }
+}
+
+/**
+ * CLINIC only. True when at least one significant sentence appears in two
+ * different responses within the last CLINIC_REPEAT_CHECK_WINDOW delivered
+ * responses - the therapist has already said essentially the same thing
+ * verbatim more than once in this conversation, even if the rest of each
+ * response differs.
+ */
+function decideRepeatWarning(responseHistory: string[]): boolean {
+  const window = responseHistory.slice(-CLINIC_REPEAT_CHECK_WINDOW);
+  if (window.length < 2) return false;
+  const sentenceSets = window.map(extractSignificantSentences);
+  for (let i = 0; i < sentenceSets.length; i++) {
+    for (let j = i + 1; j < sentenceSets.length; j++) {
+      for (const sentence of sentenceSets[i]) {
+        if (sentenceSets[j].includes(sentence)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 /**
@@ -988,6 +1189,73 @@ async function recordClinicFragment(
   }
 }
 
+/**
+ * CLINIC only. Writes the final delivered response text for this turn, used
+ * by decideRepeatWarning on future turns. A write failure is logged and
+ * swallowed, matching recordClinicMove/recordClinicFragment: the patient
+ * response is already decided and must not depend on this table.
+ */
+async function recordClinicResponse(
+  correlationId: string,
+  sessionId: string,
+  turnNumber: number,
+  responseText: string,
+): Promise<void> {
+  const session = (sessionId ?? "").trim();
+  if (!session) return;
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+      ?? Deno.env.get("SUPABASE_ANON_KEY")
+      ?? Deno.env.get("SUPABASE_KEY")
+      ?? "";
+    if (!supabaseUrl || !serviceKey) {
+      console.error(JSON.stringify({
+        event: "clinic_response_log_skipped",
+        correlation_id: correlationId,
+        reason: "supabase_configuration_missing",
+      }));
+      return;
+    }
+    const res = await fetch(
+      `${supabaseUrl.replace(/\/$/, "")}/rest/v1/clinic_response_log`,
+      {
+        method: "POST",
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": "application/json; charset=utf-8",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({
+          session_id: session,
+          turn_number: turnNumber,
+          response_text: responseText,
+        }),
+      },
+    );
+    await res.body?.cancel();
+    if (!res.ok) {
+      console.error(JSON.stringify({
+        event: "clinic_response_log_insert_failed",
+        correlation_id: correlationId,
+        http_status: res.status,
+      }));
+      return;
+    }
+    console.log(JSON.stringify({
+      event: "clinic_response_logged",
+      correlation_id: correlationId,
+      turn_number: turnNumber,
+    }));
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "clinic_response_log_insert_exception",
+      correlation_id: correlationId,
+    }));
+  }
+}
+
 const DEFAULT_CORRECTOR_KEY = "corrector";
 const CORRECTOR_KEY_PATTERN = /^[a-z0-9_]{1,80}$/;
 
@@ -1108,26 +1376,38 @@ function buildTherapistInstructions(args: {
   therapistPrompt: string;
   prePatientPrompt: string;
   patient20: string;
+  patientName?: string;
   requiredMove?: string;
   fragmentWarning?: boolean;
+  repeatWarning?: boolean;
 }): string {
   // The move line is injected only for CLINIC. Every other track passes an
   // empty requiredMove and gets exactly the instructions it got before.
   const requiredMove = (args.requiredMove ?? "").trim();
-  // The reinforced warning rides on the move line: it is added only when the
-  // move line itself exists, so no other track can ever receive it.
-  const movePrefix = requiredMove.length > 0
-    ? (args.fragmentWarning === true
-      ? [
-        `מהלך התשובה הזו: ${requiredMove}`,
-        CLINIC_FRAGMENT_WARNING_LINE,
-        "",
-      ]
-      : [`מהלך התשובה הזו: ${requiredMove}`, ""])
-    : [];
+  // Both reinforced warnings ride on the move line: they are added only when
+  // the move line itself exists, so no other track can ever receive them.
+  // Both can fire in the same turn - fragmentation and self-repetition are
+  // independent signals.
+  const movePrefix: string[] = [];
+  if (requiredMove.length > 0) {
+    movePrefix.push(`מהלך התשובה הזו: ${requiredMove}`);
+    if (args.fragmentWarning === true) movePrefix.push(CLINIC_FRAGMENT_WARNING_LINE);
+    if (args.repeatWarning === true) movePrefix.push(CLINIC_REPEAT_WARNING_LINE);
+    movePrefix.push("");
+  }
   const formatRule = requiredMove.length > 0
     ? "- Return one valid JSON object only, with the keys move and response. No Markdown and no text outside JSON."
     : "- Plain text only; no Markdown, numbering decorations, tables, or JSON.";
+
+  // The patient's name is the only reliable, unambiguous signal for gender in
+  // Hebrew before the patient has said much. Without it the model has no
+  // basis to infer gender at all on early turns. Passed as a plain fact, not
+  // as content to greet with directly (the client already handles the
+  // opening greeting on its own).
+  const patientName = (args.patientName ?? "").trim();
+  const nameRule = patientName.length > 0
+    ? `- Patient's name: ${patientName}. Infer grammatical gender from this name and address the patient consistently in that gender throughout. Do not state the name back to the patient unless they used it themselves.`
+    : "- Patient's name is unknown for this request. Infer gender only from what the patient writes, and default to a gender-neutral phrasing where Hebrew allows it until a clear signal appears.";
 
   return [
     ...movePrefix,
@@ -1137,6 +1417,7 @@ function buildTherapistInstructions(args: {
     "",
     "Mandatory operational rules for this runtime request:",
     "- Reply in Hebrew only.",
+    nameRule,
     "- Maintain gender consistency with the patient and prior context.",
     formatRule,
     "- Ask at most one question.",
@@ -1436,6 +1717,7 @@ function jsonResponse(body: Record<string, unknown>, status: number): Response {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
+      ...CORS_HEADERS,
     },
   });
 }
