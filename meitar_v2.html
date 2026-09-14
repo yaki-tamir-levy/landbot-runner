@@ -588,7 +588,7 @@
         b.style.marginBottom = '8px';
         b.style.textAlign = 'right';
         b.textContent = r.lesson_number + '. ' + r.lesson_title;
-        b.addEventListener('click', function () { startCourse(r.lesson_number, b); });
+        b.addEventListener('click', function () { startCourse(r.lesson_number, r.lesson_title, b); });
         list.appendChild(b);
       });
     } catch (err) {
@@ -602,7 +602,7 @@
   // before a lesson can be attached to it. set_course_lesson_v2 rejects any
   // conversation whose source is not 'D', so a therapy session can never
   // receive course material.
-  async function startCourse(lessonNumber, btn) {
+  async function startCourse(lessonNumber, lessonTitle, btn) {
     const statusEl = document.getElementById('lessons-status');
     try {
       if (btn) btn.disabled = true;
@@ -622,6 +622,7 @@
       });
       showView('treatment');
       initChat();
+      addBotMessage('השיעור האחרון שלמדת: ' + lessonNumber + '. ' + lessonTitle);
       syncChatHeightToViewport();
     } catch (err) {
       if (btn) btn.disabled = false;
