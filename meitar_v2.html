@@ -253,6 +253,7 @@
 
       <div class="activation-buttons">
         <button class="act-btn secondary" id="btn-explain">הסבר על המערכת</button>
+        <button class="act-btn primary" id="btn-enter-course">קורס</button>
         <button class="act-btn primary" id="btn-enter-treatment">כניסה לטיפול</button>
         <a class="act-btn tertiary" href="https://yaki-tamir-levy.github.io/landbot-runner/intake.html">כניסה למועמד</a>
       </div>
@@ -314,6 +315,15 @@
   </section>
 
   <!-- ============ מסך חסימה (לא קיים / לא פעיל / לא מטופל / לא הסכים) ============ -->
+  <section id="view-lessons" class="view">
+    <div class="field-wrap">
+      <h1>איפה אתה בקורס</h1>
+      <p style="font-size:14.5px; color:var(--ink-soft); margin-bottom:18px;">בחר/י את השיעור האחרון שלמדת.</p>
+      <div id="lessons-list"></div>
+      <div class="status-msg" id="lessons-status"></div>
+    </div>
+  </section>
+
   <section id="view-blocked" class="view">
     <div class="field-wrap">
       <h1 id="blocked-title">לא ניתן להמשיך</h1>
@@ -378,7 +388,8 @@
   // ---------- View routing ----------
   const views = {
     activation: 'view-activation', explain: 'view-explain', phone: 'view-phone',
-    otp: 'view-otp', disclaimer: 'view-disclaimer', blocked: 'view-blocked', treatment: 'view-treatment',
+    otp: 'view-otp', disclaimer: 'view-disclaimer',
+    lessons: 'view-lessons', blocked: 'view-blocked', treatment: 'view-treatment',
   };
   function showView(name) {
     Object.values(views).forEach(id => document.getElementById(id).classList.remove('active'));
@@ -386,7 +397,14 @@
     window.scrollTo(0, 0);
   }
   document.getElementById('btn-explain').addEventListener('click', () => showView('explain'));
-  document.getElementById('btn-enter-treatment').addEventListener('click', () => showView('phone'));
+  document.getElementById('btn-enter-treatment').addEventListener('click', () => {
+    session.mode = 'treatment';
+    showView('phone');
+  });
+  document.getElementById('btn-enter-course').addEventListener('click', () => {
+    session.mode = 'course';
+    showView('phone');
+  });
   document.querySelectorAll('[data-back="activation"]').forEach(btn =>
     btn.addEventListener('click', () => { session = {}; showView('activation'); })
   );
@@ -440,15 +458,22 @@
   }
 
   async function proceedAfterVerification() {
-    if (session.disclaimedAgreed) {
-      await startTreatment();
-    } else {
+    if (!session.disclaimedAgreed) {
       showView('disclaimer');
+      return;
     }
+    if (session.mode === 'course') {
+      showView('lessons');
+      await loadLessons();
+      return;
+    }
+    await startTreatment();
   }
 
   // ---------- Session state carried between screens (סעיף 2 -> 3) ----------
-  let session = { phone: '', name: '', conversationId: '' };
+  // mode decides which gate the phone step applies and where the flow goes
+  // after the disclaimer. 'treatment' is the existing path, unchanged.
+  let session = { phone: '', name: '', conversationId: '', mode: 'treatment' };
 
   // ---------- שלב 2: קליטת טלפון + כל הבדיקות לפי המסמך ----------
   const phoneInput = document.getElementById('phone-input');
@@ -486,8 +511,12 @@
         return;
       }
 
-      // בדיקה: סטטוס (1=מטופל, 2=מטופל+קורסיסט, 4=טסט מותרים; אחרת - לא מטופל)
-      const allowedStatus = ['1', '3', '4'];
+      // Status gate. Verified against the viewer's own status map:
+      // 1 = therapy only, 2 = course only, 3 = both, 4 = test.
+      // The therapy gate is unchanged; the course gate is its mirror.
+      const allowedStatus = session.mode === 'course'
+        ? ['2', '3', '4']
+        : ['1', '3', '4'];
       if (!allowedStatus.includes(String(row.status))) {
         showBlocked('לא זוהית כמטופל/ת', 'הכניסה הזו מיועדת למטופלים בטיפול. אם לדעתך זו טעות, נא לפנות לפסיכולוג/ית המטפל/ת.');
         return;
@@ -525,7 +554,12 @@
     const statusEl = document.getElementById('disclaimer-status');
     try {
       await rpc('set_disclaimed_agreed_v2', { p_phone: session.phone });
-      await startTreatment();
+      // Route through the same function the verified path uses, so the course
+      // and therapy branches are decided in exactly one place. Without this a
+      // patient who had not yet agreed was sent to therapy even after choosing
+      // the course.
+      session.disclaimedAgreed = true;
+      await proceedAfterVerification();
     } catch (err) {
       statusEl.className = 'status-msg error';
       statusEl.textContent = 'משהו השתבש. אפשר לנסות שוב.';
@@ -538,6 +572,65 @@
   });
 
   // ---------- שלב 3.a: התחלת שיחה אמיתית ----------
+  async function loadLessons() {
+    const list = document.getElementById('lessons-list');
+    const statusEl = document.getElementById('lessons-status');
+    list.innerHTML = '';
+    statusEl.className = 'status-msg';
+    statusEl.textContent = 'טוען';
+    try {
+      const rows = await rpc('get_course_lessons_v2', {});
+      if (!Array.isArray(rows) || rows.length === 0) throw new Error('no_lessons');
+      statusEl.textContent = '';
+      rows.forEach(function (r) {
+        const b = document.createElement('button');
+        b.className = 'submit-btn';
+        b.style.marginBottom = '8px';
+        b.style.textAlign = 'right';
+        b.textContent = r.lesson_number + '. ' + r.lesson_title;
+        b.addEventListener('click', function () { startCourse(r.lesson_number, b); });
+        list.appendChild(b);
+      });
+    } catch (err) {
+      statusEl.className = 'status-msg error';
+      statusEl.textContent = 'לא הצלחנו לטעון את רשימת השיעורים.';
+      console.error(err);
+    }
+  }
+
+  // Course conversation. Two calls, in this order: the session must exist
+  // before a lesson can be attached to it. set_course_lesson_v2 rejects any
+  // conversation whose source is not 'D', so a therapy session can never
+  // receive course material.
+  async function startCourse(lessonNumber, btn) {
+    const statusEl = document.getElementById('lessons-status');
+    try {
+      if (btn) btn.disabled = true;
+      statusEl.className = 'status-msg';
+      statusEl.textContent = 'פותח שיחה';
+      const result = await rpc('start_conversation_v2', {
+        p_phone: session.phone,
+        p_name: session.name,
+        p_source: 'D',
+      });
+      session.conversationId = (typeof result === 'string') ? result
+        : (result && (result.conversation_id || result.id)) || '';
+      if (!session.conversationId) throw new Error('no_conversation_id');
+      await rpc('set_course_lesson_v2', {
+        p_conversation_id: session.conversationId,
+        p_lesson_number: lessonNumber,
+      });
+      showView('treatment');
+      initChat();
+      syncChatHeightToViewport();
+    } catch (err) {
+      if (btn) btn.disabled = false;
+      statusEl.className = 'status-msg error';
+      statusEl.textContent = 'משהו השתבש. אפשר לנסות שוב.';
+      console.error(err);
+    }
+  }
+
   async function startTreatment() {
     try {
       const result = await rpc('start_conversation_v2', {
