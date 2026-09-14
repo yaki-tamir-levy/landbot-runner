@@ -365,7 +365,14 @@
       body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`rpc_${fn}_failed_${res.status}`);
-    return res.json();
+    // A void-returning function (set_disclaimed_agreed_v2) answers with an
+    // empty body. res.json() throws "Unexpected end of JSON input" on that,
+    // so the disclaimer step always failed on the client even though the
+    // database update itself succeeded. An empty body now returns null.
+    if (res.status === 204) return null;
+    const text = await res.text();
+    if (text.trim().length === 0) return null;
+    return JSON.parse(text);
   }
 
   // ---------- View routing ----------
