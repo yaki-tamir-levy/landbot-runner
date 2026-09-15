@@ -359,6 +359,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       prePatientPrompt,
       patient20: patientContext.patientBio,
       patientName: patientContext.patientName,
+      patientGender: patientContext.patientGender,
       requiredMove: clinicRequiredMove,
       fragmentWarning: clinicFragmentWarning,
       repeatWarning: clinicRepeatWarning,
@@ -783,8 +784,10 @@ function maskPhoneForUsersInformation(rawPhone: string): string {
 async function fetchPatientContext(
   correlationId: string,
   patientId: string,
-): Promise<{ therapyTrack: string; patientBio: string; patientName: string }> {
-  const fallback = { therapyTrack: DEFAULT_THERAPY_TRACK, patientBio: "", patientName: "" };
+): Promise<{ therapyTrack: string; patientBio: string; patientName: string; patientGender: string }> {
+  // patientGender is written onto this object as soon as it is known, so all
+  // four early-return paths below carry it without each needing its own edit.
+  const fallback = { therapyTrack: DEFAULT_THERAPY_TRACK, patientBio: "", patientName: "", patientGender: "" };
   const phone = maskPhoneForUsersInformation(patientId ?? "");
   if (!phone) return fallback;
   try {
@@ -821,6 +824,12 @@ async function fetchPatientContext(
           : null;
         if (nameRow && typeof nameRow.name === "string") {
           patientName = nameRow.name.trim();
+        }
+        // Stored gender, from the same RPC call - no extra round trip. Only
+        // the two known values are accepted; anything else stays empty and
+        // the model keeps inferring from the name, exactly as before.
+        if (nameRow && (nameRow.gender === "M" || nameRow.gender === "F")) {
+          fallback.patientGender = nameRow.gender;
         }
       } else {
         await nameRes.body?.cancel();
@@ -875,7 +884,7 @@ async function fetchPatientContext(
       patient_bio_length: rawBio.length,
       patient_name_present: patientName.length > 0,
     }));
-    return { therapyTrack, patientBio: rawBio, patientName };
+    return { therapyTrack, patientBio: rawBio, patientName, patientGender: fallback.patientGender };
   } catch (_e) {
     console.error(JSON.stringify({
       event: "patient_context_fetch_exception",
@@ -1878,6 +1887,7 @@ function buildTherapistInstructions(args: {
   prePatientPrompt: string;
   patient20: string;
   patientName?: string;
+  patientGender?: string;
   requiredMove?: string;
   fragmentWarning?: boolean;
   repeatWarning?: boolean;
@@ -1910,7 +1920,18 @@ function buildTherapistInstructions(args: {
   // as content to greet with directly (the client already handles the
   // opening greeting on its own).
   const patientName = (args.patientName ?? "").trim();
-  const nameRule = patientName.length > 0
+  // A stored gender is a fact; a name is a guess that fails on names that
+  // carry both genders in Hebrew. When the fact is present it decides, and
+  // the name is used only for the model's own reference. When it is absent
+  // nothing changes: the existing name-based inference stands as it was.
+  const storedGender = (args.patientGender ?? "").trim().toUpperCase();
+  const genderWord = storedGender === "F" ? "female" : storedGender === "M" ? "male" : "";
+
+  if (genderWord) {
+    const withName = patientName.length > 0 ? ` The patient's name is ${patientName}.` : "";
+    var nameRule = `- The patient's grammatical gender is ${genderWord}. This is recorded in the system and is authoritative - address the patient in that gender throughout, and do not infer gender from the name or from anything they write.${withName} Do not state the name back to the patient unless they use it themselves.`;
+  } else
+  nameRule = patientName.length > 0
     ? `- Patient's name: ${patientName}. Infer grammatical gender from this name and address the patient consistently in that gender throughout. Do not state the name back to the patient unless they used it themselves.`
     : "- Patient's name is unknown for this request. Infer gender only from what the patient writes, and default to a gender-neutral phrasing where Hebrew allows it until a clear signal appears.";
 
