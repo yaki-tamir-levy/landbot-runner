@@ -52,8 +52,11 @@ REQUIRED = [
     "reason_for_coming", "duration", "daily_impact",
 ]
 
+# "duration" and "daily_impact" are already in REQUIRED. Listing them again
+# put each of them TWICE into the "missing" list, so a rejected candidate was
+# told the same field was missing twice. Verified in live candidate rows.
 ALL_FIELDS = REQUIRED + [
-    "duration", "daily_impact", "prior_therapy", "support", "expectations",
+    "prior_therapy", "support", "expectations",
 ]
 
 BACKGROUND_MAX = 900
@@ -101,7 +104,7 @@ def get_prompt(key):
 # ---------------------------------------------------------------- מודל
 
 EMPTY = {f: "" for f in ALL_FIELDS}
-EMPTY.update({"missing": list(ALL_FIELDS), "background": "", "explicit_risk_statement": False})
+EMPTY.update({"missing": list(ALL_FIELDS), "background": "", "explicit_risk_statement": False, "gender": ""})
 
 
 def extract(prompt, talk):
@@ -150,6 +153,12 @@ def extract(prompt, talk):
     out = {f: str(data.get(f, "") or "").strip() for f in ALL_FIELDS}
     out["background"] = str(data.get("background", "") or "").strip()[:BACKGROUND_MAX]
     out["explicit_risk_statement"] = bool(data.get("explicit_risk_statement", False))
+    # Gender is inferred from the conversation, never asked, and is deliberately
+    # NOT in ALL_FIELDS: an empty value there would land in "missing" and block
+    # acceptance. Unsure stays empty, and the wording simply remains neutral -
+    # a wrong guess addresses the patient in the wrong form, which is worse.
+    _g = str(data.get("gender", "") or "").strip().upper()
+    out["gender"] = _g if _g in ("M", "F") else ""
 
     # רשימת החוסרים נגזרת בקוד, לא מהמודל. הוא עלול לטעות בה.
     out["missing"] = [f for f in ALL_FIELDS if not out[f]]
@@ -333,6 +342,7 @@ def main():
                 "p_missing":    fields["missing"],
                 "p_background": fields["background"],
                 "p_risk":       fields["explicit_risk_statement"],
+                "p_gender":     fields.get("gender") or None,
             })
 
             print(f"  {short}: {decision} (missing: {len(fields['missing'])})")
