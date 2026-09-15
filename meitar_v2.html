@@ -266,7 +266,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
       חזרה
     </button>
-    <div class="explain-scroll">
+    <div class="explain-scroll" id="explain-body">
       <h1>מהי מית"ר</h1>
       <p>מרחב שיחה תומך, שנמצא כאן בין הפגישות עם המטפל שלך. הוא לא מחליף את הטיפול ולא מקבל החלטות במקומך — הוא כאן כדי להקשיב ולעזור לך לארגן מחשבה כשיש בכך צורך.</p>
     </div>
@@ -280,6 +280,7 @@
     </button>
     <div class="field-wrap">
       <h1>כניסה לטיפול</h1>
+      <p class="disclaimer-text" id="phone-intro" style="display:none;"></p>
       <input type="tel" id="phone-input" placeholder="מספר הטלפון שלך" inputmode="numeric" autocomplete="tel">
       <button class="submit-btn" id="phone-submit">המשך</button>
       <div class="status-msg" id="phone-status"></div>
@@ -301,7 +302,7 @@
   <section id="view-disclaimer" class="view">
     <div class="field-wrap">
       <h1>לפני שממשיכים</h1>
-      <p class="disclaimer-text">
+      <p class="disclaimer-text" id="disclaimer-body">
         השירות הזה הוא מרחב תמיכה בין פגישות, ואינו תחליף לטיפול עצמו ואינו מיועד למצבי חירום.
         אם עולה מצוקה מיידית או מחשבות לפגוע בעצמך או באחר, פני/ה מיד לגורם מקצועי, לחדר מיון, או למוקד 105/1201.
         השיחה כאן אינה מהווה ייעוץ רפואי או פסיכולוגי, והמלווה הווירטואלי אינו מטפל אנושי.
@@ -409,6 +410,46 @@
     btn.addEventListener('click', () => { session = {}; showView('activation'); })
   );
 
+  // ---------- Texts served from the database ----------
+  // Every screen keeps the wording that is already in the markup. A text
+  // only replaces it once it has arrived AND is non-empty, so a failed
+  // fetch, an empty cell or a deactivated row all leave the page exactly
+  // as it is today. Nothing here can blank a screen.
+  const TEXTS = {};
+
+  function txt(key, fallback) {
+    const v = TEXTS[key];
+    return (typeof v === 'string' && v.trim()) ? v : (fallback || '');
+  }
+
+  function setText(elId, key) {
+    const el = document.getElementById(elId);
+    const v = txt(key, '');
+    if (!el || !v) return;
+    el.textContent = v.replace(/\r/g, '');
+    el.style.whiteSpace = 'pre-line';
+    el.style.display = '';
+  }
+
+  function applyTexts() {
+    setText('explain-body', 'about_system');
+    setText('phone-intro', 'greeting_treatment');
+    setText('disclaimer-body', 'disclaimer');
+  }
+
+  async function loadTexts() {
+    try {
+      const rows = await rpc('get_app_texts_v2', {});
+      if (!Array.isArray(rows)) return;
+      for (const r of rows) {
+        if (r && typeof r.text_key === 'string') TEXTS[r.text_key] = r.body;
+      }
+      applyTexts();
+    } catch (err) {
+      console.error('texts_load_failed', err);
+    }
+  }
+
   function showBlocked(title, message) {
     document.getElementById('blocked-title').textContent = title;
     document.getElementById('blocked-message').textContent = message;
@@ -500,6 +541,17 @@
 
       // בדיקה: קיים במערכת?
       if (!row) {
+        // The database text replaces the built-in wording only when it has
+        // arrived and is non-empty; otherwise the original call below runs
+        // untouched. The title stays as written in the page.
+        const t = txt('blocked_not_found', '');
+        if (t) {
+          showBlocked(
+            document.getElementById('blocked-title').textContent,
+            t.replace(/\r/g, '')
+          );
+          return;
+        }
         showBlocked('לא נמצא במערכת', 'לא מצאנו אותך במערכת. נא לפנות לפסיכולוג/ית המטפל/ת.');
         return;
       }
@@ -780,6 +832,9 @@
     window.visualViewport.addEventListener('scroll', syncChatHeightToViewport);
   }
   window.addEventListener('orientationchange', () => setTimeout(syncChatHeightToViewport, 250));
+
+  // Fire and forget: the page is fully usable before this resolves.
+  loadTexts();
   chatInput.addEventListener('focus', () => {
     setTimeout(() => { syncChatHeightToViewport(); chatInput.scrollIntoView({ block: 'end', behavior: 'smooth' }); }, 150);
   });
