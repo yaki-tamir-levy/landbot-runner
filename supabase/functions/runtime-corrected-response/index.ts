@@ -60,6 +60,13 @@ const DEFAULT_THERAPY_TRACK = "NLP_CBT";
 // whose source is 'D' - enforced in the database, not here.
 const COURSE_PROMPT_KEY = "course_guide";
 
+// The therapy budget is deliberately tight - short replies are a clinical
+// rule on that path. Teaching is different: "summarise what I have learned
+// so far" spans many lessons and was being cut off mid-sentence. This raise
+// applies to the course path only; therapy keeps its 500.
+const COURSE_MAX_OUTPUT_TOKENS = 1500;
+const DEFAULT_MAX_OUTPUT_TOKENS = 500;
+
 const CLINIC_TRACK = "CLINIC";
 
 const CLINIC_MOVE_TYPES = [
@@ -408,6 +415,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
         input: candidateInput,
         patientId: payload.value.patient_id,
         sessionId: payload.value.session_id,
+        maxOutputTokens: isCourse
+          ? COURSE_MAX_OUTPUT_TOKENS
+          : DEFAULT_MAX_OUTPUT_TOKENS,
       });
     } finally {
       candidateElapsedMs = Date.now() - candidateStartedAt;
@@ -1967,6 +1977,7 @@ async function generateCandidate(args: {
   input: string;
   patientId: string;
   sessionId: string;
+  maxOutputTokens?: number;
 }): Promise<string | null> {
   const response = await postOpenAI({
     apiKey: args.apiKey,
@@ -1976,7 +1987,7 @@ async function generateCandidate(args: {
       store: false,
       instructions: args.instructions,
       input: args.input,
-      max_output_tokens: 500,
+      max_output_tokens: args.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       temperature: 0.7,
       metadata: {
         patient_id: args.patientId,
