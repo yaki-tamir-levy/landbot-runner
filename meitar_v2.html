@@ -619,6 +619,9 @@
       session.phone = phone;
       session.name = row.name || '';
       session.disclaimedAgreed = row.disclaimed === 'AGREED';
+      // 'M' or 'F' when known, empty otherwise. Sheet patients carry it;
+      // intake patients do not yet, and fall back to neutral wording.
+      session.gender = (row.gender === 'M' || row.gender === 'F') ? row.gender : '';
 
       // שכבת אימות שנייה, זמנית: קוד למייל של יעקב עד שייאסף אימייל אמיתי
       // לכל מטופל. זיכרון מכשיר: לא לבקש שוב באותו דפדפן.
@@ -759,8 +762,17 @@
   function initChat() {
     if (chatStarted) return;
     chatStarted = true;
-    const greetingOpen = session.name ? 'היי ' + session.name + ', ' : 'היי, ';
-    addBotMessage(greetingOpen + 'אני שמח שהצטרפת ומקווה שתהיה לנו שיחה נעימה - ומועילה. תכף נעבור לשיחה עם העוזר הווירטואלי.');
+    // Gendered where the gender is known, neutral where it is not. A wrong
+    // form is worse than a neutral one, so the fallback never guesses.
+    const g = session.gender;
+    const opener = (g === 'F')
+      ? 'אני שמח שהצטרפת ומקווה שתהיה לנו שיחה נעימה - ומועילה. ספרי לי מה קורה ועל מה את רוצה לשוחח.'
+      : (g === 'M')
+        ? 'אני שמח שהצטרפת ומקווה שתהיה לנו שיחה נעימה - ומועילה. ספר לי מה קורה ועל מה אתה רוצה לשוחח.'
+        : 'אני שמח שהצטרפת ומקווה שתהיה לנו שיחה נעימה - ומועילה. ספר/י לי מה קורה ועל מה תרצה/י לשוחח.';
+    const greetingOpen = (session.name ? 'היי ' + session.name + ', ' : 'היי, ')
+      + 'כאן העוזר הווירטואלי, ';
+    addBotMessage(greetingOpen + opener);
   }
 
   function nowLabel() {
