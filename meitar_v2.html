@@ -273,13 +273,13 @@
   </section>
 
   <!-- ============ 2. כניסה לטיפול — קלט טלפון ============ -->
-  <section id="view-phone" class="view">
+  <section id="view-phone" class="view" data-has-title="phone">
     <button class="back-btn" data-back="activation">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
       חזרה
     </button>
     <div class="field-wrap">
-      <h1>כניסה לטיפול</h1>
+      <h1 id="phone-title">כניסה לטיפול</h1>
       <p class="disclaimer-text" id="phone-intro" style="display:none;"></p>
       <input type="tel" id="phone-input" placeholder="מספר הטלפון שלך" inputmode="numeric" autocomplete="tel">
       <button class="submit-btn" id="phone-submit">המשך</button>
@@ -400,10 +400,12 @@
   document.getElementById('btn-explain').addEventListener('click', () => showView('explain'));
   document.getElementById('btn-enter-treatment').addEventListener('click', () => {
     session.mode = 'treatment';
+    setPhoneTitle();
     showView('phone');
   });
   document.getElementById('btn-enter-course').addEventListener('click', () => {
     session.mode = 'course';
+    setPhoneTitle();
     showView('phone');
   });
   document.querySelectorAll('[data-back="activation"]').forEach(btn =>
@@ -450,7 +452,50 @@
     }
   }
 
+  // The two entry paths share one phone screen and one blocked screen, so
+  // both headings are chosen from session.mode rather than written twice
+  // in the markup. The treatment wording is captured from the page itself
+  // on first use, so it stays the single source for that path.
+  let PHONE_TITLE_DEFAULT = '';
+
+  function setPhoneTitle() {
+    const el = document.getElementById('phone-title');
+    if (!el) return;
+    if (!PHONE_TITLE_DEFAULT) PHONE_TITLE_DEFAULT = el.textContent;
+    el.textContent = (session.mode === 'course')
+      ? 'כניסה להדרכה לקורס "מסע הגיבור"'
+      : PHONE_TITLE_DEFAULT;
+  }
+
+  function notFoundTitle() {
+    return (session.mode === 'course')
+      ? 'לא זוהית כחניך הקורס "מסע הגיבור"'
+      : 'לא נמצא במערכת';
+  }
+
+  // Ends the session and returns to the opening screen, after showing one
+  // closing message. Used when the disclaimer is declined.
+  function showExit(message) {
+    const titleEl = document.getElementById('blocked-title');
+    const msgEl = document.getElementById('blocked-message');
+    if (titleEl) titleEl.style.display = 'none';
+    // The back button is hidden, not removed: the blocked screen is shared
+    // with ordinary refusals, which must keep it. showBlocked restores it.
+    const backBtn = document.querySelector('#view-blocked [data-back]');
+    if (backBtn) backBtn.style.display = 'none';
+    if (msgEl) {
+      msgEl.textContent = (message || '').replace(/\r/g, '');
+      msgEl.style.whiteSpace = 'pre-line';
+    }
+    session = {};
+    showView('blocked');
+  }
+
   function showBlocked(title, message) {
+    const titleEl = document.getElementById('blocked-title');
+    if (titleEl) titleEl.style.display = '';
+    const backBtn = document.querySelector('#view-blocked [data-back]');
+    if (backBtn) backBtn.style.display = '';
     document.getElementById('blocked-title').textContent = title;
     document.getElementById('blocked-message').textContent = message;
     showView('blocked');
@@ -546,10 +591,7 @@
         // untouched. The title stays as written in the page.
         const t = txt('blocked_not_found', '');
         if (t) {
-          showBlocked(
-            document.getElementById('blocked-title').textContent,
-            t.replace(/\r/g, '')
-          );
+          showBlocked(notFoundTitle(), t.replace(/\r/g, ''));
           return;
         }
         showBlocked('לא נמצא במערכת', 'לא מצאנו אותך במערכת. נא לפנות לפסיכולוג/ית המטפל/ת.');
@@ -619,6 +661,11 @@
     }
   });
   document.getElementById('disclaimer-disagree').addEventListener('click', () => {
+    // showExit clears the session itself and hides the blocked title, so
+    // only the closing sentence is shown. With no text in the database the
+    // old behaviour stands: straight back to the opening screen.
+    const t = txt('disclaimer_not_agreed', '');
+    if (t) { showExit(t); return; }
     session = {};
     showView('activation');
   });
