@@ -394,6 +394,16 @@
   };
   function showView(name) {
     Object.values(views).forEach(id => document.getElementById(id).classList.remove('active'));
+    // Status lines belong to one attempt, not to the screen. Without this a
+    // "checking..." or an error message from an earlier visit was still
+    // sitting in the DOM and reappeared the moment the screen came back.
+    // Cleared here rather than at each call site, so a future screen cannot
+    // reintroduce the same bug.
+    ['phone-status', 'otp-status', 'disclaimer-status', 'lessons-status']
+      .forEach(function (id) {
+        const el = document.getElementById(id);
+        if (el) { el.textContent = ''; el.className = 'status-msg'; }
+      });
     document.getElementById(views[name]).classList.add('active');
     window.scrollTo(0, 0);
   }

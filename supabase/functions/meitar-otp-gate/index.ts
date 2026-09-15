@@ -4,6 +4,10 @@
 
 const SUPABASE_URL = "https://qcwimczsiuxkarwfiyai.supabase.co";
 const RATE_LIMIT_MINUTES = 60;
+// Three codes may be sent in a row; the fourth is refused until an hour has
+// passed since the third. A full hour of silence resets the count, so an
+// occasional single request never accumulates toward a block.
+const MAX_SENDS_PER_WINDOW = 3;
 
 // זמני בלבד: כל הקודים הולכים לכתובת אחת, עד שייאסף אימייל
 // אמיתי לכל מטופל. רק השורה הזו תצטרך שינוי אז, לא שום קוד אחר בקובץ.
@@ -42,10 +46,13 @@ Deno.serve(async (req: Request) => {
     return json({ error: "phone_required" }, 400);
   }
   const cleanPhone = phone.trim();
+  // Default: no row yet for this phone, or the check failed - this send is
+  // the first of a fresh window.
+  let sendCount = 1;
 
   // שלב 1 - בדיקת מרווח
   const checkRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/otp_send_log?select=last_sent_at&phone=eq.${encodeURIComponent(cleanPhone)}`,
+    `${SUPABASE_URL}/rest/v1/otp_send_log?select=last_sent_at,send_count&phone=eq.${encodeURIComponent(cleanPhone)}`,
     { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
   );
   if (checkRes.ok) {
@@ -53,7 +60,11 @@ Deno.serve(async (req: Request) => {
     if (Array.isArray(rows) && rows.length > 0) {
       const lastSentAt = new Date(rows[0].last_sent_at as string).getTime();
       const minutesSince = (Date.now() - lastSentAt) / 60000;
-      if (minutesSince < RATE_LIMIT_MINUTES) {
+      const prior = typeof rows[0].send_count === "number" ? rows[0].send_count : 0;
+      // Inside the window the count carries forward; outside it the window
+      // has expired and this send starts a fresh one.
+      sendCount = (minutesSince < RATE_LIMIT_MINUTES) ? prior + 1 : 1;
+      if (minutesSince < RATE_LIMIT_MINUTES && prior >= MAX_SENDS_PER_WINDOW) {
         const waitMinutes = Math.ceil(RATE_LIMIT_MINUTES - minutesSince);
         return json({ allowed: false, wait_minutes: waitMinutes });
       }
@@ -83,7 +94,11 @@ Deno.serve(async (req: Request) => {
       "Content-Type": "application/json",
       Prefer: "resolution=merge-duplicates,return=minimal",
     },
-    body: JSON.stringify({ phone: cleanPhone, last_sent_at: new Date().toISOString() }),
+    body: JSON.stringify({
+      phone: cleanPhone,
+      last_sent_at: new Date().toISOString(),
+      send_count: sendCount,
+    }),
   });
   await upsertRes.body?.cancel();
 
