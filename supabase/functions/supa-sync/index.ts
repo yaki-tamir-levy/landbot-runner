@@ -145,6 +145,9 @@ for (let i = 0; i < rows.length; i++) {
       p_status: getOptionalText(row, "status"),
       p_psychologist: getOptionalText(row, "psychologist"),
       p_therapy_track: getOptionalText(row, "therapy_track"),
+      // The database function normalises and validates this; an unknown or
+      // empty value simply leaves the stored gender untouched.
+      p_gender: getOptionalText(row, "gender"),
     });
 
     if (error) {
