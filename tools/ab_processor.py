@@ -11,16 +11,25 @@ ab_processor - מהלך יומי שממזג סיכומי שיחות ישנים �
 כשל במטופל אחד אינו עוצר את השאר. כשל בקריאה למודל אינו כותב דבר:
 ab ריק נדחה במסד, ולכן המצבור לעולם לא נמחק בלי תחליף.
 
-משתני סביבה - אותם שלושה שכבר מוגדרים לתהליכים האחרים:
+בסוף ריצה שבה היה ולו כשל אחד נשלח מייל אחד לאדמין, עם המספר והסיבות.
+מייל אחד לריצה ולא אחד לכשל: לא מציף, ולא מחמיץ. כשל בשליחת המייל עצמו
+אינו נחשב לכשל בריצה.
+
+משתני סביבה - אותם שכבר מוגדרים לתהליכים האחרים:
   SUPABASE_URL
   SUPABASE_SERVICE_ROLE_KEY
   OPENAI_API_KEY
+  GMAIL_USER
+  GMAIL_APP_PASSWORD
   AB_MODEL   (רשות, ברירת מחדל gpt-5.4)
   AB_KEEP    (רשות, ברירת מחדל 3)
 """
 
 import os
+import smtplib
 import sys
+from email.mime.text import MIMEText
+from email.utils import formataddr
 
 import requests
 
@@ -29,6 +38,9 @@ SERVICE_KEY  = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 OPENAI_KEY   = os.environ["OPENAI_API_KEY"]
 # משתנה ריק אינו חסר. or תופס גם ערך ריק, get עם ברירת מחדל לא היה תופס.
 MODEL        = os.environ.get("AB_MODEL") or "gpt-5.4"
+
+GMAIL_USER   = os.environ["GMAIL_USER"]
+GMAIL_PASS   = os.environ["GMAIL_APP_PASSWORD"]
 KEEP         = int(os.environ.get("AB_KEEP") or "3")
 
 PROMPT_KEY   = "ab_summary"
@@ -129,6 +141,64 @@ def summarise(prompt, text):
         return None
 
 
+def admin_email():
+    """הנמען אינו הגדרה. הוא נתון במסד, ונשלף בזמן ריצה - אותה פונקציה
+    שמשמשת את מסלול הקבלה, כדי שלא יהיו שתי רשימות נמענים."""
+    try:
+        r = rpc("intake_recipients") or {}
+        return (r.get("admin_email") or "").strip() or None
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  recipient lookup failed: {e}", file=sys.stderr)
+        return None
+
+
+def send_mail(to_addr, subject, body):
+    """כשל בשליחה אינו הופך לשגיאה בריצה - המהלך עצמו כבר הסתיים."""
+    try:
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = formataddr(("AB Processor", GMAIL_USER))
+        msg["To"] = to_addr
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
+            smtp.login(GMAIL_USER, GMAIL_PASS)
+            smtp.send_message(msg)
+        return True
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  mail to {to_addr} failed: {e}", file=sys.stderr)
+        return False
+
+
+def report_failures(failures, total):
+    """מייל אחד לריצה, ורק אם היה כשל."""
+    if not failures:
+        return
+
+    to_addr = admin_email()
+    if not to_addr:
+        print("WARNING: no admin email - failure report not sent", file=sys.stderr)
+        return
+
+    lines = [
+        f"מהלך ab הסתיים עם {len(failures)} כשלים מתוך {total} מועמדים.",
+        "",
+        "הפירוט:",
+    ]
+    for short, reason in failures:
+        lines.append(f"  {short}: {reason}")
+    lines += [
+        "",
+        "מטופל שנכשל נשאר מועמד ולא איבד דבר - המצבור שלו לא נגע,",
+        "והוא ייתפס בריצה הבאה.",
+        "",
+        "אם הכשל חוזר כמה ימים ברצף, המצבור גדל ומגיע לתקרת הביטחון",
+        "שבפונקציה get_summarized_linked_talk_v2 - ואז חומר ישן מפסיק",
+        "להישלח למודל. זו הנקודה שבה כדאי לבדוק.",
+    ]
+
+    if send_mail(to_addr, f"AB Processor: {len(failures)} failures", "\n".join(lines)):
+        print(f"failure report sent to {to_addr}")
+
+
 def main():
     pending = rpc("ab_pending_v2", {"p_keep": KEEP}) or []
     print(f"candidates: {len(pending)} (keep={KEEP}, model={MODEL})")
@@ -138,7 +208,7 @@ def main():
     prompt = get_prompt(PROMPT_KEY)
 
     done = 0
-    failed = 0
+    failures = []       # (short, reason)
 
     for cand in pending:
         code = cand["patient_code"]
@@ -156,7 +226,7 @@ def main():
 
             if not ab:
                 # לא כותבים דבר. המצבור נשאר שלם והמטופל ייתפס בריצה הבאה.
-                failed += 1
+                failures.append((short, "no summary produced"))
                 print(f"  {short}: SKIPPED - no summary produced", file=sys.stderr)
                 continue
 
@@ -170,10 +240,15 @@ def main():
                   f"{result.get('blocks_kept')}, ab {result.get('ab_length')} chars")
 
         except Exception as e:                               # noqa: BLE001
-            failed += 1
+            failures.append((short, str(e)[:200]))
             print(f"  {short}: ERROR {e}", file=sys.stderr)
 
-    print(f"done: {done}, failed: {failed}")
+    print(f"done: {done}, failed: {len(failures)}")
+
+    try:
+        report_failures(failures, len(pending))
+    except Exception as mail_err:                            # noqa: BLE001
+        print(f"failure report failed: {mail_err}", file=sys.stderr)
     # יציאה תקינה גם בכשלים חלקיים: מטופל שנכשל נשאר מועמד לריצה הבאה,
     # ואין טעם לצבוע את כל הריצה באדום בגלל אחד.
 
