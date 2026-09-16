@@ -1,0 +1,29 @@
+name: AB Processor (daily)
+
+on:
+  schedule:
+    # 04:10 UTC = 07:10 Israel in summer, 06:10 in winter. Chosen well away
+    # from the hourly queue workers so a long run cannot collide with them.
+    - cron: "10 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run ab processor
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AB_KEEP: "3"
+        run: python tools/ab_processor.py
