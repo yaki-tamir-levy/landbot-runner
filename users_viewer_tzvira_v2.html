@@ -43,7 +43,7 @@
     .patient-phone{font-weight:400;font-size:0.9rem;color:var(--muted);}
     .patient-psych{font-weight:400;font-size:0.9rem;color:var(--muted);}
     .head-sep{font-weight:400;font-size:0.9rem;color:var(--muted);}
-    .btn-toggle,.btn-summarized_linked_talk,.btn-raw-summary,.btn-home{
+    .btn-toggle,.btn-summarized_linked_talk,.btn-raw-summary,.btn-ab,.btn-home{
       font-weight:700; border:2px solid #d1d5db; border-radius:10px; padding:8px 10px; background:#fff; min-width:140px; text-align:center
     }
     .btn-home{font-weight:400; min-width:150px; border-width:1px}
@@ -67,6 +67,8 @@
     .meta{color:var(--muted);font-weight:600}
     .body{padding:12px;white-space:pre-wrap;line-height:1.55}
     .summarized_linked_talk{padding:12px; white-space:pre-wrap; line-height:1.6; background:#fffaf0; border-top:1px dashed #f1d29b; display:none}
+    .patient-ab{padding:12px; white-space:pre-wrap; line-height:1.6; background:#f3f6ff; border-top:1px dashed #b9c6ee; display:none}
+    .patient-ab .empty{color:#9ca3af}
     .summarized_linked_talk .empty{color:#9ca3af}
     .hint{color:#6b7280;font-size:12px}
     .counts{margin-top:6px}
@@ -529,6 +531,7 @@ function getReviewerName(ev){
     identityLoadFailed: false,  // true only if the patient_identity_map fetch failed
     psychNameMap: {},      // identityCode(patient_code) -> psychologist_name (display only)
     sourceMap: {},         // conversation_id -> conversations_session_v2.source (display only)
+    abMap: {},             // identityCode(patient_code) -> ab text (display only)
     viewerName: '',        // viewer_identity().display_name — title only
     viewerIsAdmin: false   // viewer_identity().is_admin — title only. Fails closed.
   };
@@ -655,6 +658,7 @@ function getReviewerName(ev){
     CACHE.identityLoadFailed = false;
     CACHE.psychNameMap = {};
     CACHE.sourceMap = {};
+    CACHE.abMap = {};
     CACHE.viewerName = '';
     CACHE.viewerIsAdmin = false;
 
@@ -798,6 +802,34 @@ function getReviewerName(ev){
             // Applied on BOTH paths, success and failure: the title must reflect
             // whoever is signed in, and on failure that is the fail-closed default.
             updateTitlesFromStatus();
+          });
+      })
+      .then(function(){
+        // ADDITIVE, display-only: patient AB via the SECURITY DEFINER RPC
+        // patient_ab_for_viewer(). The RPC itself restricts the rows to what the
+        // signed-in user may see (admin = all, psychologist = own patients), so no
+        // filtering happens client-side.
+        // Soft-fail exactly like the stages above: on any failure the map stays
+        // empty and the AB button falls back to the placeholder state. This must
+        // never break the load, and it is never consulted by a filter, a join key
+        // or a write path.
+        return supa.rpc('patient_ab_for_viewer')
+          .then(function(res){
+            if (res && res.error) throw res.error;
+            var rows = (res && res.data) ? res.data : [];
+            rows.forEach(function(ar){
+              if (!ar) return;
+              var code = identityCode(ar.patient_code);
+              if (!code) return;
+              // Verified against the deployed function: it returns
+              // (patient_code, ab, ab_updated_at). Any other name leaves the
+              // map silently empty, which is exactly what ab_text did.
+              CACHE.abMap[code] = (ar.ab == null) ? '' : String(ar.ab);
+            });
+            console.log('abMap entries: ' + Object.keys(CACHE.abMap).length);
+          })
+          .catch(function(e){
+            console.warn('abMap load skipped: ' + (e && e.message ? e.message : e));
           });
       })
       .catch(function(e){
@@ -1846,6 +1878,23 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
             headParts.push('<button class="btn-placeholder">הצג מקוצרת</button>');
           }
 
+          // ab belongs to the PATIENT, not to this talk, so it is the same on
+          // every card of the same patient. Shown only when one exists.
+          var abText = '';
+          try {
+            // identityCode() on BOTH sides. The map is written with it, so a
+            // plain trim() here would miss on any code the two normalise
+            // differently - and would fail silently.
+            var pcAb = identityCode(r && r.patient_code);
+            if (pcAb && CACHE.abMap) abText = String(CACHE.abMap[pcAb] || '').trim();
+          } catch(e){}
+
+          if (abText) {
+            headParts.push('<button class="btn-ab btn-state-active">תמונת מצב</button>');
+          } else {
+            headParts.push('<button class="btn-placeholder">תמונת מצב</button>');
+          }
+
           if (canRaw) {
             headParts.push('<button class="btn-raw-summary btn-state-active" title="הצג את summarized_linked_talk כפי שהוא">הצג שיחות קודמות</button>');
           } else {
@@ -1880,6 +1929,7 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
             var sumHtml = sumCut ? escapeHtml(sumCut) : '<span class="empty">אין סיכום שיחה.</span>';
             var sumRawB64 = b64Enc(sumRaw);
             parts.push('<div class="summarized_linked_talk" data-raw-b64="'+escapeHtml(sumRawB64)+'">'+ sumHtml +'</div>');
+            parts.push('<div class="patient-ab">' + (abText ? escapeHtml(abText) : '<span class="empty">אין תמונת מצב.</span>') + '</div>');
           }
 
           parts.push('</div>');
@@ -1940,6 +1990,35 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
               queryPage(true);
             }
           });
+      return;
+    }
+
+    var btnAb = ev.target.closest('.btn-ab');
+    if (btnAb){
+      var talkAb = btnAb.closest('.talk');
+      var bodyAb = talkAb.querySelector('.body');
+      var sumAb  = talkAb.querySelector('.summarized_linked_talk');
+      var abPane = talkAb.querySelector('.patient-ab');
+      if (abPane){
+        var showingAb = (abPane.style.display === 'block');
+        if (showingAb){
+          abPane.style.display = 'none';
+          if (bodyAb) bodyAb.style.display = 'block';
+          btnAb.classList.remove('btn-selected');
+        } else {
+          // One panel at a time: the summary panel and its button are reset
+          // here, so the two toggles cannot both end up open.
+          if (sumAb) sumAb.style.display = 'none';
+          var btnSummReset = talkAb.querySelector('.btn-summarized_linked_talk');
+          if (btnSummReset){
+            btnSummReset.textContent = 'הצג מקוצרת';
+            btnSummReset.classList.remove('btn-selected');
+          }
+          if (bodyAb) bodyAb.style.display = 'none';
+          abPane.style.display = 'block';
+          btnAb.classList.add('btn-selected');
+        }
+      }
       return;
     }
 
