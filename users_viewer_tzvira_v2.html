@@ -1929,7 +1929,13 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
             var sumHtml = sumCut ? escapeHtml(sumCut) : '<span class="empty">אין סיכום שיחה.</span>';
             var sumRawB64 = b64Enc(sumRaw);
             parts.push('<div class="summarized_linked_talk" data-raw-b64="'+escapeHtml(sumRawB64)+'">'+ sumHtml +'</div>');
-            parts.push('<div class="patient-ab">' + (abText ? escapeHtml(abText) : '<span class="empty">אין תמונת מצב.</span>') + '</div>');
+          }
+
+          // Outside the isHidden branch on purpose. Hiding a talk means "this
+          // conversation is dealt with"; it says nothing about the patient's
+          // overall picture, which is the same on every card either way.
+          if (abText) {
+            parts.push('<div class="patient-ab">' + escapeHtml(abText) + '</div>');
           }
 
           parts.push('</div>');
