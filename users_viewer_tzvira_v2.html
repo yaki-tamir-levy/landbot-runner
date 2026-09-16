@@ -1858,7 +1858,8 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
 
           var canToggle = (isHidden || (!isHidden && notRev.length === 0));
           var canSumm   = (!isHidden && notRev.length === 0);
-          var canRaw    = (!isHidden && rawHasContent);
+          // canRaw is kept, unused, so the surrounding lines stay untouched.
+          var canRaw    = false;
 
           if (canToggle) {
             headParts.push(
@@ -1895,7 +1896,12 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
             headParts.push('<button class="btn-placeholder">תמונת מצב</button>');
           }
 
-          if (canRaw) {
+          // The third button is gone. Its job - "what was known before this
+          // talk" - is now covered without overlap by the other two: the short
+          // summary belongs to THIS talk, the patient picture holds ab plus
+          // every summary not yet folded into it. Nothing can fall between
+          // them: a summary is either still listed there, or already inside ab.
+          if (false) {
             headParts.push('<button class="btn-raw-summary btn-state-active" title="הצג את summarized_linked_talk כפי שהוא">הצג שיחות קודמות</button>');
           } else {
             headParts.push('<button class="btn-placeholder">הצג שיחות קודמות</button>');
