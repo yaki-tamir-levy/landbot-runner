@@ -67,23 +67,11 @@ def rpc(fn, args=None):
 
 
 def get_prompt(key):
-    rows = requests.get(
-        f"{SUPABASE_URL}/rest/v1/prompt_information_v2",
-        headers={
-            "apikey": SERVICE_KEY,
-            "Authorization": f"Bearer {SERVICE_KEY}",
-            "Accept": "application/json",
-        },
-        params={"select": "user_text", "prompt_key": f"eq.{key}", "limit": "1"},
-        timeout=60,
-    )
-    rows.raise_for_status()
-    data = rows.json()
-    if not isinstance(data, list) or not data:
-        raise RuntimeError(f"prompt not found: {key}")
-    text = (data[0].get("user_text") or "").strip()
+    """דרך הפונקציה הרגילה בלבד. אין שאילתה ישירה לטבלת הפרומפטים -
+    אותו כלל שנשמר בשאר התהליכים בפרויקט."""
+    text = rpc("get_prompt_v2", {"p_prompt_key": key})
     if not text:
-        raise RuntimeError(f"prompt is empty: {key}")
+        raise RuntimeError(f"prompt '{key}' missing or empty")
     return text
 
 
