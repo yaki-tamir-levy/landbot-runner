@@ -1,8 +1,8 @@
-name: Intake Processor (every 15 min)
+name: Intake Processor (hourly 08:00-00:00 Israel)
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "0 5-22 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -15,16 +15,40 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      - name: Check Israel time window
+        id: window
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            HOUR=$(TZ=Asia/Jerusalem date +%H)
+            if [ "$HOUR" = "08" ] || [ "$HOUR" = "09" ] || [ "$HOUR" = "10" ] || \
+               [ "$HOUR" = "11" ] || [ "$HOUR" = "12" ] || [ "$HOUR" = "13" ] || \
+               [ "$HOUR" = "14" ] || [ "$HOUR" = "15" ] || [ "$HOUR" = "16" ] || \
+               [ "$HOUR" = "17" ] || [ "$HOUR" = "18" ] || [ "$HOUR" = "19" ] || \
+               [ "$HOUR" = "20" ] || [ "$HOUR" = "21" ] || [ "$HOUR" = "22" ] || \
+               [ "$HOUR" = "23" ] || [ "$HOUR" = "00" ]; then
+              echo "run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "Outside Israel run window (hour=$HOUR local), skipping."
+            fi
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/checkout@v4
+        if: steps.window.outputs.run == 'true'
 
       - uses: actions/setup-python@v5
+        if: steps.window.outputs.run == 'true'
         with:
           python-version: "3.11"
 
       - name: Install dependencies
+        if: steps.window.outputs.run == 'true'
         run: pip install requests
 
       - name: Run intake processor
+        if: steps.window.outputs.run == 'true'
         env:
           SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
