@@ -269,15 +269,32 @@ def load_patient_scope(rest: Rest, by_phone: Dict[str, Dict[str, str]]) -> Dict[
 
 
 def load_masked_phones(rest: Rest) -> Dict[str, str]:
-    """patient_code -> masked phone. Falls back to a placeholder when malformed."""
-    rows = rest.select("patient_identity_map", {"select": "patient_code,phone"})
+    """patient_code -> masked phone.
+
+    Source is users_information_v2.phone, NOT patient_identity_map.phone.
+    The identity table's phone column is empty in 28 of its 34 rows - verified
+    against the database on 18.9.2026 - so reading it there left most
+    recipients with three identical "missing number" lines and no way to tell
+    their patients apart. users_information_v2.phone is populated in all 29
+    rows and is the same source the admin lookup uses.
+
+    The identity table is still read as a fallback, so a patient that exists
+    there but not in users_information_v2 is not lost.
+    """
     out: Dict[str, str] = {}
-    for r in rows:
+
+    for r in rest.select("patient_identity_map", {"select": "patient_code,phone"}):
         pc = (r.get("patient_code") or "").strip()
-        if not pc:
-            continue
         ph = (r.get("phone") or "").strip()
-        out[pc] = ph if ph else "מספר חסר"
+        if pc and ph:
+            out[pc] = ph
+
+    for r in rest.select("users_information_v2", {"select": "patient_code,phone"}):
+        pc = (r.get("patient_code") or "").strip()
+        ph = (r.get("phone") or "").strip()
+        if pc and ph:
+            out[pc] = ph
+
     return out
 
 
