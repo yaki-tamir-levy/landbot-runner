@@ -550,6 +550,167 @@ def run_risk(rest: Rest, mailer: Mailer) -> int:
     return 0
 
 
+def load_phrase_only(rest: Rest, cutoff: str) -> List[Dict[str, Any]]:
+    """Phrase-path findings (match_method=2) that the model did NOT also flag
+    on the same conversation.
+
+    Verified 18.9.2026: of 14 such findings examined by hand, 13 were false
+    positives - the phrase list matches a substring and does not handle
+    negation, so "I do NOT want to hurt myself" scores the same as the
+    statement itself. That is why these never reach a psychologist.
+
+    They go to the admin only, with the full sentence, so the phrase list
+    can be corrected. A conversation is identified by (patient_code,
+    time_key) - the same pair users_tzvira_v2 is keyed by.
+    """
+    rows = rest.select(
+        "risk_reviews_v2",
+        {"select": "patient_code,time_key,line_num,match_method,risk_reasons,short_risk",
+         "order": "time_key.asc"},
+    )
+
+    model_keys = set()
+    phrase_rows: List[Dict[str, Any]] = []
+    for r in rows:
+        pc = (r.get("patient_code") or "").strip()
+        tk = (r.get("time_key") or "").strip()
+        if not pc or not tk:
+            continue
+        mm = str(r.get("match_method") or "").strip()
+        if mm == "1":
+            model_keys.add((pc, tk))
+        elif mm == "2":
+            phrase_rows.append(r)
+
+    out: List[Dict[str, Any]] = []
+    for r in phrase_rows:
+        pc = (r.get("patient_code") or "").strip()
+        tk = (r.get("time_key") or "").strip()
+        if (pc, tk) in model_keys:
+            continue
+        if cutoff and tk <= cutoff:
+            continue
+        out.append(r)
+    return out
+
+
+def load_transcripts(rest: Rest) -> Dict[Tuple[str, str], str]:
+    """(patient_code, time_key) -> raw conversation text."""
+    rows = rest.select(
+        "users_tzvira_v2",
+        {"select": "patient_code,time_key,last_talk_tzvira"},
+    )
+    out: Dict[Tuple[str, str], str] = {}
+    for r in rows:
+        pc = (r.get("patient_code") or "").strip()
+        tk = (r.get("time_key") or "").strip()
+        if pc and tk:
+            out[(pc, tk)] = r.get("last_talk_tzvira") or ""
+    return out
+
+
+def extract_line(transcript: str, line_num: Any) -> str:
+    """The transcript is numbered as -N- Q: / -N- A:. Pull one numbered turn.
+
+    Returns an empty string when the marker is absent, rather than guessing:
+    a wrong sentence next to a risk phrase is worse than no sentence.
+    """
+    if not transcript or line_num is None:
+        return ""
+    marker = f"-{int(line_num)}-"
+    start = transcript.find(marker)
+    if start < 0:
+        return ""
+    rest_txt = transcript[start + len(marker):]
+    end = rest_txt.find("\n-")
+    seg = (rest_txt if end < 0 else rest_txt[:end]).strip()
+    if seg[:3] in ("Q: ", "A: "):
+        seg = seg[3:].strip()
+    return " ".join(seg.split())
+
+
+def build_admin_report(
+    by_phone: Dict[str, Dict[str, str]],
+    talks_by_scope: Dict[str, Dict[str, Dict[str, Any]]],
+    risk_by_scope: Dict[str, Dict[str, Dict[str, Any]]],
+    masked: Dict[str, str],
+    phrase_rows: List[Dict[str, Any]],
+    transcripts: Dict[Tuple[str, str], str],
+    phrase_open_total: int,
+) -> Tuple[str, str]:
+    """The admin digest. Replaces the old unassigned-only mail.
+
+    The per-psychologist block is built from the SAME talks_by_scope and
+    risk_by_scope the individual mails were built from, so the admin sees
+    exactly what each of them was told - not a second, separately derived
+    number that could drift.
+    """
+    talk_total = sum(
+        p["count"] for s in talks_by_scope.values() for p in s.values()
+    )
+    risk_total = sum(
+        p["count"] for s in risk_by_scope.values() for p in s.values()
+    )
+
+    subject = f"דוח אדמין — {_subj_talks(talk_total)}, {_subj_open_risk(risk_total)}"
+
+    # Through the shared helper, not a duplicated literal: an inline copy
+    # would silently drift the moment _greeting is edited.
+    lines: List[str] = [_greeting("", True), ""]
+
+    scopes = sorted(
+        set(talks_by_scope) | set(risk_by_scope),
+        key=lambda s: -(sum(p["count"] for p in talks_by_scope.get(s, {}).values())),
+    )
+
+    named = [s for s in scopes if s != UNASSIGNED_SCOPE]
+    if named:
+        lines.append("לפי מטפל:")
+        lines.append("")
+        for scope in named:
+            t = talks_by_scope.get(scope, {})
+            r = risk_by_scope.get(scope, {})
+            who = (by_phone.get(scope) or {}).get("name") or scope
+            tc = sum(p["count"] for p in t.values())
+            rc = sum(p["count"] for p in r.values())
+            lines.append(f"{who} — {_talks_he(tc)}, {len(t)} מטופלים, {_findings_he(rc)} פתוחים.")
+        lines.append("")
+
+    unassigned_talks = talks_by_scope.get(UNASSIGNED_SCOPE, {})
+    if unassigned_talks:
+        lines.append("שיחות שאינן משויכות לאף מטפל:")
+        lines.append("")
+        for pc, info in sorted(unassigned_talks.items(), key=lambda kv: kv[1]["max_tk"], reverse=True):
+            lines.append(_mask_line(masked.get(pc, "מספר חסר")))
+            lines.append(f"{_talks_he(info['count'])}.")
+            lines.append("")
+        lines.append("יש לשייך מטפל.")
+        lines.append("")
+
+    lines.append("ביטויים שנתפסו ולא אושרו על ידי המודל — חדשים:")
+    lines.append("")
+    if phrase_rows:
+        for r in phrase_rows:
+            pc = (r.get("patient_code") or "").strip()
+            tk = (r.get("time_key") or "").strip()
+            phrase = (r.get("risk_reasons") or r.get("short_risk") or "").strip()
+            when = _date_he(tk)
+            head = _mask_line(masked.get(pc, "מספר חסר"))
+            lines.append(f"{head} · \"{phrase}\" · {when}")
+            sentence = extract_line(transcripts.get((pc, tk), ""), r.get("line_num"))
+            lines.append(f"  {sentence}" if sentence else "  (לא נמצא המשפט בתמליל)")
+            lines.append("")
+    else:
+        lines.append("אין חדשים.")
+        lines.append("")
+
+    lines.append(f"סך הכל {phrase_open_total} כאלה, כולל קודמים.")
+    lines.append("")
+    lines.append("הודעה זו נשלחת אוטומטית. אין להשיב עליה.")
+
+    return subject, "\n".join(lines).rstrip() + "\n"
+
+
 def run_daily(rest: Rest, mailer: Mailer) -> int:
     by_phone, admin = load_recipients(rest)
     patient_scope = load_patient_scope(rest, by_phone)
@@ -585,6 +746,10 @@ def run_daily(rest: Rest, mailer: Mailer) -> int:
     now_iso = datetime.now(timezone.utc).isoformat()
 
     for scope in scopes:
+        # The admin no longer gets the unassigned-only mail here. Everything
+        # that was in it now sits inside the single admin report below.
+        if scope == UNASSIGNED_SCOPE:
+            continue
         talks = talks_by_scope.get(scope, {})
         risks = risk_by_scope.get(scope, {})
         if not talks and not risks:
@@ -606,6 +771,33 @@ def run_daily(rest: Rest, mailer: Mailer) -> int:
                 "last_sent_at": now_iso,
                 "updated_at": now_iso,
             })
+
+    # The admin report. Its own watermark channel, so "new only" here is
+    # independent of the per-psychologist daily watermark.
+    if admin:
+        phrase_marks = load_watermarks(rest, "phrase")
+        cutoff = phrase_marks.get("__admin__", "")
+        phrase_rows = load_phrase_only(rest, cutoff)
+        phrase_all = load_phrase_only(rest, "")
+        transcripts = load_transcripts(rest) if phrase_rows else {}
+
+        subject, body = build_admin_report(
+            by_phone, talks_by_scope, risk_by_scope, masked,
+            phrase_rows, transcripts, len(phrase_all),
+        )
+        mailer.send(admin["email"], subject, body)
+        sent += 1
+
+        if phrase_rows:
+            marks.append({
+                "scope": "__admin__",
+                "channel": "phrase",
+                "last_time_key": max((r.get("time_key") or "") for r in phrase_rows),
+                "last_sent_at": now_iso,
+                "updated_at": now_iso,
+            })
+    else:
+        print("[WARN] daily: no admin recipient, admin report skipped.", file=sys.stderr)
 
     if marks and not mailer.dry_run:
         rest.upsert(WATERMARK_TABLE, marks, "scope,channel")
