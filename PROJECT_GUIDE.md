@@ -2772,8 +2772,17 @@ https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/runtime-corrected-response
 
 ### תחזוקת Git
 
-48. קבצי ליבה אינם תחת מעקב. כולל `CLAUDE.md`, כלי ההרצה, והפרומפטים.
-49. **`docs/SESSION_LOG.md` נכנס למעקב בקומיט `ad37a97` — ללא הכרעה.** הכניסה למעקב לא נשענה על החלטה, אלא על `git add` שנכלל בהוראה. הקובץ מתפרסם מאותו רגע במאגר הציבורי. **`tools/log_append.ps1` עדיין אינו תחת מעקב.** ההגנה מפני אבדן קיימת עליו רק על הדיסק המקומי. **ההכרעה עדיין נדרשת** — לשני הקבצים.
+48. **נסגר בחלקו, 18.9.2026.** כל 19 פונקציות הקצה במאגר, כולל שלוש
+שקיימו בעותק אחד בלבד בשרת: `openai-completion`, `prompt-sync`,
+`new-bot-n-1`. כלי הפריסה נכנסו גם הם — `production-deploy`,
+`production-rollback`, `production-smoke-test`, `log_append`,
+`ablation_test` ושישה סקריפטי הרצה חוזרת. **`CLAUDE.md` היה מעוקב כל
+הזמן** — הטענה שאינו מעוקב נמצאת בתוכו עצמו וטרם תוקנה. **מה שנותר:
+תיקיית הפרומפטים של הכיוונון, תחת `bot simulation`, אינה מעוקבת.**
+49. **אומת 18.9.2026: `docs/SESSION_LOG.md` ו-`docs/SESSION_HANDOFF.md`
+מעוקבים שניהם**, והוצגו כ-`modified` ב-`git status`. הטענה ב-`CLAUDE.md`
+שאינם מעוקבים **שגויה וטרם תוקנה שם.** `tools/log_append.ps1` נקמט
+ב-18.9.
 50. להרחיב את `.gitignore` לתוצרי הרצה וגיבויים.
 
 ### נפתח 11.8.2026

@@ -135,6 +135,16 @@ def _subj_findings(n: int) -> str:
     return "ממצא אחד חדש" if n == 1 else f"{n} ממצאים חדשים"
 
 
+_PATIENT_WORDS = {
+    1: "מטופל אחד",
+    2: "שני מטופלים",
+}
+
+
+def _patients_he(n: int) -> str:
+    return _PATIENT_WORDS.get(n, f"{n} מטופלים")
+
+
 def _subj_talks(n: int) -> str:
     return "שיחה אחת" if n == 1 else f"{n} שיחות"
 
@@ -673,7 +683,8 @@ def build_admin_report(
             who = (by_phone.get(scope) or {}).get("name") or scope
             tc = sum(p["count"] for p in t.values())
             rc = sum(p["count"] for p in r.values())
-            lines.append(f"{who} — {_talks_he(tc)}, {len(t)} מטופלים, {_findings_he(rc)} פתוחים.")
+            findings = "אין ממצאים פתוחים" if rc == 0 else f"{_findings_he(rc)} פתוחים"
+            lines.append(f"{who} — {_talks_he(tc)}, {_patients_he(len(t))}, {findings}.")
         lines.append("")
 
     unassigned_talks = talks_by_scope.get(UNASSIGNED_SCOPE, {})
