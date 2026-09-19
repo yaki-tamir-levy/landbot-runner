@@ -809,6 +809,40 @@ supabase functions deploy <name> --project-ref qcwimczsiuxkarwfiyai --no-verify-
 
 ---
 
+## 7. תזמון — pg_cron
+
+**מאומת: 19.9.2026 | מקור: שאילתה ישירה על** `cron.job` **ו-** `cron.job_run_details`
+
+עשר משימות רשומות. **שש פעילות, ארבע כבויות.**
+
+| # | שם | תדירות | מצב |
+|---|---|---|---|
+| 23 | `supa_run_log_cleanup_daily_0830` | יומי | פעיל |
+| 25 | `run_100_link_talk_api_hourly_15` | שעתי | פעיל |
+| 27 | `run_100_link_talk_batch_hourly_15` | שעתי | פעיל |
+| 28 | `reset_users_total_stuck` | שעתי | פעיל |
+| 40 | `guarded-v2-05-20-35-50` | כל 10 דקות | פעיל |
+| 41 | `users_information_v2_daily_incremental_backup` | יומי | פעיל |
+| 1 | `daily_run_landbot` | — | **כבוי** |
+| 11 | `landbot_message_sender_1645` | — | **כבוי** |
+| 24 | `run_landbot_yes_hourly_15` | — | **כבוי** |
+| 38 | `guarded-05-20-35-50` | — | **כבוי** |
+
+שש הפעילות: 1,526 ריצות בשבעה ימים, **אפס כשלים.**
+
+ארבע הכבויות הושבתו ב-
+
+`cron.alter_job`
+
+**ולא נמחקו.** השורות קיימות במסד וניתנות להחזרה בפקודה אחת. מועמדות למחיקה — סעיף 16.
+
+**שמות מטעים.** משימה 11 רצה ב-13:55
+
+`UTC`
+
+ולא ב-16:45. משימות 38 ו-40 אינן רצות בדקות המצוינות בשמן. **לקרוא את** `schedule`**, לא את השם.**
+
+---
 
 ## 8. GitHub Actions
 
