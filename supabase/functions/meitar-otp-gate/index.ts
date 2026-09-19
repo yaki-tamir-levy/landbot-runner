@@ -1,6 +1,10 @@
 // meitar-otp-gate — מרווח בין שליחות קוד אימות לאותו טלפון: שעה אחת.
-// מונע הצפת מטופל אמיתי (או תיבת הדואר הזמנית האחת)
-// בהצפות חוזרות. מחזיק service_role בצד השרת.
+// מונע הצפת מטופל אמיתי בהצפות חוזרות. מחזיק service_role בצד השרת.
+//
+// 19.9.2026 — הקבוע EMAIL_FOR_OTP_INTERIM הוסר. הקוד נשלח לכתובת
+// המטופל עצמו, המפוענחת בצד השרת מתוך patient_identity_map.email_enc
+// דרך get_patient_email_v2. מטופל ללא דוא"ל במסד נדחה במפורש
+// ב-no_email_on_file, ואין שום נפילה לכתובת חלופית.
 
 const SUPABASE_URL = "https://qcwimczsiuxkarwfiyai.supabase.co";
 const RATE_LIMIT_MINUTES = 60;
@@ -8,10 +12,6 @@ const RATE_LIMIT_MINUTES = 60;
 // passed since the third. A full hour of silence resets the count, so an
 // occasional single request never accumulates toward a block.
 const MAX_SENDS_PER_WINDOW = 3;
-
-// זמני בלבד: כל הקודים הולכים לכתובת אחת, עד שייאסף אימייל
-// אמיתי לכל מטופל. רק השורה הזו תצטרך שינוי אז, לא שום קוד אחר בקובץ.
-const EMAIL_FOR_OTP_INTERIM = "jacob.tmr@gmail.com";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -46,6 +46,37 @@ Deno.serve(async (req: Request) => {
     return json({ error: "phone_required" }, 400);
   }
   const cleanPhone = phone.trim();
+
+  // שלב 0 - כתובת הדוא"ל של המטופל, מפוענחת בצד השרת.
+  // כשל בשליפה או היעדר כתובת = דחייה. אין נפילה לכתובת אחרת.
+  let patientEmail: string | null = null;
+  try {
+    const emailRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_patient_email_v2`, {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_phone: cleanPhone }),
+    });
+    if (emailRes.ok) {
+      const value = await emailRes.json();
+      if (typeof value === "string" && value.trim().length > 0) {
+        patientEmail = value.trim();
+      }
+    } else {
+      await emailRes.body?.cancel();
+      return json({ allowed: false, error: "email_lookup_failed" }, 502);
+    }
+  } catch {
+    return json({ allowed: false, error: "email_lookup_failed" }, 502);
+  }
+
+  if (!patientEmail) {
+    return json({ allowed: false, error: "no_email_on_file" });
+  }
+
   // Default: no row yet for this phone, or the check failed - this send is
   // the first of a fresh window.
   let sendCount = 1;
@@ -73,11 +104,11 @@ Deno.serve(async (req: Request) => {
     await checkRes.body?.cancel();
   }
 
-  // שלב 2 - מותר, שולחים בפועל
+  // שלב 2 - מותר, שולחים בפועל אל כתובת המטופל
   const otpRes = await fetch(`${SUPABASE_URL}/auth/v1/otp`, {
     method: "POST",
     headers: { apikey: anonKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ email: EMAIL_FOR_OTP_INTERIM, create_user: true }),
+    body: JSON.stringify({ email: patientEmail, create_user: true }),
   });
   if (!otpRes.ok) {
     await otpRes.body?.cancel();
