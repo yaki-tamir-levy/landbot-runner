@@ -7,3 +7,4 @@ node_modules/
 __pycache__/
 .claude/settings.local.json.bak
 SESSION.md
+powershell_text/
