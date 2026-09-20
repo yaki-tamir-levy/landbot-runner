@@ -3527,7 +3527,7 @@ https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/runtime-corrected-response
 52. **החתימה `start_conversation_v2(p_patient_code uuid)` אינה כותבת `source` כלל.** להכריע אם היא בשימוש.
 53. **לאחד את שני העותקים הנותרים של רשימת סטטוסי הסיכון** ב־`users_viewer_tzvira_v2.html` — בלולאת `notRev` ובתוך `renderDialogHtml()`. שניים אחרים אוחדו ל־`isRiskStatusOpen()`.
 54. **להסיר `statusLabel`, `STATUS_LABEL_MAP` ו־`row._riskOverrideKind`** — קוד מת, אפס קוראים.
-55. **להוסיף `powershell_text/` ל־`.gitignore`.** קובץ הדוח הוא מועמד להיסחף בכל `git add` גורף.
+55. ~~**להוסיף `powershell_text/` ל־`.gitignore`.**~~ **נסגר 20.9.2026** — קומיט `667e158`.
 
 **נסגר 11.8.2026 — פריט 2.2 ב־`SESSION_HANDOFF.md`, "מטופל בלי שיוך הנושא ממצאי סיכון".** המטופל היה חיים, `054***798`, והוא נמחק.
 
