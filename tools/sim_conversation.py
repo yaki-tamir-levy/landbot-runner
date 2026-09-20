@@ -45,24 +45,33 @@ def compute_risk_round_selected(patient_phone, track):
     on exactly one selected patient inside that track, with no coordination
     between the processes. Each track draws on its own, so an NLP_CBT run and a
     CLINIC run in the same cycle never influence one another.
+
+    Testing override: setting SIM_FORCE_RISK=1 in the environment forces the
+    return value to True regardless of the draw. The normal computed result is
+    still printed, marked as overridden, so the log stays honest. Any other
+    value, or the variable being unset, leaves the behaviour untouched.
     """
     now = datetime.now(timezone.utc)
     cycle_id = now.strftime("%Y-%m-%d-%H")
     normalized = (track or "").strip().upper()
     roster = RISK_ROSTER_BY_TRACK.get(normalized)
     if roster is None:
-        print("risk_round_check: cycle_id={} track={!r} has no roster, selected=False".format(
-            cycle_id, track), flush=True)
-        return False
+        forced = os.environ.get("SIM_FORCE_RISK", "").strip() == "1"
+        print("risk_round_check: cycle_id={} track={!r} has no roster, selected=False{}".format(
+            cycle_id, track,
+            " (OVERRIDDEN by SIM_FORCE_RISK=1)" if forced else ""), flush=True)
+        return True if forced else False
     phones = roster["phones"]
     seed_input = cycle_id + roster["salt"]
     seed_hex = hashlib.md5(seed_input.encode("utf-8")).hexdigest()
     chosen_index = int(seed_hex, 16) % len(phones)
     my_index = phones.index(patient_phone) if patient_phone in phones else None
     selected = my_index is not None and my_index == chosen_index
-    print("risk_round_check: cycle_id={} track={} seed_input={} chosen_index={} my_index={} selected={}".format(
-        cycle_id, normalized, seed_input, chosen_index, my_index, selected), flush=True)
-    return selected
+    forced = os.environ.get("SIM_FORCE_RISK", "").strip() == "1"
+    print("risk_round_check: cycle_id={} track={} seed_input={} chosen_index={} my_index={} selected={}{}".format(
+        cycle_id, normalized, seed_input, chosen_index, my_index, selected,
+        " (OVERRIDDEN by SIM_FORCE_RISK=1)" if forced else ""), flush=True)
+    return True if forced else selected
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / ".env"
