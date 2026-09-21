@@ -1392,8 +1392,8 @@ supabase functions deploy <name> --project-ref qcwimczsiuxkarwfiyai --no-verify-
 > **מאומת בשני מקורות:** `gh workflow list --all --json path` — 25 תהליכים רשומים,
 > אפס בנתיב המכיל `psbackup`. `git ls-tree -r origin/main` — אפס. הקבצים אינם במעקב
 > ואינם בענף הראשי, ולכן GitHub מעולם לא רשם אותם. **על הדיסק יש שלושה, לא שניים** —
-> השלישי `process-queue-worker-v2.before_pushover.psbackup.yml`. **סיכון פתוח:**
-> `git add` גורף יכניס אותם. **הטקסט שלמטה נשמר כתיעוד היסטורי.**
+> השלישי `process-queue-worker-v2.before_pushover.psbackup.yml`. **אין סיכון — אומת 21.9:**
+> `.gitignore` מכיל `*.psbackup` ו-`*.psbackup.*`, ולכן `git add` גורף אינו מכניס אותם. **הטקסט שלמטה נשמר כתיעוד היסטורי.**
 
 **נוסף 20.9.2026.** מקור: `docs/SESSION_HANDOFF.md` סעיף 3, ו-`SESSION.md`.
 
