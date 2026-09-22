@@ -359,11 +359,45 @@
   // ---------- Supabase config ----------
   const SUPABASE_URL = "https://qcwimczsiuxkarwfiyai.supabase.co";
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFjd2ltY3pzaXV4a2Fyd2ZpeWFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM1OTEwMzgsImV4cCI6MjA2OTE2NzAzOH0.zpMcORTD1voqZFj5QaPUc-EXf1juqnlTTP00jV6_TvI";
-  // זמני בלבד: כל קודי האימות נשלחים לכתובת אחת, עד שייאסף אימייל אמיתי
-  // מכל מטופל. כשזה יקרה - צריך להחליף רק את השורה הזו למקור דינמי.
-  const EMAIL_FOR_OTP_INTERIM = "jacob.tmr@gmail.com";
-  const RUNTIME_ENDPOINT = SUPABASE_URL + "/functions/v1/meitar-chat-proxy";
-  // הסוד האמיתי מוחזק בצד השרת בתוך meitar-chat-proxy - לא כאן.
+  // 22.9.2026: every patient action goes through meitar-api. The patient's
+  // identity comes from a signed token the server issues after the code is
+  // verified - never from a phone typed into the page. The anon key below is
+  // used only for public content: app texts and the course lesson list.
+  const API_ENDPOINT = SUPABASE_URL + "/functions/v1/meitar-api";
+  const TOKEN_PREFIX = 'meitar_token_';
+
+  function tokenKey(phone) { return TOKEN_PREFIX + String(phone || '').replace(/[^0-9]/g, ''); }
+  function readStoredToken(phone) { try { return localStorage.getItem(tokenKey(phone)) || ''; } catch (e) { return ''; } }
+  function storeToken(phone, token) { try { localStorage.setItem(tokenKey(phone), token); } catch (e) {} }
+  function clearToken(phone) { try { localStorage.removeItem(tokenKey(phone)); } catch (e) {} }
+
+  class ApiError extends Error {
+    constructor(status, code) { super('api_' + status + '_' + code); this.status = status; this.code = code; }
+  }
+  async function api(action, payload) {
+    const res = await fetch(API_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ action: action }, payload || {})),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, data.error || 'unknown');
+    return data;
+  }
+  // A token that expired or was rejected ends the visit cleanly.
+  function handleAuthLoss(err) {
+    if (err && err.status === 401) {
+      clearToken(session.phone);
+      showBlocked('פג תוקף הכניסה', 'יש להיכנס מחדש עם מספר הטלפון.');
+      return true;
+    }
+    return false;
+  }
+  function applyProfile(p) {
+    session.name = (p && p.name) || '';
+    session.gender = (p && (p.gender === 'M' || p.gender === 'F')) ? p.gender : '';
+    session.disclaimedAgreed = !!(p && p.disclaimed);
+  }
 
   async function rpc(fn, body) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
@@ -539,17 +573,20 @@
 
   async function verifyOtpCode(code) {
     const otpStatus = document.getElementById('otp-status');
-    const res = await fetch(SUPABASE_URL + "/auth/v1/verify", {
-      method: "POST",
-      headers: { apikey: SUPABASE_ANON_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify({ email: EMAIL_FOR_OTP_INTERIM, token: code, type: "email" }),
-    });
-    if (!res.ok) {
+    let data;
+    try {
+      data = await api('verify', { phone: session.phone, code: code, mode: session.mode });
+    } catch (err) {
       otpStatus.className = 'status-msg error';
-      otpStatus.textContent = 'הקוד שגוי או פג תוקף. אפשר לנסות שוב.';
+      otpStatus.textContent = (err && err.code === 'too_many_attempts')
+        ? 'יותר מדי ניסיונות שגויים. אפשר לנסות שוב בעוד שעה.'
+        : 'הקוד שגוי או פג תוקף. אפשר לנסות שוב.';
+      console.error(err);
       return;
     }
-    localStorage.setItem('meitar_verified_' + session.phone, '1');
+    storeToken(session.phone, data.token);
+    session.token = data.token;
+    applyProfile(data.profile);
     await proceedAfterVerification();
   }
 
@@ -585,17 +622,12 @@
     phoneStatus.textContent = 'בודק...';
 
     try {
-      const lookupRes = await fetch(SUPABASE_URL + "/functions/v1/meitar-lookup-proxy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone }),
-      });
-      if (!lookupRes.ok) throw new Error("lookup_failed_" + lookupRes.status);
-      const rows = await lookupRes.json();
-      const row = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+      // Before the code, the server reveals only whether the number may
+      // enter - no name, background or conversation (decision 22.9.2026).
+      const check = await api('check', { phone: phone, mode: session.mode });
 
       // בדיקה: קיים במערכת?
-      if (!row) {
+      if (check.result === 'not_found') {
         // The database text replaces the built-in wording only when it has
         // arrived and is non-empty; otherwise the original call below runs
         // untouched. The title stays as written in the page.
@@ -608,39 +640,36 @@
         return;
       }
 
-      // בדיקה: ACTIVE? (הערכים הידועים בשדה: "TRUE" או "yes")
-      const activeOk = row.active === 'TRUE' || row.active === 'yes';
-      if (!activeOk) {
+      // בדיקה: ACTIVE? - decided on the server.
+      if (check.result === 'inactive') {
         showBlocked('לא פעיל', 'החשבון שלך אינו פעיל כרגע. נא לפנות לפסיכולוג/ית המטפל/ת.');
         return;
       }
 
-      // Status gate. Verified against the viewer's own status map:
-      // 1 = therapy only, 2 = course only, 3 = both, 4 = test.
-      // The therapy gate is unchanged; the course gate is its mirror.
-      const allowedStatus = session.mode === 'course'
-        ? ['2', '3', '4']
-        : ['1', '3', '4'];
-      if (!allowedStatus.includes(String(row.status))) {
+      // Status gate - decided on the server (1 therapy, 2 course, 3 both, 4 test).
+      if (check.result !== 'ok') {
         showBlocked('לא זוהית כמטופל/ת', 'הכניסה הזו מיועדת למטופלים בטיפול. אם לדעתך זו טעות, נא לפנות לפסיכולוג/ית המטפל/ת.');
         return;
       }
 
       session.phone = phone;
-      session.name = row.name || '';
-      session.disclaimedAgreed = row.disclaimed === 'AGREED';
-      // 'M' or 'F' when known, empty otherwise. Sheet patients carry it;
-      // intake patients do not yet, and fall back to neutral wording.
-      session.gender = (row.gender === 'M' || row.gender === 'F') ? row.gender : '';
+      // The old unsigned flag is no longer honoured; remove it if present.
+      try { localStorage.removeItem('meitar_verified_' + phone); } catch (e) {}
 
-      // שכבת אימות שנייה, זמנית: קוד למייל של יעקב עד שייאסף אימייל אמיתי
-      // לכל מטופל. זיכרון מכשיר: לא לבקש שוב באותו דפדפן.
-      const deviceKey = 'meitar_verified_' + phone;
-      if (localStorage.getItem(deviceKey) === '1') {
-        await proceedAfterVerification();
-      } else {
-        await sendOtpCode();
+      // Device memory: a signed token, valid 7 days, checked by the server.
+      const stored = readStoredToken(phone);
+      if (stored) {
+        try {
+          const me = await api('me', { token: stored, mode: session.mode });
+          session.token = stored;
+          applyProfile(me.profile);
+          await proceedAfterVerification();
+          return;
+        } catch (err) {
+          clearToken(phone);
+        }
       }
+      await sendOtpCode();
     } catch (err) {
       phoneStatus.className = 'status-msg error';
       phoneStatus.textContent = 'משהו השתבש. אפשר לנסות שוב.';
@@ -660,7 +689,7 @@
   document.getElementById('disclaimer-agree').addEventListener('click', async () => {
     const statusEl = document.getElementById('disclaimer-status');
     try {
-      await rpc('set_disclaimed_agreed_v2', { p_phone: session.phone });
+      await api('disclaim', { token: session.token });
       // Route through the same function the verified path uses, so the course
       // and therapy branches are decided in exactly one place. Without this a
       // patient who had not yet agreed was sent to therapy even after choosing
@@ -720,17 +749,13 @@
       if (btn) btn.disabled = true;
       statusEl.className = 'status-msg';
       statusEl.textContent = 'פותח שיחה';
-      const result = await rpc('start_conversation_v2', {
-        p_phone: session.phone,
-        p_name: session.name,
-        p_source: 'D',
-      });
-      session.conversationId = (typeof result === 'string') ? result
-        : (result && (result.conversation_id || result.id)) || '';
+      const started = await api('start', { token: session.token, source: 'D' });
+      session.conversationId = started.conversation_id || '';
       if (!session.conversationId) throw new Error('no_conversation_id');
-      await rpc('set_course_lesson_v2', {
-        p_conversation_id: session.conversationId,
-        p_lesson_number: lessonNumber,
+      await api('set_lesson', {
+        token: session.token,
+        conversation_id: session.conversationId,
+        lesson_number: lessonNumber,
       });
       showView('treatment');
       initChat();
@@ -746,14 +771,9 @@
 
   async function startTreatment() {
     try {
-      const result = await rpc('start_conversation_v2', {
-        p_phone: session.phone,
-        p_name: session.name,
-        p_source: 'C', // C = meitar_v2.html (no-Landbot client). A/B are the existing, undocumented Landbot-era values.
-      });
-      // הפונקציה מוגדרת RETURNS ללא טיפוס מפורש שאומת כאן - מטפל בכמה צורות סבירות
-      session.conversationId = (typeof result === 'string') ? result
-        : (result && (result.conversation_id || result.id)) || '';
+      // C = meitar_v2.html. The server sets the source and the patient.
+      const started = await api('start', { token: session.token, source: 'C' });
+      session.conversationId = started.conversation_id || '';
       showView('treatment');
       initChat();
       syncChatHeightToViewport();
@@ -855,32 +875,19 @@
 
     try {
       // 3.d - הפעלת ה-AI
-      const aiRes = await fetch(RUNTIME_ENDPOINT, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          question20,
-          patient_id: session.phone,
-          session_id: session.conversationId,
-        }),
+      // The server asks the engine and logs the turn itself (3.e).
+      const aiData = await api('chat', {
+        token: session.token,
+        conversation_id: session.conversationId,
+        question: question20,
       });
-      const aiData = await aiRes.json();
-      const response20 = aiData.corrected_answer || aiData.answer || 'מצטער/ת, לא הצלחתי לענות כרגע.';
+      const response20 = aiData.answer || 'מצטער/ת, לא הצלחתי לענות כרגע.';
 
       hideTyping();
       addBotMessage(response20);
-
-      // 3.e - רישום ללוג השיחות
-      await rpc('insert_conversation_v2', {
-        p_phone: session.phone,
-        p_conversation_id: session.conversationId,
-        p_question: question20,
-        p_answer: response20,
-      });
     } catch (err) {
       hideTyping();
+      if (handleAuthLoss(err)) return;
       addBotMessage('משהו השתבש בחיבור. אפשר לנסות לשלוח שוב.');
       console.error(err);
     } finally {
