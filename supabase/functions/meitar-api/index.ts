@@ -10,6 +10,12 @@
 // Before the code: only "not found / inactive / wrong gate / ok" is revealed
 // (decision 22.9). Name, background and conversation are never sent before
 // verification, and background and conversation are never sent at all.
+//
+// v2, 22.9.2026 — TEMPORARY, by owner decision: a patient with NO email on
+// file may enter with the phone alone while app_config key
+// 'meitar_no_email_login' is 'on'. No expiry date; the owner turns it off.
+// Such tokens carry ne:1 and stop working the moment the switch is not 'on'.
+// A patient who has an email always needs the code.
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -90,10 +96,10 @@ function unb64u(s: string): Uint8Array {
   const p = s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4);
   return Uint8Array.from(atob(p), (c) => c.charCodeAt(0));
 }
-async function issueToken(patientCode: string, phone: string): Promise<string> {
-  const payload = b64u(enc.encode(JSON.stringify({
-    pc: patientCode, ph: phone, exp: Date.now() + TOKEN_DAYS * 86400000,
-  })));
+async function issueToken(patientCode: string, phone: string, noEmail = false): Promise<string> {
+  const data: Record<string, unknown> = { pc: patientCode, ph: phone, exp: Date.now() + TOKEN_DAYS * 86400000 };
+  if (noEmail) data.ne = 1;
+  const payload = b64u(enc.encode(JSON.stringify(data)));
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", await getKey(), enc.encode(payload)));
   return `${payload}.${b64u(sig)}`;
 }
@@ -106,10 +112,26 @@ async function readToken(token: unknown): Promise<{ pc: string; ph: string } | n
     const data = JSON.parse(new TextDecoder().decode(unb64u(payload)));
     if (typeof data.exp !== "number" || data.exp < Date.now()) return null;
     if (typeof data.pc !== "string" || typeof data.ph !== "string") return null;
+    if (data.ne && !(await noEmailLoginOn())) return null;
     return { pc: data.pc, ph: data.ph };
   } catch {
     return null;
   }
+}
+
+// ---------- temporary no-email entry ----------
+async function noEmailLoginOn(): Promise<boolean> {
+  const rows = await restGet("app_config?select=value&key=eq.meitar_no_email_login") as { value: string }[];
+  return rows.length === 1 && String(rows[0].value).trim() === "on";
+}
+async function patientEmail(phone: string): Promise<string> {
+  const e = await rpc("get_patient_email_v2", { p_phone: phone });
+  return typeof e === "string" ? e.trim() : "";
+}
+async function patientCodeByPhone(phone: string): Promise<string | null> {
+  const rows = await restGet(`patient_identity_map?select=patient_code&phone_hash=eq.${await phoneHash(phone)}`) as
+    { patient_code: string }[];
+  return rows.length === 1 ? rows[0].patient_code : null;
 }
 
 // ---------- patient data ----------
@@ -166,7 +188,22 @@ async function handle(body: Record<string, unknown>): Promise<Response> {
   if (action === "check") {
     const phone = String(body.phone ?? "").trim();
     if (!phone) return json({ error: "phone_required" }, 400);
-    return json({ result: gate(await lookup(phone), String(body.mode ?? "treatment")) });
+    const result = gate(await lookup(phone), String(body.mode ?? "treatment"));
+    let needsCode = true;
+    if (result === "ok" && !(await patientEmail(phone)) && (await noEmailLoginOn())) needsCode = false;
+    return json({ result, needs_code: needsCode });
+  }
+
+  if (action === "enter") {
+    const phone = String(body.phone ?? "").trim();
+    if (!phone) return json({ error: "phone_required" }, 400);
+    if (!(await noEmailLoginOn())) return json({ error: "code_required" }, 403);
+    if (await patientEmail(phone)) return json({ error: "code_required" }, 403);
+    const row = await lookup(phone);
+    if (gate(row, String(body.mode ?? "treatment")) !== "ok") return json({ error: "not_allowed" }, 403);
+    const pc = await patientCodeByPhone(phone);
+    if (!pc) return json({ error: "identity_mismatch" }, 403);
+    return json({ token: await issueToken(pc, phone, true), profile: profile(row as Row) });
   }
 
   if (action === "verify") {
