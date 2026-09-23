@@ -112,7 +112,12 @@ async function readToken(token: unknown): Promise<{ pc: string; ph: string } | n
     const data = JSON.parse(new TextDecoder().decode(unb64u(payload)));
     if (typeof data.exp !== "number" || data.exp < Date.now()) return null;
     if (typeof data.pc !== "string" || typeof data.ph !== "string") return null;
-    if (data.ne && !(await noEmailLoginOn())) return null;
+    if (data.ne) {
+      // v3, 23.9.2026: a no-email token is valid only while the switch is on
+      // AND the patient still has no email. Once an email is added, the code is required.
+      if (!(await noEmailLoginOn())) return null;
+      if (await patientEmail(data.ph)) return null;
+    }
     return { pc: data.pc, ph: data.ph };
   } catch {
     return null;
