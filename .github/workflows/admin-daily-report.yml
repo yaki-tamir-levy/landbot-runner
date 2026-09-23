@@ -1,0 +1,85 @@
+name: Admin Daily Report
+
+# 23.9.2026 — daily activity report to the admin at 09:00 Israel time.
+#
+# Fires twice because GitHub cron is UTC only and Israel shifts between
+# UTC+3 (summer) and UTC+2 (winter): 06:00 UTC = 09:00 summer,
+# 07:00 UTC = 09:00 winter. The script sends when the Israel hour is >= 9
+# and no successful report for that day is already in email_send_log,
+# so a delayed run still sends and the second run does nothing.
+
+on:
+  schedule:
+    - cron: "0 6,7 * * *"
+
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "1 = build the email, send nothing (log shows sizes only)"
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "0"
+      skip_hour_gate:
+        description: "1 = ignore the 09:00 gate and the already-sent check"
+        required: true
+        default: "1"
+        type: choice
+        options:
+          - "0"
+          - "1"
+      report_day:
+        description: "YYYY-MM-DD (Israel). Empty = yesterday"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: admin-daily-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Resolve run parameters
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "DRY_RUN=${{ inputs.dry_run }}"               >> "$GITHUB_ENV"
+            echo "SKIP_HOUR_GATE=${{ inputs.skip_hour_gate }}" >> "$GITHUB_ENV"
+            echo "REPORT_DAY=${{ inputs.report_day }}"         >> "$GITHUB_ENV"
+          else
+            echo "DRY_RUN=0"        >> "$GITHUB_ENV"
+            echo "SKIP_HOUR_GATE=0" >> "$GITHUB_ENV"
+            echo "REPORT_DAY="      >> "$GITHUB_ENV"
+          fi
+
+      - name: Run admin daily report
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GMAIL_SMTP_USER:           ${{ secrets.GMAIL_SMTP_USER }}
+          GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_FROM:                ${{ secrets.EMAIL_FROM }}
+          GITHUB_TOKEN:              ${{ secrets.GITHUB_TOKEN }}
+          REPORT_HOUR_IL:            "9"
+        run: python tools/admin_daily_report.py
