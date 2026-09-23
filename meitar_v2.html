@@ -669,6 +669,18 @@
           clearToken(phone);
         }
       }
+      // 23.9.2026: no email on file and the server switch
+      // meitar_no_email_login is on - enter without a code. The server
+      // decides: enter is refused if the patient has an email or the
+      // switch is off.
+      if (check.needs_code === false) {
+        const entered = await api('enter', { phone: phone, mode: session.mode });
+        storeToken(phone, entered.token);
+        session.token = entered.token;
+        applyProfile(entered.profile);
+        await proceedAfterVerification();
+        return;
+      }
       await sendOtpCode();
     } catch (err) {
       phoneStatus.className = 'status-msg error';
