@@ -176,7 +176,8 @@ def table(headers: List[str], rows: List[List[Any]]) -> str:
     if not rows:
         return "<p style='color:#777'>אין.</p>"
     th = "".join(f"<th style='border:1px solid #ccc;padding:4px 8px;background:#f3f3f3'>{e(h)}</th>" for h in headers)
-    trs = "".join("<tr>" + "".join(f"<td style='border:1px solid #ccc;padding:4px 8px'>{e(c)}</td>" for c in r) + "</tr>"
+    trs = "".join("<tr>" + "".join(f"<td style='border:1px solid #ccc;padding:4px 8px;vertical-align:top;"
+                                   f"white-space:pre-wrap'>{e(c)}</td>" for c in r) + "</tr>"
                   for r in rows)
     return f"<table style='border-collapse:collapse;font-size:13px'><tr>{th}</tr>{trs}</table>"
 
@@ -237,14 +238,27 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
     ]))
     if full:
         out.append("<p><b>מטפלים חדשים</b></p>")
-        out.append(table(["שעה", "שם", "פעיל", "אדמין"],
-                         [[t_il(x.get("at")), x.get("name"), x.get("active"), x.get("is_admin")]
+        out.append(table(["שעה", "שם", "פעיל", "אדמין", "מסלול", "ארגון"],
+                         [[t_il(x.get("at")), x.get("name"), x.get("active"), x.get("is_admin"),
+                           x.get("track"), x.get("organization")]
                           for x in p.get("new_psychologists") or []]))
         out.append("<p><b>מטופלים חדשים</b></p>")
+        out.append(table(["שעה", "טלפון", "מקור", "סטטוס", "פעיל", "מסלול", "מגדר", "מטפל"],
+                         [[t_il(x.get("at")), x.get("phone"), ORIGIN_HE.get(x.get("origin"), x.get("origin")),
+                           x.get("status"), x.get("active"), x.get("track"), x.get("gender"), x.get("psychologist")]
+                          for x in p.get("new_patients") or []]))
+        out.append("<p><b>מטופלים שעודכנו</b></p>")
         out.append(table(["שעה", "טלפון", "מקור", "סטטוס", "פעיל", "מטפל"],
                          [[t_il(x.get("at")), x.get("phone"), ORIGIN_HE.get(x.get("origin"), x.get("origin")),
                            x.get("status"), x.get("active"), x.get("psychologist")]
-                          for x in p.get("new_patients") or []]))
+                          for x in p.get("updated_patients") or []]))
+        out.append("<p><b>מועמדי קבלה</b></p>")
+        out.append(table(["נוצר", "הוכרע", "טלפון", "החלטה", "עיבוד", "סיכון", "שדות חסרים", "מגדר"],
+                         [[t_il(x.get("created_at")), t_il(x.get("decided_at")), x.get("phone"), x.get("decision"),
+                           x.get("processed"), "כן" if x.get("risk_flag") else "", 
+                           ", ".join(x.get("missing_fields") or []) if isinstance(x.get("missing_fields"), list)
+                           else (x.get("missing_fields") or ""), x.get("gender")]
+                          for x in p.get("intake_candidates") or []]))
 
     out.append(h2("שיחות"))
     out.append(kv([
@@ -255,9 +269,29 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
         ["שיחות קבלה", f"{e(c.get('intake_conversations'))} · תורות {e(c.get('intake_turns'))}"],
     ]))
     if full:
-        out.append(table(["התחלה", "טלפון", "סוג", "תורות ביום", "תורות סה\"כ"],
+        out.append(table(["התחלה", "טלפון", "סוג", "שלב", "תורות ביום", "תורות סה\"כ"],
                          [[t_il(x.get("started_at")), x.get("phone"), SOURCE_HE.get(x.get("source"), x.get("source")),
-                           x.get("turns_day"), x.get("turns_total")] for x in c.get("sessions") or []]))
+                           x.get("stage"), x.get("turns_day"), x.get("turns_total")] for x in c.get("sessions") or []]))
+        for x in c.get("sessions") or []:
+            items = x.get("items") or []
+            if not items:
+                continue
+            out.append(f"<p><b>תוכן השיחה — {e(x.get('phone'))} · {e(SOURCE_HE.get(x.get('source'), x.get('source')))} · "
+                       f"התחילה {e(t_il(x.get('started_at')))}</b></p>")
+            out.append(table(["שעה", "שאלת המטופל", "תשובת הבוט", "מתקן", "סיבות"],
+                             [[t_il(i.get("at")), i.get("q"), i.get("a"), i.get("decision"),
+                               ", ".join(i.get("reasons") or [])] for i in items]))
+        if c.get("test_or_sim_items"):
+            out.append("<p><b>קריאות בדיקה או סימולציה</b></p>")
+            out.append(table(["שעה", "טלפון", "שאלה", "מתקן"],
+                             [[t_il(i.get("at")), i.get("phone"), i.get("q"), i.get("decision")]
+                              for i in c.get("test_or_sim_items") or []]))
+        if c.get("intake_items"):
+            out.append("<p><b>שיחות קבלה</b></p>")
+            out.append(table(["שעה", "טלפון", "שאלה", "תשובה"],
+                             [[t_il(i.get("at")), i.get("phone"), i.get("q"), i.get("a")]
+                              for i in c.get("intake_items") or []]))
+        out.append("<p style='color:#777;font-size:12px'>שאלות ותשובות מקוצרות ל־500 תווים.</p>")
 
     out.append(h2("סיכונים"))
     out.append(kv([
@@ -266,10 +300,11 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
         ["לפי דרך זיהוי", dict_line(rk.get("by_method"), METHOD_HE)],
     ]))
     if full:
-        out.append(table(["זמן בשיחה", "טלפון", "חומרה", "זיהוי", "סטטוס", "סיבות", "נוסח"],
+        out.append(table(["זמן בשיחה", "טלפון", "חומרה", "זיהוי", "סטטוס", "סיבות", "נוסח", "שורה", "בודק", "הערות"],
                          [[t_il(x.get("at")), x.get("phone"), SEVERITY_HE.get(x.get("severity"), x.get("severity")),
                            METHOD_HE.get(str(x.get("method")), x.get("method")), x.get("status"),
-                           x.get("reasons"), x.get("text")] for x in rk.get("items") or []]))
+                           x.get("reasons"), x.get("text"), x.get("line"), x.get("reviewer"), x.get("notes")]
+                          for x in rk.get("items") or []]))
     out.append("<p style='color:#777;font-size:12px'>ממצא משויך ליום לפי זמן השיחה שבה נאמר.</p>")
 
     out.append(h2("כניסות וגישה"))
@@ -288,8 +323,22 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
         out.append("<p><b>כניסות מטופלים עם קוד</b></p>")
         out.append(table(["שעה", "טלפון"], [[t_il(x.get("at")), x.get("phone")]
                                             for x in a.get("patient_code_login_list") or []]))
-        if a.get("read_flag_by"):
-            out.append(f"<p>סימוני נקרא לפי מסמן: {dict_line(a.get('read_flag_by'))}</p>")
+        out.append("<p><b>חיפושי אדמין</b></p>")
+        out.append(table(["שעה", "מחפש", "תוצאה", "חיפוש", "מטופל"],
+                         [[t_il(x.get("at")), x.get("by"), x.get("outcome"), x.get("query"), x.get("patient")]
+                          for x in a.get("admin_lookup_items") or []]))
+        out.append("<p><b>סימוני נקרא</b></p>")
+        out.append(table(["שעה", "מסמן", "הוסתר", "מטופל", "שיחה"],
+                         [[t_il(x.get("at")), x.get("by"), x.get("hidden"), x.get("patient"), x.get("talk")]
+                          for x in a.get("read_flag_items") or []]))
+        out.append("<p><b>טלפונים שקיבלו קוד</b></p>")
+        out.append(table(["שליחה אחרונה", "טלפון", "סה\"כ שליחות אי־פעם"],
+                         [[t_il(x.get("last_sent")), x.get("phone"), x.get("count_total")]
+                          for x in a.get("otp_items") or []]))
+        out.append("<p><b>ניסיונות קוד שגויים</b></p>")
+        out.append(table(["אחרון", "טלפון", "ניסיונות", "ראשון"],
+                         [[t_il(x.get("last")), x.get("phone"), x.get("fails"), t_il(x.get("first_fail"))]
+                          for x in a.get("wrong_code_items") or []]))
     out.append("<p style='color:#777;font-size:12px'>כניסה בלי קוד אינה נרשמת במסד ואינה מופיעה כאן.</p>")
 
     out.append(h2("מיילים"))
@@ -300,16 +349,18 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
     ]))
     if full:
         out.append("<p><b>מיילי מערכת האימות</b></p>")
-        out.append(table(["שעה", "סוג", "נמען"], [[t_il(x.get("at")), AUTH_HE.get(x.get("action"), x.get("action")),
-                                                   x.get("to")] for x in m.get("auth_items") or []]))
+        out.append(table(["שעה", "סוג", "נמען", "טלפון המטופל"],
+                         [[t_il(x.get("at")), AUTH_HE.get(x.get("action"), x.get("action")),
+                           x.get("to"), x.get("patient") or ""] for x in m.get("auth_items") or []]))
         out.append("<p><b>מיילי הסקריפטים</b></p>")
-        out.append(table(["שעה", "סקריפט", "סוג", "נמען", "נושא", "הצליח"],
+        out.append(table(["שעה", "סקריפט", "סוג", "נמען", "נושא", "תוכן", "הצליח"],
                          [[t_il(x.get("at")), x.get("sender"), x.get("kind"), x.get("to"), x.get("subject"),
-                           "כן" if x.get("ok") else f"לא — {x.get('error') or ''}"]
+                           x.get("body") or "", "כן" if x.get("ok") else f"לא — {x.get('error') or ''}"]
                           for x in m.get("system_items") or []]))
     if m.get("system_log_note"):
         out.append("<p style='color:#777;font-size:12px'>יומן מיילי הסקריפטים פעיל מ־23.9.2026; "
-                   "השולחים הקיימים עדיין לא כותבים אליו, פרט לדוח הזה.</p>")
+                   "השולחים הקיימים עדיין לא כותבים אליו, פרט לדוח הזה. "
+                   "תוכן מיילי מערכת האימות הוא התבנית עם קוד חד־פעמי, ואינו נשמר.</p>")
 
     out.append(h2("אוטומציה"))
     out.append("<p><b>משימות תזמון במסד</b></p>")
@@ -323,6 +374,26 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
         ["סיכומים שנכתבו", e(au.get("summaries_written"))],
         ["תמונות מצב שעודכנו", e(au.get("ab_updated"))],
     ]))
+    if full:
+        out.append("<p><b>כשלי תזמון במסד</b></p>")
+        out.append(table(["שעה", "משימה", "סטטוס", "הודעה"],
+                         [[t_il(x.get("at")), x.get("job"), x.get("status"), x.get("message")]
+                          for x in au.get("cron_failures") or []]))
+        out.append("<p><b>הרצות מחזור ההעברה שטיפלו ברשומות</b></p>")
+        out.append(table(["שעה", "עובדו", "דולגו", "משך במ\"ש", "הודעה"],
+                         [[t_il(x.get("at")), x.get("processed"), x.get("skipped"), x.get("ms"), x.get("message")]
+                          for x in au.get("guarded_items") or []]))
+        out.append("<p><b>שגיאות בתור העיבוד</b></p>")
+        out.append(table(["שעה", "סטטוס", "מטופל", "שגיאה"],
+                         [[t_il(x.get("at")), x.get("status"), x.get("patient"), x.get("error")]
+                          for x in au.get("queue_error_items") or []]))
+        out.append("<p><b>סיכומים שנכתבו</b></p>")
+        out.append(table(["שעה", "מטופל", "עיבוד", "סיכון", "סיכום מקוצר"],
+                         [[t_il(x.get("at")), x.get("patient"), x.get("processed"), x.get("risk"), x.get("short")]
+                          for x in au.get("summary_items") or []]))
+        out.append("<p><b>תמונות מצב שעודכנו</b></p>")
+        out.append(table(["שעה", "מטופל", "תמונת מצב"],
+                         [[t_il(x.get("at")), x.get("patient"), x.get("ab")] for x in au.get("ab_items") or []]))
     out.append("<p><b>GitHub Actions</b></p>")
     if not gh:
         out.append("<p style='color:#777'>לא נבדק — אין אסימון בסביבה.</p>")
