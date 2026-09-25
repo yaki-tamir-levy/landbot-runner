@@ -522,6 +522,8 @@
 | `app_config` | מפתח ההצפנה | 5 |
 | `talk_read_flags` | סימוני קריאה — **ללא סיומת. ראו 15.4** | 229 |
 | `notification_watermark` | סימן מים לשליחת התראות — **ראו סעיף 23** | 14 |
+| `workflow_dispatch_log` | יומן הפעלות תהליכים מהמסד — **נוסף 25.9.2026, ראו סעיף 24** | — |
+| `admin_report_labels` | תיאורי משימות ותהליכים לדוח האדמין — **נוסף 25.9.2026** | 18 |
 
 **הספירות הקודמות היו מ-30.7.2026** והיו נמוכות בסדר גודל. **אין להסיק
 מהגידול שום מדד שימוש** — כל המטופלים הם נתוני בדיקה.
@@ -1360,6 +1362,8 @@ supabase functions deploy <name> --project-ref qcwimczsiuxkarwfiyai --no-verify-
 
 ## 7. תזמון — pg_cron
 
+**עודכן 25.9.2026:** נוספו משימות 42, 43 ו־44 — הפעלת תהליכי `GitHub` מהמסד, ראו סעיף 24. הושבתו משימות 25, 27 ו־28 — מסלול `Landbot`, שאינו פעיל עוד, בהחלטת בעל המערכת. הושבתו ב־`cron.alter_job` ולא נמחקו. הטבלה שלמטה משקפת את 19.9.
+
 **מאומת: 19.9.2026 | מקור: שאילתה ישירה על** `cron.job` **ו-** `cron.job_run_details`
 
 עשר משימות רשומות. **שש פעילות, ארבע כבויות.**
@@ -1394,6 +1398,14 @@ supabase functions deploy <name> --project-ref qcwimczsiuxkarwfiyai --no-verify-
 ---
 
 ## 8. GitHub Actions
+
+**עודכן 25.9.2026 — מחיקה:** חמשת התהליכים שברשימת המושבתים למטה נמחקו מהמאגר בקומיט `268f963`, אחרי סריקת תלויות במאגר ובמסד: `users_inform-checker.yml`, `process_queue_reconcile_hourly.yml`, `process_queue_worker.yml`, `postprocess_short_summarized.yml`, `risk-scan-v2.yml`. **נשארו 20 קובצי תהליך במעקב.** הסקריפטים שהריצו לא נמחקו — `scripts/users_inform_landbot_trigger.mjs` משמש גם את `run-users-inform-bot.yml`. `sim-conversation.yml` מושבת מ-31.8 ונשאר בהחלטת בעל המערכת, לשימוש בסימולציות.
+
+**עודכן 25.9.2026 — השבתת מסלול `Landbot`:** חמישה תהליכים הושבתו בממשק, ואומת `state=disabled_manually`: `run-landbot-v2.yml`, `find-pending-users.yml`, `run-users-total-now.yml`, `run-users-inform-bot.yml`, `supa_precheck.yml`. **לא נמחקו.** הסוד `LANDBOT_WEBHOOK_SECRET` ב־`sim-conversation.yml`, והכותרת `x-landbot-secret` ב־`runtime-corrected-response`, שמם היסטורי בלבד — הם משמשים את הפונקציה ולא את `Landbot`. אין לגעת בהם.
+
+**נוסף 25.9.2026 — התזמון של `GitHub` אינו אמין.** נמדד על שבעת התהליכים המתוזמנים הפעילים: יומיים רצים באיחור של 4 עד 6 שעות; שעתיים מאבדים כ-80% מהריצות. לפי תיעוד `GitHub`, אירוע `schedule` מתעכב בעומס, במיוחד בתחילת שעה, ובעומס מספיק נשמט. **הפתרון — הפעלה מהמסד, סעיף 24.** הועברו עד כה: `admin-daily-report.yml` — התזמון הישן נשאר לתקופת מעבר; `psychologist_notify.yml` — התזמון הישן הוסר בקומיט `79c80f5`.
+
+**הטריגר שמפעיל את מעבד התור — אומת 25.9.2026:** `trg_trigger_process_worker_on_queue_insert_v2` על `process_queue_v2` קורא לפונקציה הפרוסה `trigger-process-worker`, שמפעילה את התהליך ששמו בסוד `GITHUB_WORKFLOW`. הסוד אינו קריא; לפי היסטוריית ההפעלות הוא מצביע על `process-queue-worker-v2.yml`. **הפונקציה פתוחה** — פרוסה בלי אימות `JWT` ובלי בדיקת סוד. כל אחד יכול להפעיל דרכה את מעבד התור. אין חשיפת מידע, אך יש פתח לשימוש לרעה.
 
 **נוסף 23.9.2026:** `admin-daily-report.yml` — דוח האדמין היומי, ראו 23.9. לא נספר ב-21 שלמטה.
 
@@ -3511,7 +3523,7 @@ https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/runtime-corrected-response
 3. **שלוש מדיניות `anon` פתוחות** על `users_information_old_to_delete`. ראו 15.9.
 4. **מרווח התזמון של שרשרת `V2` אינו ידוע** — קובע את ההשהיה בין סוף שיחה להופעת סיכון בפני מטפל. ראו סעיף 10.
 5. **להשלים את מחיקת העמודות הגלויות מ־`patient_identity_map`** — ראו סעיף 21.2. שני חוסמים מזוהים.
-6. לנקות את בלוק ה־`schedule` המת מ־`risk-scan-v2.yml`, ולהכריע אם `scripts/risk-scan.mjs` נשאר. הוא מעולם לא כתב ולו שורה אחת.
+6. לנקות את בלוק ה־`schedule` המת מ־`risk-scan-v2.yml`, ולהכריע אם `scripts/risk-scan.mjs` נשאר. הוא מעולם לא כתב ולו שורה אחת. **חלקית נסגר 25.9.2026:** קובץ התהליך נמחק, קומיט `268f963`. ההכרעה על הסקריפט נותרה.
 7. **`Landbot` שולח מזהה שיחה ישן אחרי כניסה חוזרת** — מקור 76 רשומות הפעלה יתומות. התיקון בזרימת `Landbot`. ראו סעיף 9.
 8. **למחוק `force_end_conversation_v2(p_suffix text)`** — אין לו קורא. ולהסיר את כלי הסיום המאולץ כולו לפני ייצור.
 9. **להכריע על מעמד המאגר.** מאגר ציבורי המתעד מערכת עם מידע רפואי מזוהה. הפיכה לפרטי משביתה את `GitHub Pages` בחשבון חינמי — כל ה־`viewers` ייפלו. הכרעה נדרשת לפני ייצור.
@@ -3630,7 +3642,7 @@ https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/runtime-corrected-response
 ### ניקוי
 
 24. תשע טבלאות ישנות.
-25. שבעה תהליכי `GitHub Actions` ישנים.
+25. שבעה תהליכי `GitHub Actions` ישנים. **25.9.2026:** חמישה מושבתים נמחקו, קומיט `268f963`. חמשת תהליכי `Landbot` הושבתו — מחיקתם שלב נפרד.
 26. `risk_engine` — להשבית או למחוק.
 27. `users_viewer_risk_prod_v2.html` — עותק מיותר. **מעודכן:** שני קובצי `users_viewer_risk_prod*.html` שולפים `name, phone` מ־`users_tzvira` ללא סיומת, לפי טלפון.
 28. שלושה קובצי `HTML` יתומים.
@@ -3686,6 +3698,14 @@ https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/runtime-corrected-response
 **נסגר 11.8.2026 — פריט 2.2 ב־`SESSION_HANDOFF.md`, "מטופל בלי שיוך הנושא ממצאי סיכון".** המטופל היה חיים, `054***798`, והוא נמחק.
 
 ---
+
+### נוסף 25.9.2026
+
+33. **להשלים את המעבר להפעלה מהמסד** לחמשת התהליכים הנותרים: `ab-processor.yml`, `intake-processor.yml`, `process-queue-worker-v2.yml`, `reconcile-new-to-queue-v2.yml`, `pushover_notify.yml`. ואחרי אימות — להסיר את בלוק ה־`schedule` מ־`admin-daily-report.yml`.
+34. **למחוק את מסלול `Landbot`** אחרי תקופת השבתה: משימות 25, 27, 28, חמשת התהליכים, והפונקציות `run_100_link_talk_api`, `run_100_link_talk_batch`, `reset_stuck_in_progress`. סריקת תלויות בשני העולמות לפני כל מחיקה.
+35. **לבטל את אסימון `Landbot API`** בחשבון `Landbot`. כתוב בטקסט גלוי בגוף `run_100_link_talk_api`, והופיע בתיעוד שיחה ב-25.9.
+36. **לסגור את `trigger-process-worker`** — להוסיף בדיקת סוד, כמו ב-`dispatch-workflow`. היום פתוחה לכל העולם.
+37. **לשדרג `actions/checkout@v5` ו-`actions/setup-python@v6`** — `v4` ו-`v5` בנויות על `Node.js 20`. ולפני 19.10.2026 לוודא ש-`Python 3.11` זמין ב-`Ubuntu 26`.
 
 ## 17. כללי עבודה
 
@@ -4869,6 +4889,19 @@ https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/runtime-corrected-response
 
 **אומת 23.9.2026:** שתי שליחות ידניות מוצלחות על 22.9, ב-15:46 וב-16:47, נרשמו ב-`email_send_log`. טבלת `GitHub Actions` הופיעה במייל. **הריצה המתוזמנת הראשונה — 24.9.2026, טרם אומתה.**
 
+**הופרך 25.9.2026 — התזמון לא נמסר בזמן.** הריצה המתוזמנת היחידה הייתה ב-24.9 בשעה 14:19 שעון ישראל, במקום 09:00; שלוש יריות אחרות נשמטו. הסקריפט תקין. מ־25.9 הדוח מופעל גם מהמסד, משימה 42 — ראו סעיף 24.
+
+**נוסף 25.9.2026, קומיט `322dd77` — בקשות בעל המערכת:**
+
+- **בראש הדוח — סיכונים שלא טופלו יותר מ-24 שעות,** לפי פסיכולוג: סוג הסיכון, טלפון, תאריך זיהוי, ימים בהמתנה. מקור: `admin_report_open_risks_v2()`. פתוח = `status = NEW`. תאריך הזיהוי הוא `time_key` — זמן השיחה — כי לטבלה אין עמודת זמן יצירה. השיוך לפסיכולוג: `users_information_v2.psychologist` מחזיק את טלפון הפסיכולוג, ומותאם לספרות של `psychologists_v2.phone`.
+- **סעיף הסיכונים היומי מציג גם את מספר הפתוחים מכל הימים.** קודם הוצג "אין" ביום בלי ממצא חדש, בעוד 21 סיכונים פתוחים מאוגוסט.
+- **טלפונים משמאל לימין.** בלי סימני `LRM`, `050***123` בדוח מימין לשמאל הוצג `123***050`. חל על העמודות טלפון, טלפון המטופל, נמען ומטופל.
+- **תיאור לכל משימה ותהליך** מהטבלה `admin_report_labels` — עורכים במסד, בלי קוד. חסר = "אין תיאור".
+- **התזמון במילים בשעון ישראל,** לפי ההפרש של יום הדוח.
+- **הסבר לשורת "תור העיבוד עכשיו",** ושורה חדשה: סיכום `workflow_dispatch_log`.
+
+**אומת:** הרצה יבשה על הקומיט החדש בלי `[WARN]`; שליחה אמיתית על 24.9 ב-14:28, `email_send_log.id = 6`.
+
 ---
 
 ## 23. מסלול קבלת מועמדים — נוסף 10.8.2026
@@ -4894,3 +4927,37 @@ https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/runtime-corrected-response
 **כלל הזיהוי בסעיף 4.1 אינו חל כאן:** רכיבי המסלול נושאים את הסימן intake
 כסיומת בשמות טבלאות, וכקידומת בשמות פונקציות. חיפוש עתידי חייב לכסות
 את שתי הצורות.
+
+---
+
+## 24. הפעלת תהליכים מהמסד — נוסף 25.9.2026
+
+**הבעיה:** התזמון של `GitHub` איחר בשעות והשמיט ריצות, ראו סעיף 8. **הפתרון:** המסד מפעיל את התהליכים דרך `workflow_dispatch`, שמגיב תוך שניות — נמדד: 6 מתוך 6 הפעלות של הטריגר הקיים נוצרו באותה דקה.
+
+**השרשרת:** `pg_cron` ← `public.dispatch_workflow(workflow, inputs, source)` ← `pg_net` ← פונקציית הקצה `dispatch-workflow` ← `GitHub`.
+
+| רכיב | תפקיד |
+|---|---|
+| `public.dispatch_workflow(text, jsonb, text)` | יוצרת שורה ביומן, קוראת את הסוד מהכספת, שולחת. `SECURITY DEFINER`, סגורה לכולם מלבד הבעלים |
+| `public.workflow_dispatch_log` | שורה לכל הפעלה: תשובת `GitHub`, מזהה ריצה. `responded_at` ריק = הבקשה לא הגיעה ליעד. `RLS` פעיל, סגורה ל-`anon` ול-`authenticated` |
+| `dispatch-workflow` | פונקציית קצה. דורשת `x-dispatch-secret`. רשימה סגורה של שבעה תהליכים וערכי פרמטרים מותרים. מבקשת `return_run_details` ושומרת את מזהה הריצה |
+| הסוד | בכספת: `dispatch_workflow_secret`. בסודות פונקציות הקצה: `DISPATCH_SECRET`. אומתו זהים בהשוואת `SHA-256`, בלי שהערך עבר בשיחה |
+| האסימון | `GITHUB_TOKEN` הקיים בסודות פונקציות הקצה — סודות ברמת הפרויקט. **אינו נכנס למסד** |
+
+**משימות:**
+
+| # | שם | `UTC` | שעון ישראל, קיץ |
+|---|---|---|---|
+| 42 | `dispatch_admin_daily_report` | `0 6,7 * * *` | 09:00, 10:00 |
+| 43 | `dispatch_psychologist_risk` | `30 * * * *` | כל שעה בדקה 30 |
+| 44 | `dispatch_psychologist_daily` | `0 7,8 * * *` | 10:00, 11:00 |
+
+**חובה לשלוח `dry_run = 0` במפורש** ב-`admin-daily-report.yml` וב-`psychologist_notify.yml` — ברירת המחדל שם היא הרצה יבשה.
+
+**שער השעה של `psychologist_notify.py`:** המייל היומי יוצא רק אם השעה בישראל היא **בדיוק** `DAILY_HOUR_IL` = 10, שורה 844. עם איחורי `GitHub`, סביר שבימים רבים לא יצא. לא ניתן לאמת כמה, כי השולח עוד לא כותב ל-`email_send_log`.
+
+**אין להפעיל את `psychologist_notify.yml` במצב יבש:** במצב זה הוא מדפיס את המיילים ליומן, והיומנים ציבוריים.
+
+**אומת 25.9.2026:** הפעלה ידנית — מהמסד ועד סיום הריצה 15 שניות. משימה 43 רצה ב-14:10 וקיבלה `200`.
+
+**קבצים:** `supabase/functions/dispatch-workflow/index.ts`, `supabase/migrations/20260925140000_workflow_dispatch.sql` — קומיט `76a8c8b`. `supabase/migrations/20260925150000_admin_report_labels_open_risks.sql` — קומיט `322dd77`.
