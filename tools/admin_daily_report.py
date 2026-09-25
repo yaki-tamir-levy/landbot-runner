@@ -20,6 +20,13 @@ second run of the same morning does nothing.
 
 Every send (success or failure) is written to public.email_send_log.
 
+25.9.2026 additions: open risks older than 24 hours at the top of the report
+(public.admin_report_open_risks_v2), Hebrew descriptions for pg_cron jobs and
+GitHub workflows (table public.admin_report_labels, edited in the database),
+schedules in words in Israel time, a summary of database-started workflow
+runs (public.workflow_dispatch_log), and phones forced left-to-right so masked
+numbers are not shown reversed inside the right-to-left report.
+
 Environment
   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY   required
   GMAIL_SMTP_USER, GMAIL_APP_PASSWORD       required unless DRY_RUN=1
@@ -108,6 +115,41 @@ def already_sent(db: Db, day: str) -> bool:
     return len(rows) > 0
 
 
+# ---------------------------------------------------------------- extras (25.9.2026)
+def load_extra(db: Db, day: date) -> Dict[str, Any]:
+    """Each part is optional: a failure is shown in the report, never fatal."""
+    out: Dict[str, Any] = {}
+    try:
+        out["open_risks"] = db.rpc("admin_report_open_risks_v2", {})
+    except Exception as ex:
+        print(f"[WARN] open risks: {ex}", file=sys.stderr)
+    try:
+        labels: Dict[str, Dict[str, str]] = {"cron": {}, "workflow": {}}
+        for r in db.select("admin_report_labels", {"select": "kind,key,label_he"}):
+            labels.setdefault(r["kind"], {})[r["key"]] = r["label_he"]
+        out["labels"] = labels
+    except Exception as ex:
+        print(f"[WARN] labels: {ex}", file=sys.stderr)
+    try:
+        start = datetime(day.year, day.month, day.day, tzinfo=IL)
+        end = start + timedelta(days=1)
+        rows = db.select("workflow_dispatch_log", {
+            "select": "requested_at,workflow,http_status,ok,error,responded_at",
+            "and": f"(requested_at.gte.{start.isoformat()},requested_at.lt.{end.isoformat()})",
+            "order": "requested_at"})
+        bad = [r for r in rows if r.get("ok") is not True]
+        out["dispatch"] = {
+            "total": len(rows),
+            "ok": sum(1 for r in rows if r.get("ok") is True),
+            "failed": sum(1 for r in rows if r.get("ok") is False),
+            "no_answer": sum(1 for r in rows if r.get("responded_at") is None),
+            "bad_items": bad,
+        }
+    except Exception as ex:
+        print(f"[WARN] dispatch log: {ex}", file=sys.stderr)
+    return out
+
+
 # ---------------------------------------------------------------- github
 def github_runs(day: date) -> Optional[Dict[str, Any]]:
     token = env("GITHUB_TOKEN")
@@ -172,14 +214,77 @@ def dict_line(d: Optional[Dict[str, Any]], names: Optional[Dict[str, str]] = Non
     return " · ".join(f"{e(names.get(str(k), k))}: {e(v)}" for k, v in d.items())
 
 
+LRM = "\u200e"
+# Columns whose values are left-to-right tokens (masked phones, addresses).
+# Without the marks, "050***123" inside the right-to-left report is shown as
+# "123***050": the two digit runs are reordered around the neutral asterisks.
+LTR_HEADERS = {"טלפון", "טלפון המטופל", "נמען", "מטופל"}
+
+
+def ltr(v: Any) -> str:
+    s = "" if v is None else str(v)
+    return f"{LRM}{s}{LRM}" if s else s
+
+
 def table(headers: List[str], rows: List[List[Any]]) -> str:
     if not rows:
         return "<p style='color:#777'>אין.</p>"
     th = "".join(f"<th style='border:1px solid #ccc;padding:4px 8px;background:#f3f3f3'>{e(h)}</th>" for h in headers)
+    ltr_cols = {i for i, h in enumerate(headers) if h in LTR_HEADERS}
     trs = "".join("<tr>" + "".join(f"<td style='border:1px solid #ccc;padding:4px 8px;vertical-align:top;"
-                                   f"white-space:pre-wrap'>{e(c)}</td>" for c in r) + "</tr>"
+                                   f"white-space:pre-wrap'>{e(ltr(c) if i in ltr_cols else c)}</td>"
+                                   for i, c in enumerate(r)) + "</tr>"
                   for r in rows)
     return f"<table style='border-collapse:collapse;font-size:13px'><tr>{th}</tr>{trs}</table>"
+
+
+def il_offset_hours(day: date) -> int:
+    noon = datetime(day.year, day.month, day.day, 12, tzinfo=IL)
+    return int(noon.utcoffset().total_seconds() // 3600)
+
+
+def cron_he(expr: str, day: date) -> str:
+    """A pg_cron expression (UTC) in Hebrew words, in Israel time for `day`.
+    Covers the shapes used in this project; anything else is returned as is."""
+    parts = (expr or "").split()
+    if len(parts) != 5 or parts[2:] != ["*", "*", "*"]:
+        return expr or ""
+    m, h = parts[0], parts[1]
+    off = il_offset_hours(day)
+
+    def il_h(x: int) -> int:
+        return (x + off) % 24
+
+    if m.startswith("*/") and h == "*":
+        return f"כל {m[2:]} דקות"
+    if h == "*":
+        if m == "*":
+            return "כל דקה"
+        mins = m.split(",")
+        if all(x.isdigit() for x in mins):
+            return ("כל שעה בדקה " + mins[0].zfill(2)) if len(mins) == 1 else \
+                   ("כל שעה בדקות " + ", ".join(x.zfill(2) for x in mins))
+        return expr
+    if not m.isdigit():
+        return expr
+    mm = m.zfill(2)
+    if "-" in h and h.replace("-", "").isdigit():
+        a, b = (int(x) for x in h.split("-"))
+        return f"כל שעה בדקה {mm}, מ־{il_h(a):02d}:{mm} עד {il_h(b):02d}:{mm}"
+    hours = h.split(",")
+    if all(x.isdigit() for x in hours):
+        times = ", ".join(f"{il_h(int(x)):02d}:{mm}" for x in hours)
+        return f"כל יום ב־{times}"
+    return expr
+
+
+def d_il(iso: Optional[str]) -> str:
+    if not iso:
+        return ""
+    try:
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).astimezone(IL).strftime("%d.%m.%Y %H:%M")
+    except ValueError:
+        return str(iso)
 
 
 def kv(rows: List[List[Any]]) -> str:
@@ -192,7 +297,14 @@ def h2(title: str) -> str:
     return f"<h3 style='margin:22px 0 6px;border-bottom:2px solid #333'>{e(title)}</h3>"
 
 
-def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
+def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
+           extra: Optional[Dict[str, Any]] = None) -> (str, str):
+    extra = extra or {}
+    orisk = extra.get("open_risks") or {}
+    labels = extra.get("labels") or {}
+    disp = extra.get("dispatch")
+    cron_labels = labels.get("cron") or {}
+    wf_labels = labels.get("workflow") or {}
     day = date.fromisoformat(d["day"])
     day_he = f"{day.day}.{day.month}.{day.year}"
     full = d.get("detail") == "full"
@@ -207,7 +319,11 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
     subject = f"מיתר — דוח פעילות יומי {day_he}"
     if int(rk.get("count") or 0) > 0:
         subject += f" · {rk['count']} ממצאי סיכון"
-    if cron_fails or gh_fail or int(m.get("system_failed") or 0):
+    overdue = int(orisk.get("overdue_total") or 0)
+    if overdue:
+        subject += f" · {overdue} סיכונים ממתינים מעל 24 שעות"
+    disp_fail = int((disp or {}).get("failed") or 0) + int((disp or {}).get("no_answer") or 0)
+    if cron_fails or gh_fail or disp_fail or int(m.get("system_failed") or 0):
         subject += " · יש כשלים"
 
     out: List[str] = []
@@ -215,11 +331,38 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
     out.append(f"<p style='color:#777;margin:4px 0'>חלון: 00:00–24:00 שעון ישראל · רמת פירוט: "
                f"{'מלאה' if full else 'ספירות בלבד'}</p>")
 
+    out.append(h2("סיכונים שלא טופלו יותר מ־24 שעות"))
+    if not orisk:
+        out.append("<p style='color:#a00'>לא נבדק — כשל בשליפת הסיכונים הפתוחים.</p>")
+    else:
+        out.append(kv([
+            ["ממתינים מעל 24 שעות", e(orisk.get("overdue_total"))],
+            ["פתוחים בסך הכול", e(orisk.get("open_total"))],
+        ]))
+        out.append(table(["פסיכולוג", "פתוחים", "מעל 24 שעות", "הוותיק ביותר (ימים)"],
+                         [[x.get("psychologist"), x.get("open"), x.get("overdue"), x.get("oldest_days")]
+                          for x in orisk.get("by_psychologist") or []]))
+        if full and orisk.get("overdue_items") is not None:
+            by_p: Dict[str, List[Dict[str, Any]]] = {}
+            for x in orisk.get("overdue_items") or []:
+                by_p.setdefault(x.get("psychologist") or "", []).append(x)
+            for name, items in by_p.items():
+                out.append(f"<p><b>{e(name)} — {len(items)} סיכונים ממתינים</b></p>")
+                out.append(table(["סוג הסיכון", "טלפון", "תאריך זיהוי", "ימים בהמתנה"],
+                                 [[" · ".join(v for v in [SEVERITY_HE.get(x.get("severity"), x.get("severity") or ""),
+                                                          METHOD_HE.get(str(x.get("method")), "") ,
+                                                          x.get("text") or ""] if v),
+                                   x.get("phone"), d_il(x.get("at")), x.get("days")] for x in items]))
+        out.append("<p style='color:#777;font-size:12px'>פתוח = סטטוס NEW בטבלת הסיכונים. "
+                   "תאריך הזיהוי הוא זמן השיחה שבה נאמר הדבר — לטבלה אין עמודת זמן יצירה, "
+                   "ולכן הזיהוי בפועל עשוי להיות מאוחר במעט.</p>")
+
     out.append(h2("תקציר"))
     out.append(kv([
         ["שיחות פעילות", e(c.get("active_sessions"))],
         ["תורות", e(c.get("turns"))],
-        ["ממצאי סיכון", e(rk.get("count"))],
+        ["ממצאי סיכון ביום", e(rk.get("count"))],
+        ["סיכונים ממתינים מעל 24 שעות", e(orisk.get("overdue_total")) if orisk else "לא נבדק"],
         ["כניסות מטפלים", e(a.get("psychologist_logins"))],
         ["כניסות מטופלים עם קוד", e(a.get("patient_code_logins"))],
         ["מטופלים חדשים", e(p.get("new_patients_count"))],
@@ -276,7 +419,7 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
             items = x.get("items") or []
             if not items:
                 continue
-            out.append(f"<p><b>תוכן השיחה — {e(x.get('phone'))} · {e(SOURCE_HE.get(x.get('source'), x.get('source')))} · "
+            out.append(f"<p><b>תוכן השיחה — {e(ltr(x.get('phone')))} · {e(SOURCE_HE.get(x.get('source'), x.get('source')))} · "
                        f"התחילה {e(t_il(x.get('started_at')))}</b></p>")
             out.append(table(["שעה", "שאלת המטופל", "תשובת הבוט", "מתקן", "סיבות"],
                              [[t_il(i.get("at")), i.get("q"), i.get("a"), i.get("decision"),
@@ -295,7 +438,8 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
 
     out.append(h2("סיכונים"))
     out.append(kv([
-        ["ממצאים", e(rk.get("count"))],
+        ["ממצאים ביום", e(rk.get("count"))],
+        ["פתוחים כעת, מכל הימים", e(orisk.get("open_total")) if orisk else "לא נבדק"],
         ["לפי חומרה", dict_line(rk.get("by_severity"), SEVERITY_HE)],
         ["לפי דרך זיהוי", dict_line(rk.get("by_method"), METHOD_HE)],
     ]))
@@ -305,7 +449,8 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
                            METHOD_HE.get(str(x.get("method")), x.get("method")), x.get("status"),
                            x.get("reasons"), x.get("text"), x.get("line"), x.get("reviewer"), x.get("notes")]
                           for x in rk.get("items") or []]))
-    out.append("<p style='color:#777;font-size:12px'>ממצא משויך ליום לפי זמן השיחה שבה נאמר.</p>")
+    out.append("<p style='color:#777;font-size:12px'>ממצא משויך ליום לפי זמן השיחה שבה נאמר. "
+               "סיכונים פתוחים מימים קודמים מופיעים בראש הדוח.</p>")
 
     out.append(h2("כניסות וגישה"))
     out.append(kv([
@@ -364,16 +509,30 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
 
     out.append(h2("אוטומציה"))
     out.append("<p><b>משימות תזמון במסד</b></p>")
-    out.append(table(["משימה", "תזמון", "הרצות", "כשלים"],
-                     [[j.get("job"), j.get("schedule"), j.get("runs"), j.get("fails")] for j in cron]))
+    out.append(table(["משימה", "תיאור", "מתי (שעון ישראל)", "הרצות", "כשלים"],
+                     [[j.get("job"), cron_labels.get(j.get("job"), "אין תיאור"),
+                       cron_he(j.get("schedule") or "", day), j.get("runs"), j.get("fails")] for j in cron]))
     g = au.get("guarded_runs") or {}
     out.append(kv([
         ["מחזור ההעברה", f"{e(g.get('runs'))} הרצות · עובדו {e(g.get('processed'))} · דולגו {e(g.get('skipped'))}"],
         ["תור העיבוד עכשיו", dict_line(au.get("queue_now"))],
+        ["הפעלות תהליכים מהמסד", "לא נבדק" if disp is None else
+            f"{e(disp.get('total'))} · הצליחו {e(disp.get('ok'))} · נכשלו {e(disp.get('failed'))}"
+            f" · בלי תשובה {e(disp.get('no_answer'))}"],
         ["שגיאות בתור ביום", e(au.get("queue_errors_day"))],
         ["סיכומים שנכתבו", e(au.get("summaries_written"))],
         ["תמונות מצב שעודכנו", e(au.get("ab_updated"))],
     ]))
+    out.append("<p style='color:#777;font-size:12px'>תור העיבוד עכשיו: ספירת הרשומות בטבלה process_queue_v2 "
+               "לפי מצב, ברגע הפקת הדוח. זה התור שממנו מעבד התור יוצר סיכומי שיחה. "
+               "DONE = עובדה; NEW או ERROR שמצטברים = משהו תקוע.<br>"
+               "הפעלות תהליכים מהמסד: הפעלות GitHub Actions שיצאו ממשימות pg_cron דרך workflow_dispatch_log. "
+               "בלי תשובה = הבקשה לא הגיעה לפונקציה או שהפונקציה קרסה.</p>")
+    if full and disp and disp.get("bad_items"):
+        out.append("<p><b>הפעלות מהמסד שנכשלו או לא נענו</b></p>")
+        out.append(table(["שעה", "תהליך", "קוד", "שגיאה"],
+                         [[t_il(x.get("requested_at")), x.get("workflow"), x.get("http_status"), x.get("error")]
+                          for x in disp.get("bad_items")]))
     if full:
         out.append("<p><b>כשלי תזמון במסד</b></p>")
         out.append(table(["שעה", "משימה", "סטטוס", "הודעה"],
@@ -400,8 +559,9 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]]) -> (str, str):
     elif "error" in gh:
         out.append(f"<p style='color:#a00'>כשל בשליפה: {e(gh['error'])}</p>")
     else:
-        out.append(table(["תהליך", "תוצאות"],
-                         [[name, dict_line(res)] for name, res in sorted(gh["by_workflow"].items())]))
+        out.append(table(["תהליך", "תיאור", "תוצאות"],
+                         [[name, wf_labels.get(name, "אין תיאור"), dict_line(res)]
+                          for name, res in sorted(gh["by_workflow"].items())]))
 
     body = ("<div dir='rtl' style='font-family:Arial,sans-serif;text-align:right;max-width:900px'>"
             + "".join(out) + "</div>")
@@ -432,7 +592,7 @@ def main() -> int:
     if offline:
         with open(offline, encoding="utf-8") as f:
             data = json.load(f)
-        subject, body = render(data, None)
+        subject, body = render(data, None, data.get("_extra"))
         print(subject)
         print(body)
         return 0
@@ -449,7 +609,8 @@ def main() -> int:
 
     data = db.rpc("admin_daily_report_v2", {"p_day": day.isoformat()})
     gh = github_runs(day)
-    subject, body = render(data, gh)
+    extra = load_extra(db, day)
+    subject, body = render(data, gh, extra)
 
     admin = load_admin(db)
     if not admin:
