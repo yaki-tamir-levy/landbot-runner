@@ -12,10 +12,11 @@ name: Psychologist Notify
 #                      immediately on the wrong one, so exactly one run sends.
 
 on:
-  schedule:
-    - cron: "30 * * * *"
-    - cron: "0 7,8 * * *"
-
+  # 25.9.2026: the GitHub schedule was removed. Runs are started from the
+  # database by pg_cron -> public.dispatch_workflow() -> edge function
+  # dispatch-workflow: job dispatch_psychologist_risk (minute 30, mode=risk)
+  # and job dispatch_psychologist_daily (07:00 and 08:00 UTC, mode=daily).
+  # The GitHub schedule ran hours late and missed the 10:00 Israel gate.
   workflow_dispatch:
     inputs:
       mode:
