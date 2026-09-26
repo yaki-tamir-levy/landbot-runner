@@ -202,6 +202,21 @@ SOURCE_HE = {"C": "טיפול", "D": "קורס"}
 ORIGIN_HE = {"SHEET": "גיליון", "INTAKE": "קבלה"}
 METHOD_HE = {"1": "מודל", "2": "ביטוי"}
 SEVERITY_HE = {"high": "גבוהה", "medium": "בינונית", "low": "נמוכה"}
+# Corrector reason codes, as defined in runtime-corrected-response.
+REASON_HE = {
+    "REPEATS_REJECTED_IDEA": "חזר על רעיון שנדחה",
+    "VIOLATES_USER_CONSTRAINT": "הפר בקשה של המטופל",
+    "REDUNDANT_SUMMARY": "סיכום מיותר",
+    "NO_FORWARD_PROGRESS": "אין התקדמות",
+    "UNSUPPORTED_INFERENCE": "הסקה לא מבוססת",
+    "OVER_ANALYSIS": "ניתוח יתר",
+    "OVERLY_TASK_ORIENTED": "מוכוון משימה מדי",
+    "TOO_LONG": "ארוך מדי",
+    "CONTINUITY_ERROR": "שגיאת רצף",
+    "MISSES_DIRECT_REQUEST": "התעלם מבקשה ישירה",
+    "TONE_MISMATCH": "טון לא מתאים",
+    "OTHER": "אחר",
+}
 AUTH_HE = {"user_recovery_requested": "קוד כניסה", "user_confirmation_requested": "אישור הרשמה עם קוד",
            "user_repeated_signup": "הרשמה חוזרת", "user_invited": "הזמנה",
            "user_reauthenticate_requested": "אימות חוזר"}
@@ -412,18 +427,20 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
         ["שיחות קבלה", f"{e(c.get('intake_conversations'))} · תורות {e(c.get('intake_turns'))}"],
     ]))
     if full:
-        out.append(table(["התחלה", "טלפון", "סוג", "שלב", "תורות ביום", "תורות סה\"כ"],
+        out.append(table(["התחלה", "טלפון", "סוג", "שלב", "תורות ביום", "תוקנו ביום", "תורות סה\"כ"],
                          [[t_il(x.get("started_at")), x.get("phone"), SOURCE_HE.get(x.get("source"), x.get("source")),
-                           x.get("stage"), x.get("turns_day"), x.get("turns_total")] for x in c.get("sessions") or []]))
+                           x.get("stage"), x.get("turns_day"), x.get("rewrites_day"), x.get("turns_total")]
+                          for x in c.get("sessions") or []]))
+        # 26.9.2026: only the turns the corrector rewrote, before and after.
         for x in c.get("sessions") or []:
-            items = x.get("items") or []
+            items = x.get("rewrite_items") or []
             if not items:
                 continue
-            out.append(f"<p><b>תוכן השיחה — {e(ltr(x.get('phone')))} · {e(SOURCE_HE.get(x.get('source'), x.get('source')))} · "
+            out.append(f"<p><b>תיקוני המנגנון — {e(ltr(x.get('phone')))} · {e(SOURCE_HE.get(x.get('source'), x.get('source')))} · "
                        f"התחילה {e(t_il(x.get('started_at')))}</b></p>")
-            out.append(table(["שעה", "שאלת המטופל", "תשובת הבוט", "מתקן", "סיבות"],
-                             [[t_il(i.get("at")), i.get("q"), i.get("a"), i.get("decision"),
-                               ", ".join(i.get("reasons") or [])] for i in items]))
+            out.append(table(["שעה", "שאלת המטופל", "לפני התיקון", "אחרי התיקון", "סיבות"],
+                             [[t_il(i.get("at")), i.get("q"), i.get("before"), i.get("after"),
+                               ", ".join(REASON_HE.get(r, r) for r in (i.get("reasons") or []))] for i in items]))
         if c.get("test_or_sim_items"):
             out.append("<p><b>קריאות בדיקה או סימולציה</b></p>")
             out.append(table(["שעה", "טלפון", "שאלה", "מתקן"],
@@ -434,7 +451,8 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
             out.append(table(["שעה", "טלפון", "שאלה", "תשובה"],
                              [[t_il(i.get("at")), i.get("phone"), i.get("q"), i.get("a")]
                               for i in c.get("intake_items") or []]))
-        out.append("<p style='color:#777;font-size:12px'>שאלות ותשובות מקוצרות ל־500 תווים.</p>")
+        out.append("<p style='color:#777;font-size:12px'>תיקוני המנגנון מקוצרים ל־1500 תווים. "
+                   "שאר השאלות והתשובות מקוצרות ל־500 תווים.</p>")
 
     out.append(h2("סיכונים"))
     out.append(kv([
