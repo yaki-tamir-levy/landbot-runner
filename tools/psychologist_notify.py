@@ -153,6 +153,10 @@ def _subj_open_risk(n: int) -> str:
     return "סיכון אחד פתוח" if n == 1 else f"{n} סיכונים פתוחים"
 
 
+_SEVERITY_HE = {"high": "חמור", "medium": "בינוני", "low": "נמוך"}
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
 def _mask_line(masked_phone: str) -> str:
     """Phone on its own line, wrapped in LRM so it renders left-to-right."""
     return f"{LRM}{masked_phone}{LRM}"
@@ -644,9 +648,8 @@ def build_admin_report(
     talks_by_scope: Dict[str, Dict[str, Dict[str, Any]]],
     risk_by_scope: Dict[str, Dict[str, Dict[str, Any]]],
     masked: Dict[str, str],
-    phrase_rows: List[Dict[str, Any]],
-    transcripts: Dict[Tuple[str, str], str],
-    phrase_open_total: int,
+    open_risk_rows: Optional[List[Dict[str, Any]]] = None,
+    patient_scope: Optional[Dict[str, str]] = None,
 ) -> Tuple[str, str]:
     """The admin digest. Replaces the old unassigned-only mail.
 
@@ -687,6 +690,29 @@ def build_admin_report(
             lines.append(f"{who} — {_talks_he(tc)}, {_patients_he(len(t))}, {findings}.")
         lines.append("")
 
+    # 26.9.2026: every open model-confirmed finding, whatever its age - most
+    # severe first, then newest. Masked phone, severity, date and
+    # psychologist only; no risk text in this email.
+    open_rows = [r for r in (open_risk_rows or [])
+                 if (r.get("patient_code") or "").strip() and (r.get("time_key") or "").strip()]
+    lines.append("סיכונים פתוחים שלא טופלו:")
+    lines.append("")
+    if open_rows:
+        open_rows = sorted(open_rows, key=lambda r: (r.get("time_key") or ""), reverse=True)
+        open_rows = sorted(open_rows, key=lambda r: _SEVERITY_ORDER.get(
+            str(r.get("severity") or "").strip().lower(), 9))
+        for r in open_rows:
+            pc = r["patient_code"].strip()
+            sev_raw = str(r.get("severity") or "").strip().lower()
+            sev = _SEVERITY_HE.get(sev_raw, sev_raw or "לא צוין")
+            scope = (patient_scope or {}).get(pc, UNASSIGNED_SCOPE)
+            who = "לא משויך" if scope == UNASSIGNED_SCOPE else ((by_phone.get(scope) or {}).get("name") or scope)
+            lines.append(f"{_mask_line(masked.get(pc, 'מספר חסר'))} · {sev} · {_date_he(r['time_key'])} · {who}")
+        lines.append("")
+    else:
+        lines.append("אין.")
+        lines.append("")
+
     unassigned_talks = talks_by_scope.get(UNASSIGNED_SCOPE, {})
     if unassigned_talks:
         lines.append("שיחות שאינן משויכות לאף מטפל:")
@@ -698,25 +724,6 @@ def build_admin_report(
         lines.append("יש לשייך מטפל.")
         lines.append("")
 
-    lines.append("ביטויים שנתפסו ולא אושרו על ידי המודל — חדשים:")
-    lines.append("")
-    if phrase_rows:
-        for r in phrase_rows:
-            pc = (r.get("patient_code") or "").strip()
-            tk = (r.get("time_key") or "").strip()
-            phrase = (r.get("risk_reasons") or r.get("short_risk") or "").strip()
-            when = _date_he(tk)
-            head = _mask_line(masked.get(pc, "מספר חסר"))
-            lines.append(f"{head} · \"{phrase}\" · {when}")
-            sentence = extract_line(transcripts.get((pc, tk), ""), r.get("line_num"))
-            lines.append(f"  {sentence}" if sentence else "  (לא נמצא המשפט בתמליל)")
-            lines.append("")
-    else:
-        lines.append("אין חדשים.")
-        lines.append("")
-
-    lines.append(f"סך הכל {phrase_open_total} כאלה, כולל קודמים.")
-    lines.append("")
     lines.append("הודעה זו נשלחת אוטומטית. אין להשיב עליה.")
 
     return subject, "\n".join(lines).rstrip() + "\n"
@@ -738,7 +745,7 @@ def run_daily(rest: Rest, mailer: Mailer) -> int:
     risk_rows = rest.select(
         "risk_reviews_v2",
         {
-            "select": "patient_code,time_key,status",
+            "select": "patient_code,time_key,status,severity",
             "match_method": "eq.1",
             "status": status_filter,
             "order": "time_key.asc",
@@ -786,27 +793,14 @@ def run_daily(rest: Rest, mailer: Mailer) -> int:
     # The admin report. Its own watermark channel, so "new only" here is
     # independent of the per-psychologist daily watermark.
     if admin:
-        phrase_marks = load_watermarks(rest, "phrase")
-        cutoff = phrase_marks.get("__admin__", "")
-        phrase_rows = load_phrase_only(rest, cutoff)
-        phrase_all = load_phrase_only(rest, "")
-        transcripts = load_transcripts(rest) if phrase_rows else {}
-
+        # 26.9.2026: the phrase-list section was removed at Jacob's request;
+        # the report lists the open model-confirmed findings instead.
         subject, body = build_admin_report(
             by_phone, talks_by_scope, risk_by_scope, masked,
-            phrase_rows, transcripts, len(phrase_all),
+            risk_rows, patient_scope,
         )
         mailer.send(admin["email"], subject, body)
         sent += 1
-
-        if phrase_rows:
-            marks.append({
-                "scope": "__admin__",
-                "channel": "phrase",
-                "last_time_key": max((r.get("time_key") or "") for r in phrase_rows),
-                "last_sent_at": now_iso,
-                "updated_at": now_iso,
-            })
     else:
         print("[WARN] daily: no admin recipient, admin report skipped.", file=sys.stderr)
 

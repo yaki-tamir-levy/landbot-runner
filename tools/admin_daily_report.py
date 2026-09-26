@@ -319,9 +319,10 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
     subject = f"מיתר — דוח פעילות יומי {day_he}"
     if int(rk.get("count") or 0) > 0:
         subject += f" · {rk['count']} ממצאי סיכון"
-    overdue = int(orisk.get("overdue_total") or 0)
-    if overdue:
-        subject += f" · {overdue} סיכונים ממתינים מעל 24 שעות"
+    # 26.9.2026: every open risk counts as unhandled, whatever its age.
+    open_n = int(orisk.get("open_total") or 0)
+    if open_n:
+        subject += f" · {open_n} סיכונים פתוחים"
     disp_fail = int((disp or {}).get("failed") or 0) + int((disp or {}).get("no_answer") or 0)
     if cron_fails or gh_fail or disp_fail or int(m.get("system_failed") or 0):
         subject += " · יש כשלים"
@@ -331,29 +332,28 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
     out.append(f"<p style='color:#777;margin:4px 0'>חלון: 00:00–24:00 שעון ישראל · רמת פירוט: "
                f"{'מלאה' if full else 'ספירות בלבד'}</p>")
 
-    out.append(h2("סיכונים שלא טופלו יותר מ־24 שעות"))
+    # 26.9.2026: all open risks, whatever their age; model-confirmed only
+    # (filtered in admin_report_open_risks_v2). Most severe first.
+    out.append(h2("סיכונים פתוחים שלא טופלו"))
     if not orisk:
         out.append("<p style='color:#a00'>לא נבדק — כשל בשליפת הסיכונים הפתוחים.</p>")
     else:
         out.append(kv([
-            ["ממתינים מעל 24 שעות", e(orisk.get("overdue_total"))],
             ["פתוחים בסך הכול", e(orisk.get("open_total"))],
+            ["מתוכם מעל 24 שעות", e(orisk.get("overdue_total"))],
         ]))
         out.append(table(["פסיכולוג", "פתוחים", "מעל 24 שעות", "הוותיק ביותר (ימים)"],
                          [[x.get("psychologist"), x.get("open"), x.get("overdue"), x.get("oldest_days")]
                           for x in orisk.get("by_psychologist") or []]))
-        if full and orisk.get("overdue_items") is not None:
-            by_p: Dict[str, List[Dict[str, Any]]] = {}
-            for x in orisk.get("overdue_items") or []:
-                by_p.setdefault(x.get("psychologist") or "", []).append(x)
-            for name, items in by_p.items():
-                out.append(f"<p><b>{e(name)} — {len(items)} סיכונים ממתינים</b></p>")
-                out.append(table(["סוג הסיכון", "טלפון", "תאריך זיהוי", "ימים בהמתנה"],
-                                 [[" · ".join(v for v in [SEVERITY_HE.get(x.get("severity"), x.get("severity") or ""),
-                                                          METHOD_HE.get(str(x.get("method")), "") ,
-                                                          x.get("text") or ""] if v),
-                                   x.get("phone"), d_il(x.get("at")), x.get("days")] for x in items]))
-        out.append("<p style='color:#777;font-size:12px'>פתוח = סטטוס NEW בטבלת הסיכונים. "
+        items = orisk.get("open_items")
+        if items is None:
+            items = orisk.get("overdue_items")
+        if full and items is not None:
+            out.append(table(["חומרה", "פסיכולוג", "טלפון", "תאריך זיהוי", "ימים בהמתנה", "נוסח"],
+                             [[SEVERITY_HE.get(x.get("severity"), x.get("severity") or ""),
+                               x.get("psychologist"), x.get("phone"), d_il(x.get("at")),
+                               x.get("days"), x.get("text")] for x in items]))
+        out.append("<p style='color:#777;font-size:12px'>פתוח = סטטוס NEW בטבלת הסיכונים, בממצא שהמודל אישר בלבד. "
                    "תאריך הזיהוי הוא זמן השיחה שבה נאמר הדבר — לטבלה אין עמודת זמן יצירה, "
                    "ולכן הזיהוי בפועל עשוי להיות מאוחר במעט.</p>")
 
@@ -362,7 +362,7 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
         ["שיחות פעילות", e(c.get("active_sessions"))],
         ["תורות", e(c.get("turns"))],
         ["ממצאי סיכון ביום", e(rk.get("count"))],
-        ["סיכונים ממתינים מעל 24 שעות", e(orisk.get("overdue_total")) if orisk else "לא נבדק"],
+        ["סיכונים פתוחים", e(orisk.get("open_total")) if orisk else "לא נבדק"],
         ["כניסות מטפלים", e(a.get("psychologist_logins"))],
         ["כניסות מטופלים עם קוד", e(a.get("patient_code_logins"))],
         ["מטופלים חדשים", e(p.get("new_patients_count"))],
