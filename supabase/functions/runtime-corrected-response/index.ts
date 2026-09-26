@@ -804,6 +804,14 @@ async function fetchPatientContext(
     // an enrichment, not a requirement, so track/bio resolution proceeds
     // regardless.
     let patientName = "";
+    // 25.9.2026: the same RPC row also carries therapy_track and user_text,
+    // looked up by patient_code from ANY phone form (with or without the
+    // leading zero). When it returns a row, track and bio are taken from it.
+    // The masked-phone query below is kept only as a fallback for when this
+    // RPC fails - the mask differs between 0541111111 and 541111111.
+    let rpcFound = false;
+    let rpcTrack = "";
+    let rpcBio = "";
     try {
       const nameRes = await fetch(
         `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/get_last_users_thread_v2`,
@@ -831,6 +839,11 @@ async function fetchPatientContext(
         if (nameRow && (nameRow.gender === "M" || nameRow.gender === "F")) {
           fallback.patientGender = nameRow.gender;
         }
+        if (nameRow) {
+          rpcFound = true;
+          rpcTrack = typeof nameRow.therapy_track === "string" ? nameRow.therapy_track.trim() : "";
+          rpcBio = typeof nameRow.user_text === "string" ? nameRow.user_text.trim() : "";
+        }
       } else {
         await nameRes.body?.cancel();
       }
@@ -839,6 +852,19 @@ async function fetchPatientContext(
         event: "patient_name_fetch_exception",
         correlation_id: correlationId,
       }));
+    }
+
+    if (rpcFound) {
+      const therapyTrack = rpcTrack.length > 0 ? rpcTrack : DEFAULT_THERAPY_TRACK;
+      console.log(JSON.stringify({
+        event: "therapy_track_resolved",
+        correlation_id: correlationId,
+        therapy_track: therapyTrack,
+        patient_bio_length: rpcBio.length,
+        patient_name_present: patientName.length > 0,
+        source: "patient_code",
+      }));
+      return { therapyTrack, patientBio: rpcBio, patientName, patientGender: fallback.patientGender };
     }
 
     const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/users_information_v2?select=therapy_track,user_text&phone=eq.${encodeURIComponent(phone)}&limit=2`;
@@ -883,6 +909,7 @@ async function fetchPatientContext(
       therapy_track: therapyTrack,
       patient_bio_length: rawBio.length,
       patient_name_present: patientName.length > 0,
+      source: "masked_phone",
     }));
     return { therapyTrack, patientBio: rawBio, patientName, patientGender: fallback.patientGender };
   } catch (_e) {
