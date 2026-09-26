@@ -172,13 +172,16 @@ def decide(fields):
 
 # ---------------------------------------------------------------- התראות
 
-def send_mail(to_addr, subject, body, hash8=None, who=""):
-    """שולח, ורושם ליומן בכל מקרה. כשל בשליחה אינו מפיל את הקורא."""
+def send_mail(to_addr, subject, body, hash8=None, who="", bcc=None):
+    """שולח, ורושם ליומן בכל מקרה. כשל בשליחה אינו מפיל את הקורא.
+    bcc: עותק נסתר (26.9.2026 - לאדמין, על כל מייל לפסיכולוג)."""
     try:
         msg = MIMEText(body, "plain", "utf-8")
         msg["Subject"] = subject
         msg["From"] = formataddr(("Intake", GMAIL_USER))
         msg["To"] = to_addr
+        if bcc and bcc.strip().lower() != (to_addr or "").strip().lower():
+            msg["Bcc"] = bcc.strip()
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
             smtp.login(GMAIL_USER, GMAIL_PASS)
             smtp.send_message(msg)
@@ -229,7 +232,7 @@ def notify(result, accepted, missing, risk):
                   hash8, "admin")
     if accepted and THERAPIST_EMAIL:
         send_mail(THERAPIST_EMAIL, f"[Intake] מטופל חדש: {name}", body,
-                  hash8, "therapist")
+                  hash8, "therapist", bcc=ADMIN_EMAIL)
 
     # והודעה למועמד עצמו
     cand_mail = result.get("email")

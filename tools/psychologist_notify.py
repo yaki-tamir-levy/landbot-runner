@@ -491,17 +491,26 @@ class Mailer:
             self.password = _env_required("GMAIL_APP_PASSWORD")
         self.sender = _env("EMAIL_FROM") or self.user
 
-    def send(self, to_addr: str, subject: str, body: str) -> None:
+    def send(self, to_addr: str, subject: str, body: str,
+             bcc: Optional[str] = None) -> None:
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = self.sender
         msg["To"] = to_addr
+        # 26.9.2026: the admin gets a blind copy of every psychologist email.
+        # send_message() delivers to Bcc and strips the header from the copy
+        # the recipient sees.
+        if bcc and bcc.strip().lower() != to_addr.strip().lower():
+            msg["Bcc"] = bcc.strip()
+        else:
+            bcc = None
         msg.set_content(body)
         msg.add_alternative(_html_rtl(body), subtype="html")
 
         if self.dry_run:
             print("=" * 60)
             print(f"[DRY_RUN] To: {to_addr}")
+            print(f"[DRY_RUN] Bcc: {bcc or '-'}")
             print(f"[DRY_RUN] Subject: {subject}")
             print(body)
             print("=" * 60)
@@ -513,7 +522,7 @@ class Mailer:
             server.ehlo()
             server.login(self.user, self.password)
             server.send_message(msg)
-        print(f"[OK] sent to {to_addr}: {subject}")
+        print(f"[OK] sent to {to_addr}{' (bcc admin)' if bcc else ''}: {subject}")
 
 
 # ----------------------------------------------------------------------------
@@ -548,7 +557,8 @@ def run_risk(rest: Rest, mailer: Mailer) -> int:
         subject, body = build_risk_message(
             recipient["name"], scope == UNASSIGNED_SCOPE, patients, masked
         )
-        mailer.send(recipient["email"], subject, body)
+        mailer.send(recipient["email"], subject, body,
+                    bcc=(admin or {}).get("email"))
         sent += 1
         marks.append({
             "scope": scope,
@@ -779,7 +789,8 @@ def run_daily(rest: Rest, mailer: Mailer) -> int:
         subject, body = build_daily_message(
             recipient["name"], scope == UNASSIGNED_SCOPE, talks, risks, masked
         )
-        mailer.send(recipient["email"], subject, body)
+        mailer.send(recipient["email"], subject, body,
+                    bcc=(admin or {}).get("email"))
         sent += 1
         if talks:
             marks.append({
