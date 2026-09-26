@@ -480,7 +480,7 @@ const $ = id => document.getElementById(id);
 
 function normalizePhone(raw){
   const d = String(raw || "").replace(/\D/g, "");
-  if (/^972\d{9}$/.test(d)) return "0" + d.slice(3);
+  if (/^972\d{9}$/.test(d)) return "0" + d.slice(3); if (/^00972\d{9}$/.test(d)) return "0" + d.slice(5); if (/^5\d{8}$/.test(d)) return "0" + d;
   return d;
 }
 function validPhone(raw){ return /^05\d{8}$/.test(normalizePhone(raw)); }

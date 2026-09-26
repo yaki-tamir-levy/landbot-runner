@@ -67,7 +67,7 @@
   }
 
   function normalizePhone(value) {
-    return String(value || '').replace(/[^\d]/g, '').trim();
+    const d = String(value || '').replace(/[^\d]/g, '').trim().replace(/^(?:00)?972(?=\d{9}$)/, '0'); return /^5\d{8}$/.test(d) ? '0' + d : d;
   }
 
   function validatePhone(rawPhone) {
