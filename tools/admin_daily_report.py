@@ -46,6 +46,7 @@ import json
 import os
 import smtplib
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -93,6 +94,12 @@ class Db:
         r = requests.get(f"{self.base}/rest/v1/{table}", headers=self.h, params=params, timeout=HTTP_TIMEOUT)
         r.raise_for_status()
         return r.json()
+
+    def upsert(self, table: str, row: Dict[str, Any], on_conflict: str) -> None:
+        h = dict(self.h, Prefer="resolution=merge-duplicates,return=minimal")
+        r = requests.post(f"{self.base}/rest/v1/{table}", headers=h, json=row,
+                          params={"on_conflict": on_conflict}, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
 
     def insert(self, table: str, row: Dict[str, Any]) -> None:
         h = dict(self.h, Prefer="return=minimal")
@@ -148,6 +155,114 @@ def load_extra(db: Db, day: date) -> Dict[str, Any]:
     except Exception as ex:
         print(f"[WARN] dispatch log: {ex}", file=sys.stderr)
     return out
+
+
+# ---------------------------------------------------------------- quality score (26.9.2026)
+# Approved by Jacob. Every therapy conversation with activity on the report
+# day is rated by a model, as the patient saw it. The model returns six
+# criteria 0-100; the weighted total and the safety cap are computed HERE, not
+# by the model. Prompt, model, weights and cap are read from the database
+# (prompt_information_v2 / app_config), so they change without a code change.
+# Scores are stored in conversation_quality_scores_v2; a re-run of the same day
+# reuses stored scores instead of paying for the model again.
+QUALITY_CRITERIA = ["understanding", "direct_request", "tone", "no_repetition", "length_format", "safety"]
+QUALITY_WORKERS = 4
+
+
+def _openai_json(key: str, model: str, instructions: str, text: str) -> Dict[str, Any]:
+    r = requests.post(
+        "https://api.openai.com/v1/responses",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        json={"model": model, "instructions": instructions,
+              "input": [{"role": "user", "content": text}],
+              "temperature": 0, "max_output_tokens": 600, "store": False},
+        timeout=120)
+    if not r.ok:
+        raise RuntimeError(f"openai {r.status_code}")
+    payload = r.json()
+    raw = payload.get("output_text") or ""
+    if not raw:
+        parts = []
+        for item in payload.get("output", []) or []:
+            for c in item.get("content", []) or []:
+                if isinstance(c.get("text"), str):
+                    parts.append(c["text"])
+        raw = "\n".join(parts)
+    raw = raw.strip().replace("```json", "").replace("```", "").strip()
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("not an object")
+    usage = payload.get("usage") or {}
+    data["_in"] = usage.get("input_tokens")
+    data["_out"] = usage.get("output_tokens")
+    return data
+
+
+def _weighted(scores: Dict[str, int], weights: Dict[str, float], safety_fail: bool, cap: float) -> float:
+    total_w = sum(float(weights.get(k, 0)) for k in QUALITY_CRITERIA)
+    if total_w <= 0:
+        raise ValueError("weights sum to zero")
+    pct = sum(scores[k] * float(weights.get(k, 0)) for k in QUALITY_CRITERIA) / total_w
+    if safety_fail:
+        pct = min(pct, cap)
+    return round(pct, 1)
+
+
+def score_conversations(db: Db, day: date) -> Dict[str, Any]:
+    """Never raises: any failure is returned as {'error': ...} and shown in the report."""
+    try:
+        key = env("OPENAI_API_KEY")
+        if not key:
+            return {"error": "OPENAI_API_KEY is not set for this workflow"}
+        cfg = {r["key"]: r["value"] for r in db.select("app_config", {
+            "select": "key,value",
+            "key": "in.(quality_judge_model,quality_score_weights,quality_safety_cap_pct)"})}
+        model = (cfg.get("quality_judge_model") or "").strip()
+        weights = json.loads(cfg.get("quality_score_weights") or "{}")
+        cap = float(cfg.get("quality_safety_cap_pct") or 50)
+        pr = db.select("prompt_information_v2", {"select": "user_text",
+                                                 "prompt_key": "eq.conversation_quality_judge", "limit": "1"})
+        prompt = ((pr[0].get("user_text") if pr else "") or "").strip()
+        if not model or not prompt:
+            return {"error": "missing quality_judge_model or conversation_quality_judge prompt"}
+
+        convs = db.rpc("quality_conversations_for_day_v2", {"p_day": day.isoformat()}) or []
+        stored = {r["conversation_id"]: r for r in db.select("conversation_quality_scores_v2", {
+            "select": "*", "score_day": f"eq.{day.isoformat()}", "status": "eq.SCORED"})}
+
+        def one(c: Dict[str, Any]) -> Dict[str, Any]:
+            cid = c["conversation_id"]
+            turns = c.get("turns") or []
+            base = {"conversation_id": cid, "phone": c.get("phone"),
+                    "psychologist": c.get("psychologist"), "turns": len(turns)}
+            if cid in stored:
+                return dict(stored[cid], **base, reused=True)
+            text = "\n\n".join(f"מטופל: {t.get('q') or ''}\nבוט: {t.get('a') or ''}" for t in turns)
+            row: Dict[str, Any] = {"conversation_id": cid, "patient_code": c.get("patient_code"),
+                                   "score_day": day.isoformat(), "turns": len(turns), "model": model,
+                                   "updated_at": datetime.now(IL).isoformat()}
+            try:
+                d = _openai_json(key, model, prompt, text)
+                scores = {k: max(0, min(100, int(round(float(d[k]))))) for k in QUALITY_CRITERIA}
+                fail = d.get("safety_fail") is True
+                row.update(scores, safety_fail=fail, total_pct=_weighted(scores, weights, fail, cap),
+                           note=str(d.get("note") or "")[:500], status="SCORED", error=None,
+                           input_tokens=d.get("_in"), output_tokens=d.get("_out"))
+            except Exception as ex:  # noqa: BLE001
+                row.update(status="FAILED", error=str(ex)[:300])
+            try:
+                db.upsert("conversation_quality_scores_v2", row, "conversation_id,score_day")
+            except Exception as ex:  # noqa: BLE001
+                print(f"[WARN] quality upsert: {ex}", file=sys.stderr)
+            return dict(row, **base, reused=False)
+
+        with ThreadPoolExecutor(max_workers=QUALITY_WORKERS) as pool:
+            rows = list(pool.map(one, convs))
+        return {"rows": rows, "model": model,
+                "tokens_in": sum(int(r.get("input_tokens") or 0) for r in rows if not r.get("reused")),
+                "tokens_out": sum(int(r.get("output_tokens") or 0) for r in rows if not r.get("reused"))}
+    except Exception as ex:  # noqa: BLE001
+        return {"error": str(ex)[:300]}
 
 
 # ---------------------------------------------------------------- github
@@ -454,6 +569,40 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
         out.append("<p style='color:#777;font-size:12px'>תיקוני המנגנון מקוצרים ל־1500 תווים. "
                    "שאר השאלות והתשובות מקוצרות ל־500 תווים.</p>")
 
+    # 26.9.2026: conversation quality scores, a separate table. Worst first.
+    qual = extra.get("quality")
+    out.append(h2("ציוני איכות שיחה"))
+    if not qual:
+        out.append("<p style='color:#a00'>לא חושב.</p>")
+    elif qual.get("error"):
+        out.append(f"<p style='color:#a00'>לא חושב — {e(qual['error'])}</p>")
+    else:
+        qrows = qual.get("rows") or []
+        scored = [r for r in qrows if r.get("status") == "SCORED"]
+        failed = [r for r in qrows if r.get("status") != "SCORED"]
+        avg = round(sum(float(r["total_pct"]) for r in scored) / len(scored), 1) if scored else None
+        out.append(kv([
+            ["שיחות שדורגו", e(len(scored))],
+            ["לא דורגו (כשל)", e(len(failed))],
+            ["ציון ממוצע", f"{avg}%" if avg is not None else "—"],
+            ["טוקנים בריצה זו", f"קלט {e(qual.get('tokens_in'))} · פלט {e(qual.get('tokens_out'))} · {e(qual.get('model'))}"],
+        ]))
+        if full and qrows:
+            def pct(r: Dict[str, Any]) -> str:
+                return f"{r['total_pct']}%" if r.get("status") == "SCORED" else "לא דורג"
+            ordered = sorted(qrows, key=lambda r: (r.get("status") != "SCORED",
+                                                   float(r.get("total_pct") or 0)))
+            out.append(table(["טלפון", "מטפל", "תורות", "הבנה", "בקשה ישירה", "טון", "חזרתיות",
+                              "אורך", "בטיחות", "ציון סופי", "הערה"],
+                             [[r.get("phone"), r.get("psychologist"), r.get("turns"),
+                               r.get("understanding"), r.get("direct_request"), r.get("tone"),
+                               r.get("no_repetition"), r.get("length_format"),
+                               (f"{r.get('safety')} · כשל" if r.get("safety_fail") else r.get("safety")),
+                               pct(r), r.get("note") or r.get("error") or ""] for r in ordered]))
+        out.append("<p style='color:#777;font-size:12px'>הציון מחושב על כל השיחה עד סוף היום, כפי שהמטופל ראה אותה. "
+                   "משקלים: הבנה 25, בקשה ישירה 20, טון 20, חזרתיות 15, אורך 10, בטיחות 10. "
+                   "כשל בטיחות מגביל את הציון. שיחות קורס אינן מדורגות.</p>")
+
     out.append(h2("סיכונים"))
     out.append(kv([
         ["ממצאים ביום", e(rk.get("count"))],
@@ -628,6 +777,7 @@ def main() -> int:
     data = db.rpc("admin_daily_report_v2", {"p_day": day.isoformat()})
     gh = github_runs(day)
     extra = load_extra(db, day)
+    extra["quality"] = score_conversations(db, day)
     subject, body = render(data, gh, extra)
 
     admin = load_admin(db)

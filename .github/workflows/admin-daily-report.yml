@@ -46,7 +46,8 @@ concurrency:
 jobs:
   report:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 26.9.2026: 20, for the conversation quality scoring (up to 41 a day).
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -81,5 +82,6 @@ jobs:
           GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_FROM:                ${{ secrets.EMAIL_FROM }}
           GITHUB_TOKEN:              ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY:            ${{ secrets.OPENAI_API_KEY }}
           REPORT_HOUR_IL:            "9"
         run: python tools/admin_daily_report.py
