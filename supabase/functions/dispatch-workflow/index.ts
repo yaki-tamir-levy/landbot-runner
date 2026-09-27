@@ -29,6 +29,7 @@ const ALLOWED: Record<string, Record<string, InputRule>> = {
     dry_run: ["0", "1"],
     skip_hour_gate: ["0", "1"],
     report_day: /^(\d{4}-\d{2}-\d{2})?$/,
+    force_recompute: ["0", "1"], // 27.9.2026
   },
   "intake-processor.yml": {},
   "process-queue-worker-v2.yml": {},
