@@ -281,7 +281,7 @@
     <div class="field-wrap">
       <h1 id="phone-title">כניסה לטיפול</h1>
       <p class="disclaimer-text" id="phone-intro" style="display:none;"></p>
-      <input type="tel" id="phone-input" placeholder="מספר הטלפון שלך" inputmode="numeric" autocomplete="tel">
+      <input type="tel" id="phone-input" placeholder="מספר הטלפון שלך" inputmode="numeric" autocomplete="tel" enterkeyhint="go">
       <button class="submit-btn" id="phone-submit">המשך</button>
       <div class="status-msg" id="phone-status"></div>
     </div>
@@ -292,7 +292,7 @@
     <div class="field-wrap">
       <h1>קוד אימות</h1>
       <p style="font-size:14.5px; color:var(--ink-soft); margin-bottom:18px;">שלחנו קוד בן שש ספרות. הזן/י אותו כדי להמשיך.</p>
-      <input type="tel" id="otp-input" placeholder="קוד בן 6 ספרות" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+      <input type="tel" id="otp-input" placeholder="קוד בן 6 ספרות" inputmode="numeric" maxlength="6" autocomplete="one-time-code" enterkeyhint="go">
       <button class="submit-btn" id="otp-submit">אימות</button>
       <div class="status-msg" id="otp-status"></div>
     </div>
@@ -613,6 +613,13 @@
   const phoneSubmit = document.getElementById('phone-submit');
   const phoneStatus = document.getElementById('phone-status');
 
+  // 27.9.2026: Enter in the phone field acts as the "continue" button.
+  phoneInput.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    if (!phoneSubmit.disabled) phoneSubmit.click();
+  });
+
   phoneSubmit.addEventListener('click', async () => {
     const phone = phoneInput.value.trim();
     if (!phone) { phoneStatus.textContent = 'נא להזין מספר טלפון'; phoneStatus.className = 'status-msg error'; return; }
@@ -692,10 +699,24 @@
   });
 
   // ---------- דיסקליימר ----------
-  document.getElementById('otp-submit').addEventListener('click', async () => {
+  // 27.9.2026: the button is locked while a code is being checked, so a double
+  // click or a double Enter cannot spend two attempts; Enter in the code field
+  // acts as the button.
+  const otpSubmit = document.getElementById('otp-submit');
+  otpSubmit.addEventListener('click', async () => {
     const code = document.getElementById('otp-input').value.trim();
-    if (!code) return;
-    await verifyOtpCode(code);
+    if (!code || otpSubmit.disabled) return;
+    otpSubmit.disabled = true;
+    try {
+      await verifyOtpCode(code);
+    } finally {
+      otpSubmit.disabled = false;
+    }
+  });
+  document.getElementById('otp-input').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    if (!otpSubmit.disabled) otpSubmit.click();
   });
 
   document.getElementById('disclaimer-agree').addEventListener('click', async () => {
@@ -871,9 +892,7 @@
     chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
   }
   chatInput.addEventListener('input', autoGrow);
-  chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  });
+  // 27.9.2026: Enter adds a new line on every device; sending is by the button only.
   sendBtn.addEventListener('click', sendMessage);
 
   async function sendMessage() {
