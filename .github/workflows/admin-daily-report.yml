@@ -34,6 +34,14 @@ on:
         description: "YYYY-MM-DD (Israel). Empty = yesterday"
         required: false
         default: ""
+      force_recompute:
+        description: "1 = compute again even if this day's email is stored (27.9.2026)"
+        required: true
+        default: "0"
+        type: choice
+        options:
+          - "0"
+          - "1"
 
 permissions:
   contents: read
@@ -68,10 +76,12 @@ jobs:
             echo "DRY_RUN=${{ inputs.dry_run }}"               >> "$GITHUB_ENV"
             echo "SKIP_HOUR_GATE=${{ inputs.skip_hour_gate }}" >> "$GITHUB_ENV"
             echo "REPORT_DAY=${{ inputs.report_day }}"         >> "$GITHUB_ENV"
+            echo "FORCE_RECOMPUTE=${{ inputs.force_recompute }}" >> "$GITHUB_ENV"
           else
             echo "DRY_RUN=0"        >> "$GITHUB_ENV"
             echo "SKIP_HOUR_GATE=0" >> "$GITHUB_ENV"
             echo "REPORT_DAY="      >> "$GITHUB_ENV"
+            echo "FORCE_RECOMPUTE=0" >> "$GITHUB_ENV"
           fi
 
       - name: Run admin daily report

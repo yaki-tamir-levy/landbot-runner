@@ -20,6 +20,14 @@ second run of the same morning does nothing.
 
 Every send (success or failure) is written to public.email_send_log.
 
+27.9.2026: a successful computed send also stores the email body in
+email_send_log.body. A later run for the same day (manual, via REPORT_DAY)
+re-sends that stored body as is, with no database report call, no GitHub call
+and no OpenAI call; the re-send is logged with body NULL and meta.from_stored
+pointing at the source row. FORCE_RECOMPUTE=1 computes again and stores a new
+body; the newest stored body is the one used. Stored bodies are emptied after
+90 days by a pg_cron job in the database.
+
 25.9.2026 additions: open risks older than 24 hours at the top of the report
 (public.admin_report_open_risks_v2), Hebrew descriptions for pg_cron jobs and
 GitHub workflows (table public.admin_report_labels, edited in the database),
@@ -35,6 +43,7 @@ Environment
   REPORT_HOUR_IL                            optional, default 9
   REPORT_DAY                                optional YYYY-MM-DD, default yesterday (Israel)
   SKIP_HOUR_GATE=1                          ignore hour gate and the already-sent check
+  FORCE_RECOMPUTE=1                         compute again even if a stored body exists
   DRY_RUN=1                                 build the email, send nothing, log nothing;
                                             prints sizes only (Actions logs are public)
   GITHUB_TOKEN, GITHUB_REPOSITORY           optional, for the GitHub Actions section
@@ -120,6 +129,15 @@ def already_sent(db: Db, day: str) -> bool:
         "select": "id", "sender": f"eq.{SENDER}", "ok": "eq.true",
         "meta->>day": f"eq.{day}", "limit": "1"})
     return len(rows) > 0
+
+
+def load_stored(db: Db, day: str) -> Optional[Dict[str, Any]]:
+    """The newest successful send for this day that kept its body (27.9.2026)."""
+    rows = db.select("email_send_log", {
+        "select": "id,subject,body,meta", "sender": f"eq.{SENDER}", "ok": "eq.true",
+        "meta->>day": f"eq.{day}", "body": "not.is.null",
+        "order": "sent_at.desc,id.desc", "limit": "1"})
+    return rows[0] if rows else None
 
 
 # ---------------------------------------------------------------- extras (25.9.2026)
@@ -774,11 +792,23 @@ def main() -> int:
             print(f"[SKIP] report for {day} already sent")
             return 0
 
-    data = db.rpc("admin_daily_report_v2", {"p_day": day.isoformat()})
-    gh = github_runs(day)
-    extra = load_extra(db, day)
-    extra["quality"] = score_conversations(db, day)
-    subject, body = render(data, gh, extra)
+    stored = None if flag("FORCE_RECOMPUTE") else load_stored(db, day.isoformat())
+    if stored:
+        source = "stored"
+        subject, body = stored["subject"] or "", stored["body"]
+        detail = (stored.get("meta") or {}).get("detail")
+        meta: Dict[str, Any] = {"day": day.isoformat(), "detail": detail, "from_stored": stored["id"]}
+    else:
+        source = "computed"
+        data = db.rpc("admin_daily_report_v2", {"p_day": day.isoformat()})
+        gh = github_runs(day)
+        extra = load_extra(db, day)
+        extra["quality"] = score_conversations(db, day)
+        subject, body = render(data, gh, extra)
+        detail = data.get("detail")
+        meta = {"day": day.isoformat(), "detail": detail}
+        if flag("FORCE_RECOMPUTE"):
+            meta["recomputed"] = True
 
     admin = load_admin(db)
     if not admin:
@@ -788,7 +818,7 @@ def main() -> int:
     if dry:
         # The repository is public, so Actions logs are public: never print
         # the body, the recipient or any patient data here.
-        print(f"[DRY_RUN] would send report for {day}: detail={data.get('detail')} "
+        print(f"[DRY_RUN] would send report for {day}: source={source} detail={detail} "
               f"body_chars={len(body)} subject_chars={len(subject)}")
         return 0
 
@@ -800,13 +830,14 @@ def main() -> int:
     try:
         db.insert("email_send_log", {"sender": SENDER, "kind": "admin_daily", "recipient": admin["email"],
                                      "subject": subject, "ok": ok, "error": err,
-                                     "meta": {"day": day.isoformat(), "detail": data.get("detail")}})
+                                     "body": body if (ok and source == "computed") else None,
+                                     "meta": meta})
     except Exception as ex:
         print(f"[WARN] email_send_log insert failed: {ex}", file=sys.stderr)
     if not ok:
         print(f"[FATAL] send failed: {err}", file=sys.stderr)
         return 1
-    print(f"[OK] sent report for {day} to admin")
+    print(f"[OK] sent report for {day} to admin (source={source})")
     return 0
 
 
