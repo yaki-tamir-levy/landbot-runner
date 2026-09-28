@@ -1630,9 +1630,9 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
       // filter entirely: source comes from conversations_session_v2 via CACHE.sourceMap,
       // track from users_information_v2.therapy_track via infoMap.
       //   all      -> every row
-      //   course   -> src 'B'
-      //   clinic   -> src 'A' and track 'CLINIC'
-      //   nlp      -> src 'A' and track 'NLP_CBT'
+      //   course   -> src 'B' or 'D'
+      //   clinic   -> src 'A' or 'C', and track 'CLINIC'
+      //   nlp      -> src 'A' or 'C', and track 'NLP_CBT'
       // risk_any and risk_open are NOT decided here - they need the risk rows of this
       // talk, which are loaded further down. See the risk gate inside nextRow().
       function isRowAllowed(row){
@@ -1648,10 +1648,10 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
         var srcRaw = (convId && CACHE.sourceMap) ? CACHE.sourceMap[convId] : '';
         var src = String(srcRaw == null ? '' : srcRaw).trim();
 
-        if (kind === 'course') return (src === 'B');
+        if (kind === 'course') return (src === 'B' || src === 'D');
 
         if (kind === 'clinic' || kind === 'nlp'){
-          if (src !== 'A') return false;
+          if (src !== 'A' && src !== 'C') return false;
           var codeKey = (row && row.patient_code != null) ? String(row.patient_code).trim() : '';
           var info = codeKey ? infoMap.get(codeKey) : null;
           var track = (info && info.therapy_track != null) ? String(info.therapy_track).trim() : '';
@@ -1819,8 +1819,8 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
                               // סוג השיחה, לכל שיחה בנפרד:
           // מקור השיחה מ-conversations_session_v2.source דרך CACHE.sourceMap (מפתח conversation_id),
           // ומסלול הטיפול מ-users_information_v2.therapy_track דרך infoMap (מפתח patient_code).
-          //   source = 'B'                        -> 'הדרכת קורס'
-          //   source = 'A' ומסלול לא ריק          -> ערך המסלול הגולמי, מודפס כפי שהוא
+          //   source = 'B' או 'D'                 -> 'הדרכת קורס'
+          //   source = 'A' או 'C' ומסלול לא ריק   -> ערך המסלול הגולמי, מודפס כפי שהוא
           //   כל שאר המקרים                        -> 'לא ידוע'
           // אין מיפוי ואין תרגום של ערך המסלול, ואין נפילה חזרה לערך הסלקציה (fKind).
           var kindTxt = 'לא ידוע';
@@ -1828,9 +1828,9 @@ function updateRiskReviewNotes(talkId, timeKey, phone, lineNum, notes, patientCo
             var convId = (r && r.conversation_id != null) ? String(r.conversation_id).trim() : '';
             var srcRaw = (convId && CACHE.sourceMap) ? CACHE.sourceMap[convId] : '';
             var src = String(srcRaw == null ? '' : srcRaw).trim();
-            if (src === 'B'){
+            if (src === 'B' || src === 'D'){
               kindTxt = 'הדרכת קורס';
-            } else if (src === 'A'){
+            } else if (src === 'A' || src === 'C'){
               var info2 = infoMap.get((r && r.patient_code != null) ? String(r.patient_code).trim() : '');
               // Raw value, printed verbatim. trim() is used for the emptiness test only.
               var trackRaw = (info2 && info2.therapy_track != null) ? String(info2.therapy_track) : '';
