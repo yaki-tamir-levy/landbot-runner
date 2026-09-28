@@ -279,6 +279,18 @@ function getReviewerName(ev){
     return dayMs < cutoff;
   }
 
+  // Simulation patients: phone (digits only, leading zeros stripped) starts with 888 or 999.
+  // They are treated as old talks: hidden unless SHOW_OLD, even when they carry an open risk.
+  // Phone comes from the identity map; if it is missing the row is NOT treated as simulation.
+  function _isSimulationRow(r){
+    try{
+      var ph = String(identityFromMap(r).phone || '').replace(/\D/g, '').replace(/^0+/, '');
+      return ph.indexOf('888') === 0 || ph.indexOf('999') === 0;
+    } catch(e){
+      return false;
+    }
+  }
+
   function _syncOldToggleUi(){
     try{
       if (!el.btnOldToggle) return;
@@ -852,6 +864,8 @@ function getReviewerName(ev){
 
     var out = [];
     (CACHE.allRows || []).forEach(function(r){
+      if (!SHOW_OLD && _isSimulationRow(r)) return;
+
       if (r && r._forceRisk){ out.push(r); return; }
 
       if (!SHOW_OLD && _isTooOld(r.time_key)) return;
