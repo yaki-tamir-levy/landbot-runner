@@ -154,6 +154,22 @@ const CLINIC_ACK_TRIGGER_PHRASES = [
   "לא נתתי לך מענה",
 ] as const;
 
+// Question-due trigger (29.9.2026): prompt rules asking for a question after
+// several reflections were ignored in simulation runs 5, 8, 9, 14 and 15; the
+// injected move line was followed. So the trigger is mechanical: when none of
+// the last CLINIC_QUESTION_DUE_WINDOW delivered responses contains "?", one
+// line is injected next to the move line. Exempt: a genuine "I don't know"
+// reply - the message opens with it, or is short and contains it.
+const CLINIC_QUESTION_DUE_WINDOW = 3;
+const CLINIC_QUESTION_DUE_MAX_WORDS_FOR_DONT_KNOW = 8;
+const CLINIC_QUESTION_DUE_LINE =
+  "בתור הזה: עצור ושאל שאלה פתוחה אחת — מה הכי חשוב למטופל שתבין, או מה הוא צריך ממך עכשיו. בלי להציע אפשרויות לבחירה. שיקוף קצר לפני השאלה מותר; תשובה בלי שאלה אינה מותרת בתור הזה.";
+
+// Moves excluded from the draw (29.9.2026): "normalization" produced comforting
+// generalizations ("many people...") in simulation runs 7, 10 and 12; after it
+// was excluded (runs 11-15) none appeared.
+const CLINIC_EXCLUDED_MOVES: readonly string[] = ["normalization"];
+
 const CLINIC_OPTIONS_WARNING_LINE =
   "אזהרה קריטית: בתשובה הקודמת שלך הודית שלא ענית ישירות למטופל. התשובה הזו חייבת להציע 2-4 אפשרויות קצרות וברורות לבחירה, הנובעות ממה שהמטופל כבר אמר בשיחה - לא עוד שיקוף רגש, ולא עוד שאלה פתוחה יחידה. דוגמה למבנה: \"מה היית רוצה עכשיו - X, או Y?\" הצגת כמה אפשרויות למטופל אינה הפרת איסור הפיצול - האיסור ההוא חל על ניתוח שלך את המטופל, לא על הצעת בחירה מפורשת.";
 
@@ -267,6 +283,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     let clinicRepeatWarning = false;
     let clinicBlockedWarning = false;
     let clinicOptionsWarning = false;
+    let clinicQuestionDue = false;
     if (isClinicTrack) {
       clinicMoveHistory = await fetchClinicMoveHistory(
         correlationId,
@@ -321,6 +338,13 @@ Deno.serve(async (request: Request): Promise<Response> => {
         payload.value.session_id,
       );
       clinicRepeatWarning = decideRepeatWarning(clinicResponseHistory);
+      clinicQuestionDue = decideQuestionDue(clinicResponseHistory, payload.value.question20);
+      console.log(JSON.stringify({
+        event: "clinic_question_due_decided",
+        correlation_id: correlationId,
+        history_length: clinicResponseHistory.length,
+        question_due: clinicQuestionDue,
+      }));
       console.log(JSON.stringify({
         event: "clinic_repeat_warning_decided",
         correlation_id: correlationId,
@@ -365,6 +389,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       repeatWarning: clinicRepeatWarning,
       blockedWarning: clinicBlockedWarning,
       optionsWarning: clinicOptionsWarning,
+      questionDue: clinicQuestionDue,
     });
     const candidateInput = buildCandidateInput({
       ...payload.value,
@@ -1370,6 +1395,21 @@ async function fetchClinicAckHistory(
  * window: this must fire on the very next turn only, and clear itself
  * afterward regardless of what that next turn contains.
  */
+/**
+ * CLINIC only. True when none of the last CLINIC_QUESTION_DUE_WINDOW delivered
+ * responses contains a question mark, and the current patient message is not
+ * a genuine "I don't know" reply. Fewer responses than the window: false.
+ */
+function decideQuestionDue(responseHistory: string[], currentMessage: string): boolean {
+  if (responseHistory.length < CLINIC_QUESTION_DUE_WINDOW) return false;
+  const message = (currentMessage ?? "").trim();
+  const words = message.split(/\s+/).filter((w) => w.length > 0).length;
+  const saysDontKnow = message.includes("לא יודע") || message.includes("לא יודעת");
+  if (message.startsWith("לא יודע")) return false;
+  if (saysDontKnow && words <= CLINIC_QUESTION_DUE_MAX_WORDS_FOR_DONT_KNOW) return false;
+  return responseHistory.slice(-CLINIC_QUESTION_DUE_WINDOW).every((t) => !t.includes("?"));
+}
+
 function decideOptionsWarning(ackHistory: boolean[]): boolean {
   if (ackHistory.length === 0) return false;
   return ackHistory[ackHistory.length - 1] === true;
@@ -1392,9 +1432,11 @@ function decideRequiredMove(moveHistory: string[]): string {
     ? Number.POSITIVE_INFINITY
     : moveHistory.length - 1 - lastEchoIndex;
 
-  const pool = turnsSinceEcho < CLINIC_ECHO_COOLDOWN_TURNS
+  const basePool: readonly string[] = turnsSinceEcho < CLINIC_ECHO_COOLDOWN_TURNS
     ? CLINIC_MOVES_WITHOUT_ECHO
     : CLINIC_MOVES_WITH_ECHO;
+  const filteredPool = basePool.filter((m) => !CLINIC_EXCLUDED_MOVES.includes(m));
+  const pool = filteredPool.length > 0 ? filteredPool : basePool;
 
   return pool[Math.floor(Math.random() * pool.length)];
 }
@@ -1920,6 +1962,7 @@ function buildTherapistInstructions(args: {
   repeatWarning?: boolean;
   blockedWarning?: boolean;
   optionsWarning?: boolean;
+  questionDue?: boolean;
 }): string {
   // The move line is injected only for CLINIC. Every other track passes an
   // empty requiredMove and gets exactly the instructions it got before.
@@ -1931,6 +1974,7 @@ function buildTherapistInstructions(args: {
   const movePrefix: string[] = [];
   if (requiredMove.length > 0) {
     movePrefix.push(`מהלך התשובה הזו: ${requiredMove}`);
+    if (args.questionDue === true) movePrefix.push(CLINIC_QUESTION_DUE_LINE);
     if (args.fragmentWarning === true) movePrefix.push(CLINIC_FRAGMENT_WARNING_LINE);
     if (args.repeatWarning === true) movePrefix.push(CLINIC_REPEAT_WARNING_LINE);
     if (args.blockedWarning === true) movePrefix.push(CLINIC_BLOCKED_WARNING_LINE);
