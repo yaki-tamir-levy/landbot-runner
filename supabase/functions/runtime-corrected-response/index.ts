@@ -272,6 +272,20 @@ Deno.serve(async (request: Request): Promise<Response> => {
     );
     const isCourse = courseMaterial !== null;
 
+    // 30.9.2026: realtime risk check, therapy conversations only. Started here
+    // so it runs in parallel with the clinic history reads, the prompt fetch,
+    // the candidate and the corrector. Never rejects: any failure resolves to
+    // null, and the reply is delivered without a notice. Only level 'high'
+    // carries a notice. See risk-realtime-classify.
+    const realtimeRisk: Promise<RealtimeRiskResult | null> = isCourse
+      ? Promise.resolve(null)
+      : classifyRealtimeRisk(
+        correlationId,
+        payload.value.session_id,
+        payload.value.question20,
+        effectiveTzvira,
+      );
+
     // A course conversation never enters the clinic machinery, even when the
     // patient's own track is CLINIC. Without this guard a CLINIC patient
     // taking the course would get a required move, the reinforced warnings
@@ -557,7 +571,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
             candidateText,
           );
         }
-        return jsonResponse({
+        return jsonResponse(await withSafetyNotice(realtimeRisk, {
           ok: true,
           answer: formatDiagnosticAnswer(candidateText, "לא נדרש תיקון."),
           candidate_answer: candidateText,
@@ -566,7 +580,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
           correction_action: "PASS",
           reason_codes: [],
           fallback_used: false,
-        }, 200);
+        }), 200);
       }
 
       const rewrite = correctorResult.final_response.trim();
@@ -618,7 +632,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
           rewrite,
         );
       }
-      return jsonResponse({
+      return jsonResponse(await withSafetyNotice(realtimeRisk, {
         ok: true,
         answer: formatDiagnosticAnswer(candidateText, rewrite),
         candidate_answer: candidateText,
@@ -627,7 +641,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         correction_action: "REWRITE",
         reason_codes: correctorResult.reason_codes,
         fallback_used: false,
-      }, 200);
+      }), 200);
     } catch (_error) {
       correctorDecision = "FALLBACK";
       fallbackUsed = true;
@@ -681,7 +695,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
           candidateText,
         );
       }
-      return jsonResponse({
+      return jsonResponse(await withSafetyNotice(realtimeRisk, {
         ok: true,
         answer: formatDiagnosticAnswer(candidateText, "הבדיקה לא הושלמה, ולכן לא בוצע תיקון."),
         candidate_answer: candidateText,
@@ -690,7 +704,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         correction_action: "FALLBACK",
         reason_codes: [],
         fallback_used: true,
-      }, 200);
+      }), 200);
     }
   } catch (error) {
     const candidateError = toError(error);
@@ -944,6 +958,103 @@ async function fetchPatientContext(
     }));
     return fallback;
   }
+}
+
+// ---------- realtime risk (30.9.2026) ----------
+
+type RealtimeRiskNotice = { intro: string; links: { label: string; href: string }[] };
+type RealtimeRiskResult = { level: string; notice: RealtimeRiskNotice | null };
+
+// Above the classifier's own 20s limit, so its own timeout answer arrives first.
+const REALTIME_RISK_TIMEOUT_MS = 25_000;
+
+async function classifyRealtimeRisk(
+  correlationId: string,
+  sessionId: string,
+  message: string,
+  context: string,
+): Promise<RealtimeRiskResult | null> {
+  try {
+    const supabaseUrl = (Deno.env.get("SUPABASE_URL") ?? "").replace(/\/$/, "");
+    const secret = Deno.env.get("LANDBOT_WEBHOOK_SECRET") ?? "";
+    if (!supabaseUrl || !secret) return null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REALTIME_RISK_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${supabaseUrl}/functions/v1/risk-realtime-classify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json; charset=utf-8", "x-landbot-secret": secret },
+        body: JSON.stringify({
+          message,
+          context,
+          conversation_id: sessionId,
+          correlation_id: correlationId,
+        }),
+        signal: controller.signal,
+      });
+      const data = await res.json().catch(() => null) as Record<string, unknown> | null;
+      if (!res.ok || !data || data.ok !== true) {
+        console.error(JSON.stringify({
+          event: "realtime_risk_failed",
+          correlation_id: correlationId,
+          http_status: res.status,
+        }));
+        return null;
+      }
+      const level = typeof data.level === "string" ? data.level : "";
+      const notice = level === "high" ? sanitizeRealtimeNotice(data.notice) : null;
+      console.log(JSON.stringify({
+        event: "realtime_risk_checked",
+        correlation_id: correlationId,
+        level,
+        notice_present: notice !== null,
+      }));
+      return { level, notice };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (_e) {
+    console.error(JSON.stringify({
+      event: "realtime_risk_exception",
+      correlation_id: correlationId,
+    }));
+    return null;
+  }
+}
+
+// Accepts only the expected shape, and only tel: or https:// links.
+function sanitizeRealtimeNotice(value: unknown): RealtimeRiskNotice | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const intro = typeof record.intro === "string" ? record.intro.trim() : "";
+  const links = Array.isArray(record.links)
+    ? record.links
+      .map((l) => {
+        const item = (l ?? {}) as Record<string, unknown>;
+        return {
+          label: typeof item.label === "string" ? item.label.trim() : "",
+          href: typeof item.href === "string" ? item.href.trim() : "",
+        };
+      })
+      .filter((l) => l.label.length > 0 && /^(tel:|https:\/\/)/.test(l.href))
+    : [];
+  if (!intro || links.length === 0) return null;
+  return { intro, links };
+}
+
+// Waits for the realtime check (already running in parallel) and adds its
+// result to the response body. risk_level is for callers and simulation;
+// meitar-api forwards only safety_notice to the patient page.
+async function withSafetyNotice(
+  risk: Promise<RealtimeRiskResult | null>,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const result = await risk;
+  return {
+    ...body,
+    risk_level: result?.level ?? null,
+    safety_notice: result?.notice ?? null,
+  };
 }
 
 async function fetchCourseMaterial(
