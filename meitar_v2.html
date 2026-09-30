@@ -223,6 +223,11 @@
   .msg.bot { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(46,42,61,0.08); }
   .msg.user { background: #E91E8C; color: #fff; }
   .msg.typing { display: flex; gap: 5px; align-items: center; padding: 16px 19px; }
+  /* 30.9.2026: realtime risk referral card. */
+  .msg.safety { border: 2px solid var(--teal); }
+  .safety-links { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; white-space: normal; }
+  .safety-link { display: block; padding: 11px 14px; border-radius: 14px; background: var(--teal); color: #fff; text-decoration: none; font-weight: 500; text-align: center; }
+  .safety-link:hover, .safety-link:focus { background: var(--teal-deep); }
   .typing-dot { width: 7px; height: 7px; border-radius: 50%; background: #E91E8C; animation: bounce 1.2s infinite ease-in-out; }
   .typing-dot:nth-child(2) { animation-delay: 0.15s; }
   .typing-dot:nth-child(3) { animation-delay: 0.3s; }
@@ -870,6 +875,44 @@
   }
   function addBotMessage(text) { addMessage('bot', text); }
 
+  // 30.9.2026: referral card, shown only when the server sends safety_notice
+  // (realtime risk level 'high', therapy only). Built from DOM nodes and
+  // textContent - never innerHTML - and only tel: or https:// links.
+  function addSafetyNotice(notice) {
+    if (!notice || typeof notice.intro !== 'string' || !Array.isArray(notice.links)) return;
+    const links = notice.links.filter(function (l) {
+      return l && typeof l.label === 'string' && l.label.trim() &&
+        typeof l.href === 'string' && /^(tel:|https:\/\/)/.test(l.href);
+    });
+    if (!notice.intro.trim() || links.length === 0) return;
+    const row = document.createElement('div');
+    row.className = 'msg-row bot';
+    const stack = document.createElement('div');
+    stack.className = 'msg-stack bot';
+    const card = document.createElement('div');
+    card.className = 'msg bot safety';
+    card.setAttribute('dir', 'rtl');
+    card.setAttribute('role', 'note');
+    const intro = document.createElement('div');
+    intro.textContent = notice.intro;
+    card.appendChild(intro);
+    const list = document.createElement('div');
+    list.className = 'safety-links';
+    links.forEach(function (l) {
+      const a = document.createElement('a');
+      a.className = 'safety-link';
+      a.href = l.href;
+      a.textContent = l.label;
+      if (l.href.indexOf('https://') === 0) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+      list.appendChild(a);
+    });
+    card.appendChild(list);
+    stack.appendChild(card);
+    row.appendChild(stack);
+    chatBody.appendChild(row);
+    chatBody.scrollTop = chatBody.scrollHeight;
+  }
+
   function showTyping() {
     const row = document.createElement('div');
     row.className = 'msg-row bot';
@@ -916,6 +959,7 @@
 
       hideTyping();
       addBotMessage(response20);
+      if (aiData.safety_notice) addSafetyNotice(aiData.safety_notice);
     } catch (err) {
       hideTyping();
       if (handleAuthLoss(err)) return;
