@@ -186,6 +186,33 @@ async function recordVerify(ph: string, success: boolean): Promise<void> {
   await rpc("meitar_record_verify_v2", { p_phone_hash: ph, p_success: success, p_window_minutes: VERIFY_WINDOW_MINUTES });
 }
 
+// ---------- realtime risk notice (v5, 30.9.2026) ----------
+type SafetyNotice = { intro: string; links: { label: string; href: string }[] };
+
+// Accepts only the expected shape, and only tel: or https:// links.
+function safetyNotice(value: unknown): SafetyNotice | null {
+  if (!value || typeof value !== "object") return null;
+  const rec = value as Record<string, unknown>;
+  const intro = typeof rec.intro === "string" ? rec.intro.trim() : "";
+  const links = Array.isArray(rec.links)
+    ? rec.links
+      .map((l) => {
+        const item = (l ?? {}) as Record<string, unknown>;
+        return {
+          label: typeof item.label === "string" ? item.label.trim() : "",
+          href: typeof item.href === "string" ? item.href.trim() : "",
+        };
+      })
+      .filter((l) => l.label.length > 0 && /^(tel:|https:\/\/)/.test(l.href))
+    : [];
+  if (!intro || links.length === 0) return null;
+  return { intro, links };
+}
+
+function noticeText(n: SafetyNotice): string {
+  return [n.intro, ...n.links.map((l) => l.label)].join("\n");
+}
+
 // ---------- actions ----------
 async function handle(body: Record<string, unknown>): Promise<Response> {
   const action = String(body.action ?? "");
@@ -287,14 +314,21 @@ async function handle(body: Record<string, unknown>): Promise<Response> {
     const answer = String(data.corrected_answer || data.answer || "");
     if (!r.ok || !answer) return json({ error: "engine_failed" }, 502);
 
+    // v5, 30.9.2026: realtime risk. The engine adds safety_notice only on
+    // level 'high', therapy conversations only. It is re-checked here, shown
+    // by the page as a separate card, and stored with the answer so the
+    // psychologist sees it was given and the bot knows on the next turn.
+    const notice = safetyNotice(data.safety_notice);
+    const stored = notice ? `${answer}\n\n${noticeText(notice)}` : answer;
+
     // Logged server-side, so the browser can no longer write turns.
     await rpc("insert_conversation_v2", {
       p_phone: who.ph,
       p_conversation_id: body.conversation_id,
       p_question: question,
-      p_answer: answer,
+      p_answer: stored,
     });
-    return json({ answer });
+    return json(notice ? { answer, safety_notice: notice } : { answer });
   }
 
   return json({ error: "unknown_action" }, 400);
