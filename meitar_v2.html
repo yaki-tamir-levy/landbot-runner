@@ -935,8 +935,17 @@
     chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
   }
   chatInput.addEventListener('input', autoGrow);
-  // 27.9.2026: Enter adds a new line on every device; sending is by the button only.
   sendBtn.addEventListener('click', sendMessage);
+  // 1.10.2026, owner decision: on a computer (a fine pointer with hover) Enter
+  // sends and Shift+Enter adds a new line. On a phone or tablet Enter still
+  // adds a new line and sending is by the button, as decided on 27.9.2026.
+  const isComputer = !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+  chatInput.addEventListener('keydown', (e) => {
+    if (!isComputer) return;
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+    e.preventDefault();
+    if (!sendBtn.disabled) sendMessage();
+  });
 
   async function sendMessage() {
     const question20 = chatInput.value.trim();

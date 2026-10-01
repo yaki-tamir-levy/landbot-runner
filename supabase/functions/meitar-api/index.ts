@@ -209,9 +209,11 @@ function safetyNotice(value: unknown): SafetyNotice | null {
   return { intro, links };
 }
 
-function noticeText(n: SafetyNotice): string {
-  return [n.intro, ...n.links.map((l) => l.label)].join("\n");
-}
+// v6, 1.10.2026: only a short marker is stored with the answer, not the card
+// text. On 30.9 the bot copied the full card text from its own history into
+// its next reply, so the patient saw it twice. The psychologist still sees
+// that a referral was shown. Owner decision 1.10.2026.
+const NOTICE_STORED_LINE = "[הוצגה למטופל הפניה לער\"ן ולסה\"ר]";
 
 // ---------- actions ----------
 async function handle(body: Record<string, unknown>): Promise<Response> {
@@ -316,10 +318,10 @@ async function handle(body: Record<string, unknown>): Promise<Response> {
 
     // v5, 30.9.2026: realtime risk. The engine adds safety_notice only on
     // level 'high', therapy conversations only. It is re-checked here, shown
-    // by the page as a separate card, and stored with the answer so the
-    // psychologist sees it was given and the bot knows on the next turn.
+    // by the page as a separate card. v6: a short marker, not the card text,
+    // is stored with the answer, so the psychologist sees it was given.
     const notice = safetyNotice(data.safety_notice);
-    const stored = notice ? `${answer}\n\n${noticeText(notice)}` : answer;
+    const stored = notice ? `${answer}\n\n${NOTICE_STORED_LINE}` : answer;
 
     // Logged server-side, so the browser can no longer write turns.
     await rpc("insert_conversation_v2", {
