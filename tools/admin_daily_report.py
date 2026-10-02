@@ -683,9 +683,10 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
                          [[t_il(x.get("at")), AUTH_HE.get(x.get("action"), x.get("action")),
                            x.get("to"), x.get("patient") or ""] for x in m.get("auth_items") or []]))
         out.append("<p><b>מיילי הסקריפטים</b></p>")
-        out.append(table(["שעה", "סקריפט", "סוג", "נמען", "נושא", "תוכן", "הצליח"],
+        # 2.10.2026: the body column is no longer shown (it printed raw HTML of earlier mails).
+        out.append(table(["שעה", "סקריפט", "סוג", "נמען", "נושא", "הצליח"],
                          [[t_il(x.get("at")), x.get("sender"), x.get("kind"), x.get("to"), x.get("subject"),
-                           x.get("body") or "", "כן" if x.get("ok") else f"לא — {x.get('error') or ''}"]
+                           "כן" if x.get("ok") else f"לא — {x.get('error') or ''}"]
                           for x in m.get("system_items") or []]))
     if m.get("system_log_note"):
         out.append("<p style='color:#777;font-size:12px'>יומן מיילי הסקריפטים פעיל מ־23.9.2026; "
