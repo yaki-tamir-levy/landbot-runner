@@ -445,6 +445,26 @@ def h2(title: str) -> str:
     return f"<h3 style='margin:22px 0 6px;border-bottom:2px solid #333'>{e(title)}</h3>"
 
 
+# 2.10.2026: simulation patients (masked phone 888/999) stay in the report,
+# labelled; every count is shown without them, with their count beside it.
+# The database functions return the split counts and a per-item "sim" flag.
+SIM_LABEL = "מטופל סימולציה"
+
+
+def sim_note(item: Dict[str, Any]) -> str:
+    return SIM_LABEL if item.get("sim") else ""
+
+
+def split_count(n: Any, sim: Any) -> str:
+    """Count without simulation, simulation count beside it (only when > 0)."""
+    base = "" if n is None else str(n)
+    try:
+        s = int(sim or 0)
+    except (TypeError, ValueError):
+        s = 0
+    return f"{base} (ועוד {s} של מטופלי סימולציה)" if s else base
+
+
 def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
            extra: Optional[Dict[str, Any]] = None) -> (str, str):
     extra = extra or {}
@@ -465,12 +485,12 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
         gh_fail = sum(v.get("failure", 0) for v in gh["by_workflow"].values())
 
     subject = f"מיתר — דוח פעילות יומי {day_he}"
-    if int(rk.get("count") or 0) > 0:
-        subject += f" · {rk['count']} ממצאי סיכון"
+    if int(rk.get("count") or 0) > 0 or int(rk.get("sim_count") or 0) > 0:
+        subject += f" · {int(rk.get('count') or 0)} ממצאי סיכון{split_count('', rk.get('sim_count'))}"
     # 26.9.2026: every open risk counts as unhandled, whatever its age.
     open_n = int(orisk.get("open_total") or 0)
-    if open_n:
-        subject += f" · {open_n} סיכונים פתוחים"
+    if open_n or int(orisk.get("sim_open_total") or 0) > 0:
+        subject += f" · {open_n} סיכונים פתוחים{split_count('', orisk.get('sim_open_total'))}"
     disp_fail = int((disp or {}).get("failed") or 0) + int((disp or {}).get("no_answer") or 0)
     if cron_fails or gh_fail or disp_fail or int(m.get("system_failed") or 0):
         subject += " · יש כשלים"
@@ -487,21 +507,24 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
         out.append("<p style='color:#a00'>לא נבדק — כשל בשליפת הסיכונים הפתוחים.</p>")
     else:
         out.append(kv([
-            ["פתוחים בסך הכול", e(orisk.get("open_total"))],
-            ["מתוכם מעל 24 שעות", e(orisk.get("overdue_total"))],
+            ["פתוחים בסך הכול", e(split_count(orisk.get("open_total"), orisk.get("sim_open_total")))],
+            ["מתוכם מעל 24 שעות", e(split_count(orisk.get("overdue_total"), orisk.get("sim_overdue_total")))],
         ]))
         out.append(table(["פסיכולוג", "פתוחים", "מעל 24 שעות", "הוותיק ביותר (ימים)"],
-                         [[x.get("psychologist"), x.get("open"), x.get("overdue"), x.get("oldest_days")]
+                         [[x.get("psychologist"), split_count(x.get("open"), x.get("sim_open")),
+                           split_count(x.get("overdue"), x.get("sim_overdue")), x.get("oldest_days")]
                           for x in orisk.get("by_psychologist") or []]))
         items = orisk.get("open_items")
         if items is None:
             items = orisk.get("overdue_items")
         if full and items is not None:
-            out.append(table(["חומרה", "פסיכולוג", "טלפון", "תאריך זיהוי", "ימים בהמתנה", "נוסח"],
+            out.append(table(["חומרה", "פסיכולוג", "טלפון", "סימולציה", "תאריך זיהוי", "ימים בהמתנה", "נוסח"],
                              [[SEVERITY_HE.get(x.get("severity"), x.get("severity") or ""),
-                               x.get("psychologist"), x.get("phone"), d_il(x.get("at")),
+                               x.get("psychologist"), x.get("phone"), sim_note(x), d_il(x.get("at")),
                                x.get("days"), x.get("text")] for x in items]))
-        out.append("<p style='color:#777;font-size:12px'>פתוח = סטטוס NEW בטבלת הסיכונים, בממצא שהמודל אישר בלבד. "
+        out.append("<p style='color:#777;font-size:12px'>פתוח = סטטוס NEW, REVIEWED או VIEWED בטבלת הסיכונים "
+                   "(כולל ממצא שסומן \"צפיתי\"), בממצא שהמודל אישר בלבד. "
+                   "מטופל סימולציה — טלפון שמתחיל ב־888 או ב־999; נספר בנפרד, בסוגריים. "
                    "תאריך הזיהוי הוא זמן השיחה שבה נאמר הדבר — לטבלה אין עמודת זמן יצירה, "
                    "ולכן הזיהוי בפועל עשוי להיות מאוחר במעט.</p>")
 
@@ -509,8 +532,8 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
     out.append(kv([
         ["שיחות פעילות", e(c.get("active_sessions"))],
         ["תורות", e(c.get("turns"))],
-        ["ממצאי סיכון ביום", e(rk.get("count"))],
-        ["סיכונים פתוחים", e(orisk.get("open_total")) if orisk else "לא נבדק"],
+        ["ממצאי סיכון ביום", e(split_count(rk.get("count"), rk.get("sim_count")))],
+        ["סיכונים פתוחים", e(split_count(orisk.get("open_total"), orisk.get("sim_open_total"))) if orisk else "לא נבדק"],
         ["כניסות מטפלים", e(a.get("psychologist_logins"))],
         ["כניסות מטופלים עם קוד", e(a.get("patient_code_logins"))],
         ["מטופלים חדשים", e(p.get("new_patients_count"))],
@@ -623,18 +646,19 @@ def render(d: Dict[str, Any], gh: Optional[Dict[str, Any]],
 
     out.append(h2("סיכונים"))
     out.append(kv([
-        ["ממצאים ביום", e(rk.get("count"))],
-        ["פתוחים כעת, מכל הימים", e(orisk.get("open_total")) if orisk else "לא נבדק"],
+        ["ממצאים ביום", e(split_count(rk.get("count"), rk.get("sim_count")))],
+        ["פתוחים כעת, מכל הימים", e(split_count(orisk.get("open_total"), orisk.get("sim_open_total"))) if orisk else "לא נבדק"],
         ["לפי חומרה", dict_line(rk.get("by_severity"), SEVERITY_HE)],
         ["לפי דרך זיהוי", dict_line(rk.get("by_method"), METHOD_HE)],
     ]))
     if full:
-        out.append(table(["זמן בשיחה", "טלפון", "חומרה", "זיהוי", "סטטוס", "סיבות", "נוסח", "שורה", "בודק", "הערות"],
-                         [[t_il(x.get("at")), x.get("phone"), SEVERITY_HE.get(x.get("severity"), x.get("severity")),
+        out.append(table(["זמן בשיחה", "טלפון", "סימולציה", "חומרה", "זיהוי", "סטטוס", "סיבות", "נוסח", "שורה", "בודק", "הערות"],
+                         [[t_il(x.get("at")), x.get("phone"), sim_note(x), SEVERITY_HE.get(x.get("severity"), x.get("severity")),
                            METHOD_HE.get(str(x.get("method")), x.get("method")), x.get("status"),
                            x.get("reasons"), x.get("text"), x.get("line"), x.get("reviewer"), x.get("notes")]
                           for x in rk.get("items") or []]))
     out.append("<p style='color:#777;font-size:12px'>ממצא משויך ליום לפי זמן השיחה שבה נאמר. "
+               "הספירות לפי חומרה ולפי דרך זיהוי — בלי מטופלי סימולציה. "
                "סיכונים פתוחים מימים קודמים מופיעים בראש הדוח.</p>")
 
     out.append(h2("כניסות וגישה"))

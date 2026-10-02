@@ -162,6 +162,34 @@ def _mask_line(masked_phone: str) -> str:
     return f"{LRM}{masked_phone}{LRM}"
 
 
+# 2.10.2026: simulation patients stay in every mail, labelled next to the
+# phone; every count is shown without them, with their count beside it.
+# Same rule as the database report functions: masked phone, digits only,
+# starting with 888 or 999.
+SIM_LABEL = "מטופל סימולציה"
+
+
+def _is_sim(pc: str, masked: Dict[str, str]) -> bool:
+    digits = "".join(ch for ch in (masked.get(pc) or "") if ch.isdigit())
+    return digits.startswith(("888", "999"))
+
+
+def _phone_line(pc: str, masked: Dict[str, str]) -> str:
+    line = _mask_line(masked.get(pc, "מספר חסר"))
+    return f"{line} · {SIM_LABEL}" if _is_sim(pc, masked) else line
+
+
+def _split_counts(patients: Dict[str, Dict[str, Any]], masked: Dict[str, str]) -> Tuple[int, int]:
+    """(count without simulation, simulation count) over a patient_code map."""
+    real = sum(p["count"] for pc, p in patients.items() if not _is_sim(pc, masked))
+    sim = sum(p["count"] for pc, p in patients.items() if _is_sim(pc, masked))
+    return real, sim
+
+
+def _sim_suffix(sim: int) -> str:
+    return f" (ועוד {sim} של מטופלי סימולציה)" if sim else ""
+
+
 def _parse_time_key(tk: str) -> Optional[datetime]:
     if not tk:
         return None
@@ -379,8 +407,8 @@ def build_risk_message(
     patients: Dict[str, Dict[str, Any]],
     masked: Dict[str, str],
 ) -> Tuple[str, str]:
-    total = sum(p["count"] for p in patients.values())
-    subject = f"התראת סיכון — {_subj_findings(total)}"
+    total, sim = _split_counts(patients, masked)
+    subject = f"התראת סיכון — {_subj_findings(total)}{_sim_suffix(sim)}"
 
     lines: List[str] = [_greeting(name, is_admin_scope), ""]
     if is_admin_scope:
@@ -390,7 +418,7 @@ def build_risk_message(
     lines.append("")
 
     for pc, info in sorted(patients.items(), key=lambda kv: kv[1]["max_tk"], reverse=True):
-        lines.append(_mask_line(masked.get(pc, "מספר חסר")))
+        lines.append(_phone_line(pc, masked))
         lines.append(f"{_findings_he(info['count'])}.")
         lines.append("")
 
@@ -412,8 +440,8 @@ def build_daily_message(
     masked: Dict[str, str],
 ) -> Tuple[str, str]:
     talk_total = sum(p["count"] for p in talks.values())
-    risk_total = sum(p["count"] for p in open_risk.values())
-    subject = f"דוח יומי — {_subj_talks(talk_total)}, {_subj_open_risk(risk_total)}"
+    risk_total, risk_sim = _split_counts(open_risk, masked)
+    subject = f"דוח יומי — {_subj_talks(talk_total)}, {_subj_open_risk(risk_total)}{_sim_suffix(risk_sim)}"
 
     lines: List[str] = [_greeting(name, is_admin_scope), ""]
 
@@ -424,7 +452,7 @@ def build_daily_message(
             lines.append("שיחות שהתקיימו מאז הדוח הקודם:")
         lines.append("")
         for pc, info in sorted(talks.items(), key=lambda kv: kv[1]["max_tk"], reverse=True):
-            lines.append(_mask_line(masked.get(pc, "מספר חסר")))
+            lines.append(_phone_line(pc, masked))
             lines.append(f"{_talks_he(info['count'])}.")
             lines.append("")
 
@@ -435,7 +463,7 @@ def build_daily_message(
             lines.append("סיכונים פתוחים הממתינים לטיפול:")
         lines.append("")
         for pc, info in sorted(open_risk.items(), key=lambda kv: kv[1]["min_tk"]):
-            lines.append(_mask_line(masked.get(pc, "מספר חסר")))
+            lines.append(_phone_line(pc, masked))
             when = _date_he(info["min_tk"])
             count = info["count"]
             verb = "נרשם" if count == 1 else "נרשמו"
@@ -671,11 +699,14 @@ def build_admin_report(
     talk_total = sum(
         p["count"] for s in talks_by_scope.values() for p in s.values()
     )
-    risk_total = sum(
-        p["count"] for s in risk_by_scope.values() for p in s.values()
-    )
+    risk_total = 0
+    risk_sim = 0
+    for s in risk_by_scope.values():
+        real, sim = _split_counts(s, masked)
+        risk_total += real
+        risk_sim += sim
 
-    subject = f"דוח אדמין — {_subj_talks(talk_total)}, {_subj_open_risk(risk_total)}"
+    subject = f"דוח אדמין — {_subj_talks(talk_total)}, {_subj_open_risk(risk_total)}{_sim_suffix(risk_sim)}"
 
     # Through the shared helper, not a duplicated literal: an inline copy
     # would silently drift the moment _greeting is edited.
@@ -695,8 +726,9 @@ def build_admin_report(
             r = risk_by_scope.get(scope, {})
             who = (by_phone.get(scope) or {}).get("name") or scope
             tc = sum(p["count"] for p in t.values())
-            rc = sum(p["count"] for p in r.values())
+            rc, rsim = _split_counts(r, masked)
             findings = "אין ממצאים פתוחים" if rc == 0 else f"{_findings_he(rc)} פתוחים"
+            findings += _sim_suffix(rsim)
             lines.append(f"{who} — {_talks_he(tc)}, {_patients_he(len(t))}, {findings}.")
         lines.append("")
 
@@ -717,7 +749,7 @@ def build_admin_report(
             sev = _SEVERITY_HE.get(sev_raw, sev_raw or "לא צוין")
             scope = (patient_scope or {}).get(pc, UNASSIGNED_SCOPE)
             who = "לא משויך" if scope == UNASSIGNED_SCOPE else ((by_phone.get(scope) or {}).get("name") or scope)
-            lines.append(f"{_mask_line(masked.get(pc, 'מספר חסר'))} · {sev} · {_date_he(r['time_key'])} · {who}")
+            lines.append(f"{_phone_line(pc, masked)} · {sev} · {_date_he(r['time_key'])} · {who}")
         lines.append("")
     else:
         lines.append("אין.")
@@ -728,7 +760,7 @@ def build_admin_report(
         lines.append("שיחות שאינן משויכות לאף מטפל:")
         lines.append("")
         for pc, info in sorted(unassigned_talks.items(), key=lambda kv: kv[1]["max_tk"], reverse=True):
-            lines.append(_mask_line(masked.get(pc, "מספר חסר")))
+            lines.append(_phone_line(pc, masked))
             lines.append(f"{_talks_he(info['count'])}.")
             lines.append("")
         lines.append("יש לשייך מטפל.")
