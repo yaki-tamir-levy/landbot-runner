@@ -49,7 +49,10 @@ const REASON_CODE_SET = new Set<string>(REASON_CODES);
 
 const TRACK_PROMPT_KEYS: Record<string, { therapist: string; prePatient: string; corrector: string }> = {
   CLINIC: { therapist: "clinic_therapist", prePatient: "clinic_pre_patient", corrector: "clinic_corrector" },
-  NLP_CBT: { therapist: "nlp_therapist", prePatient: "nlp_pre_patient", corrector: "corrector" },
+  // 1.10.2026, owner decision: NLP_CBT uses its own nlp_corrector (rewritten
+  // 25.9 together with nlp_therapist and nlp_pre_patient; safety and
+  // earlier-session rules added 1.10). Previously the shared "corrector".
+  NLP_CBT: { therapist: "nlp_therapist", prePatient: "nlp_pre_patient", corrector: "nlp_corrector" },
 };
 
 const DEFAULT_THERAPY_TRACK = "NLP_CBT";
