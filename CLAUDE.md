@@ -174,7 +174,7 @@
 ## שני הבוטים
 
 **[21.9: מיושן — מאומת בקוד הפרוס]** הפרומפט `therapist` אינו נקרא עוד. המנוע ממפה
-לפי מסלול: `NLP_CBT` → `nlp_therapist`, `nlp_pre_patient`, `corrector`; `CLINIC` →
+לפי מסלול: `NLP_CBT` → `nlp_therapist`, `nlp_pre_patient`, `nlp_corrector` (מ-1.10.2026; קודם `corrector`, שאינו נקרא עוד); `CLINIC` →
 `clinic_therapist`, `clinic_pre_patient`, `clinic_corrector`. `course_guide` נקרא
 **בתוך** `runtime-corrected-response` (הקבוע `COURSE_PROMPT_KEY`), לא בקריאה ישירה.
 הטקסט שלמטה נשמר כתיעוד היסטורי.
