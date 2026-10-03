@@ -211,17 +211,17 @@ Deno.serve(async (request: Request): Promise<Response> => {
   let fallbackUsed = false;
   let candidateSuccess = false;
   let diagnosticTherapistModel = DEFAULT_MODEL;
-  let diagnosticTherapistInstructions = "";
-  let diagnosticCandidateInput = "";
+  let diagnosticTherapistInstructionsLength = 0;
+  let diagnosticCandidateInputLength = 0;
   let diagnosticPayload: {
-    prompt20: string;
-    pre_patient20: string;
-    patient20: string;
-    summarized20: string;
-    tzvira: string;
-    response20: string;
-    question20: string;
-    patient_id: string;
+    prompt20_length: number;
+    pre_patient20_length: number;
+    patient20_length: number;
+    summarized20_length: number;
+    tzvira_length: number;
+    response20_length: number;
+    question20_length: number;
+    patient_id_masked: string;
     session_id: string;
   } | null = null;
 
@@ -415,37 +415,29 @@ Deno.serve(async (request: Request): Promise<Response> => {
     }, courseMaterial);
 
     diagnosticTherapistModel = therapistModel;
-    diagnosticTherapistInstructions = therapistInstructions;
-    diagnosticCandidateInput = candidateInput;
+    diagnosticTherapistInstructionsLength = therapistInstructions.length;
+    diagnosticCandidateInputLength = candidateInput.length;
     diagnosticPayload = {
-      prompt20: payload.value.prompt20 ?? "",
-      pre_patient20: payload.value.pre_patient20 ?? "",
-      patient20: payload.value.patient20 ?? "",
-      summarized20: payload.value.summarized20 ?? "",
-      tzvira: payload.value.tzvira ?? "",
-      response20: payload.value.response20 ?? "",
-      question20: payload.value.question20,
-      patient_id: payload.value.patient_id,
+      prompt20_length: (payload.value.prompt20 ?? "").length,
+      pre_patient20_length: (payload.value.pre_patient20 ?? "").length,
+      patient20_length: (payload.value.patient20 ?? "").length,
+      summarized20_length: (payload.value.summarized20 ?? "").length,
+      tzvira_length: (payload.value.tzvira ?? "").length,
+      response20_length: (payload.value.response20 ?? "").length,
+      question20_length: (payload.value.question20 ?? "").length,
+      patient_id_masked: maskPhoneForLog(payload.value.patient_id ?? ""),
       session_id: payload.value.session_id,
     };
 
+    // 3.10.2026: lengths and ids only - no conversation content and no full
+    // phone in the function logs. The turn itself is kept in corrector_test_log.
     console.log(JSON.stringify({
       event: "candidate_request_debug",
       correlation_id: correlationId,
       therapist_model: therapistModel,
-      therapistInstructions,
-      candidateInput,
-      payload: {
-        prompt20: payload.value.prompt20 ?? "",
-        pre_patient20: payload.value.pre_patient20 ?? "",
-        patient20: payload.value.patient20 ?? "",
-        summarized20: payload.value.summarized20 ?? "",
-        tzvira: payload.value.tzvira ?? "",
-        response20: payload.value.response20 ?? "",
-        question20: payload.value.question20,
-        patient_id: payload.value.patient_id,
-        session_id: payload.value.session_id,
-      },
+      therapist_instructions_length: therapistInstructions.length,
+      candidate_input_length: candidateInput.length,
+      payload: diagnosticPayload,
     }));
 
     const candidateStartedAt = Date.now();
@@ -730,19 +722,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
       corrector_elapsed_ms: correctorElapsedMs,
       total_elapsed_ms: Date.now() - startedAt,
       therapist_model: diagnosticTherapistModel,
-      therapistInstructions: diagnosticTherapistInstructions,
-      candidateInput: diagnosticCandidateInput,
-      payload: diagnosticPayload ?? {
-        prompt20: "",
-        pre_patient20: "",
-        patient20: "",
-        summarized20: "",
-        tzvira: "",
-        response20: "",
-        question20: "",
-        patient_id: "",
-        session_id: "",
-      },
+      therapist_instructions_length: diagnosticTherapistInstructionsLength,
+      candidate_input_length: diagnosticCandidateInputLength,
+      payload: diagnosticPayload,
     });
   }
 });
@@ -816,11 +798,22 @@ async function fetchCurrentConversationTzvira(
   }
 }
 
-function maskPhoneForUsersInformation(rawPhone: string): string {
+// 3.10.2026: masked phone for logs and metadata only. Same rule as
+// public.patient_masked_phone_v2: canonical Israeli form (0 + 8 or 9 digits)
+// when it applies, otherwise the digits as given; first 3 *** last 3.
+// The full phone is never written to a log, a table or OpenAI metadata.
+function maskPhoneForLog(rawPhone: string): string {
   const digits = (rawPhone ?? "").replace(/[^0-9]/g, "");
-  if (digits.length === 0) return "";
-  if (digits.length <= 6) return digits;
-  return `${digits.slice(0, 3)}***${digits.slice(-3)}`;
+  let rest = digits.replace(/^0+/, "");
+  if (rest.startsWith("972") && (rest.length === 11 || rest.length === 12)) {
+    rest = rest.slice(3);
+  }
+  rest = rest.replace(/^0+/, "");
+  const canon = rest.length > 0 ? `0${rest}` : "";
+  const src = /^0[0-9]{8,9}$/.test(canon) ? canon : digits;
+  if (src.length === 0) return "";
+  if (src.length <= 6) return src;
+  return `${src.slice(0, 3)}***${src.slice(-3)}`;
 }
 
 async function fetchPatientContext(
@@ -830,8 +823,7 @@ async function fetchPatientContext(
   // patientGender is written onto this object as soon as it is known, so all
   // four early-return paths below carry it without each needing its own edit.
   const fallback = { therapyTrack: DEFAULT_THERAPY_TRACK, patientBio: "", patientName: "", patientGender: "" };
-  const phone = maskPhoneForUsersInformation(patientId ?? "");
-  if (!phone) return fallback;
+  if ((patientId ?? "").replace(/[^0-9]/g, "").length === 0) return fallback;
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -849,8 +841,8 @@ async function fetchPatientContext(
     // 25.9.2026: the same RPC row also carries therapy_track and user_text,
     // looked up by patient_code from ANY phone form (with or without the
     // leading zero). When it returns a row, track and bio are taken from it.
-    // The masked-phone query below is kept only as a fallback for when this
-    // RPC fails - the mask differs between 0541111111 and 541111111.
+    // 3.10.2026: the masked-phone fallback was removed - the masked phone is
+    // no longer stored. When this RPC finds no row, the default track is used.
     let rpcFound = false;
     let rpcTrack = "";
     let rpcBio = "";
@@ -909,51 +901,12 @@ async function fetchPatientContext(
       return { therapyTrack, patientBio: rpcBio, patientName, patientGender: fallback.patientGender };
     }
 
-    const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/users_information_v2?select=therapy_track,user_text&phone=eq.${encodeURIComponent(phone)}&limit=2`;
-    const res = await fetch(url, {
-      headers: {
-        apikey: serviceKey,
-        Authorization: `Bearer ${serviceKey}`,
-        Accept: "application/json",
-      },
-    });
-    if (!res.ok) {
-      console.error(JSON.stringify({
-        event: "patient_context_fetch_failed",
-        correlation_id: correlationId,
-        http_status: res.status,
-      }));
-      return { ...fallback, patientName };
-    }
-    const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) {
-      console.error(JSON.stringify({
-        event: "patient_context_not_found",
-        correlation_id: correlationId,
-      }));
-      return { ...fallback, patientName };
-    }
-    if (data.length > 1) {
-      console.error(JSON.stringify({
-        event: "patient_context_ambiguous",
-        correlation_id: correlationId,
-        row_count: data.length,
-      }));
-      return { ...fallback, patientName };
-    }
-    const row = data[0] as Record<string, unknown>;
-    const rawTrack = typeof row.therapy_track === "string" ? row.therapy_track.trim() : "";
-    const rawBio = typeof row.user_text === "string" ? row.user_text.trim() : "";
-    const therapyTrack = rawTrack.length > 0 ? rawTrack : DEFAULT_THERAPY_TRACK;
-    console.log(JSON.stringify({
-      event: "therapy_track_resolved",
+    console.error(JSON.stringify({
+      event: "patient_context_not_found",
       correlation_id: correlationId,
-      therapy_track: therapyTrack,
-      patient_bio_length: rawBio.length,
-      patient_name_present: patientName.length > 0,
-      source: "masked_phone",
+      source: "patient_code",
     }));
-    return { therapyTrack, patientBio: rawBio, patientName, patientGender: fallback.patientGender };
+    return { ...fallback, patientName };
   } catch (_e) {
     console.error(JSON.stringify({
       event: "patient_context_fetch_exception",
@@ -2196,7 +2149,7 @@ async function generateCandidate(args: {
       max_output_tokens: args.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
       temperature: 0.7,
       metadata: {
-        patient_id: args.patientId,
+        patient_id: maskPhoneForLog(args.patientId ?? ""),
         session_id: args.sessionId,
       },
     },
@@ -2457,11 +2410,17 @@ function logDiagnostic(fields: Record<string, unknown>): void {
 
 const TEST_LOG_TIMEOUT_MS = 5_000;
 
-async function appendTestLog(entry: Record<string, unknown>): Promise<void> {
+// 3.10.2026: the phone is masked here, in one place, for every caller; and the
+// duplicate copy to the storage bucket corrector-test-log was removed - the
+// table is the only log.
+async function appendTestLog(rawEntry: Record<string, unknown>): Promise<void> {
+  const entry: Record<string, unknown> = {
+    ...rawEntry,
+    phone: maskPhoneForLog(String(rawEntry.phone ?? "")) || null,
+  };
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const bucket = Deno.env.get("TEST_LOG_BUCKET") || "corrector-test-log";
 
     if (!supabaseUrl || !supabaseKey) {
       console.error(JSON.stringify({
@@ -2510,58 +2469,6 @@ async function appendTestLog(entry: Record<string, unknown>): Promise<void> {
       }));
     }
 
-    const day = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Jerusalem",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).format(new Date());
-
-    const url =
-      `${supabaseUrl.replace(/\/$/, "")}/storage/v1/object/${bucket}/logs/${day}.jsonl`;
-
-    let existing = "";
-    const readController = new AbortController();
-    const readTimeout = setTimeout(() => readController.abort(), TEST_LOG_TIMEOUT_MS);
-    try {
-      const current = await fetch(url, {
-        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` },
-        signal: readController.signal,
-      });
-      if (current.ok) {
-        existing = await current.text();
-      } else {
-        await current.body?.cancel();
-      }
-    } finally {
-      clearTimeout(readTimeout);
-    }
-
-    const writeController = new AbortController();
-    const writeTimeout = setTimeout(() => writeController.abort(), TEST_LOG_TIMEOUT_MS);
-    try {
-      const upload = await fetch(url, {
-        method: "POST",
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          "Content-Type": "application/x-ndjson; charset=utf-8",
-          "x-upsert": "true",
-        },
-        body: `${existing}${JSON.stringify(entry)}\n`,
-        signal: writeController.signal,
-      });
-
-      if (!upload.ok) {
-        console.error(JSON.stringify({
-          event: "test_log_write_failed",
-          status: upload.status,
-          status_text: upload.statusText,
-        }));
-      }
-    } finally {
-      clearTimeout(writeTimeout);
-    }
   } catch (error) {
     console.error(JSON.stringify({
       event: "test_log_write_exception",
