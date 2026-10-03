@@ -47,16 +47,20 @@ PATIENT_LINK = ""
 IDLE_MINUTES = 15
 
 # שדות החובה. שינוי כאן משנה את קריטריון הקבלה.
+# 2.10.2026: daily_impact moved from REQUIRED to the optional fields, to match
+# the interviewer prompt "intake", where it is desirable and not mandatory.
+# The prompt let the interviewer close without asking it, and this list then
+# rejected the candidate for it.
 REQUIRED = [
     "age", "family_status", "household", "area", "occupation",
-    "reason_for_coming", "duration", "daily_impact",
+    "reason_for_coming", "duration",
 ]
 
-# "duration" and "daily_impact" are already in REQUIRED. Listing them again
-# put each of them TWICE into the "missing" list, so a rejected candidate was
-# told the same field was missing twice. Verified in live candidate rows.
+# Never list a REQUIRED field here again. Listing one twice put it TWICE into
+# the "missing" list, so a rejected candidate was told the same field was
+# missing twice. Verified in live candidate rows.
 ALL_FIELDS = REQUIRED + [
-    "prior_therapy", "support", "expectations",
+    "daily_impact", "prior_therapy", "support", "expectations",
 ]
 
 BACKGROUND_MAX = 900
@@ -339,19 +343,24 @@ def main():
             accepted = decide(fields)
             decision = "ACCEPTED" if accepted else "REJECTED"
 
+            # 2.10.2026: only REQUIRED fields are stored as missing and reported.
+            # On a return visit the interviewer is told to ask exactly the stored
+            # missing fields - optional ones there made it re-ask answered topics.
+            req_missing = [f for f in REQUIRED if f in fields["missing"]]
+
             result = rpc("intake_apply_decision", {
                 "p_phone_hash": phone_hash,
                 "p_decision":   decision,
-                "p_missing":    fields["missing"],
+                "p_missing":    req_missing,
                 "p_background": fields["background"],
                 "p_risk":       fields["explicit_risk_statement"],
                 "p_gender":     fields.get("gender") or None,
             })
 
-            print(f"  {short}: {decision} (missing: {len(fields['missing'])})")
+            print(f"  {short}: {decision} (missing: {len(req_missing)})")
 
             try:
-                notify(result, accepted, fields["missing"], fields["explicit_risk_statement"])
+                notify(result, accepted, req_missing, fields["explicit_risk_statement"])
             except Exception as mail_err:                    # noqa: BLE001
                 # ההכרעה כבר נרשמה. כשל בדואר אינו הופך אותה לשגיאה.
                 print(f"  {short}: mail failed: {mail_err}", file=sys.stderr)
