@@ -2,6 +2,8 @@
 
 **תאריך אימות חלקי: 20 בספטמבר 2026**
 
+**עודכן 3 באוקטובר 2026, 18:36 שעון ישראל, סשן ז' — הטלפון הממוסך נגזר:** סעיף 25 החדש — `patient_masked_phone_v2`, `patient_masked_phones_v2`, `admin_patient_lookup_by_phone_v2`, סימולציה לפי `patient_origin`, שינויי `runtime-corrected-response`. סעיף 16 — משימות 43–47. פירוט ברשומת "3.10.2026 — סשן ז'" ב-`docs/SESSION_LOG.md`.
+
 **עודכן 3.10.2026, סשן ה' — מסלול הקבלה, פרומפטים בגיליון, מסך הקוד:** סעיף 4.2 — אילו פרומפטים בגיליון ואילו במסד בלבד; `otp_sent` מחובר. סעיף 16 — משימות 41, 42. סעיף 23א — שדות החובה, רשימת החסרים, קישור הכניסה. פירוט ברשומת "2–3.10.2026 — סשן ה'" ב-`docs/SESSION_LOG.md`.
 
 **עודכן 2.10.2026, סשן ד' — מטופלי סימולציה בדוחות הסיכון:** סעיף 11 — כלל הסימולציה בדוחות. סעיף 16 — משימה 38 בוצעה, משימה 40 נוספה. סעיף 23.9 — הגדרת "פתוח". סעיף 23.10 — כלל 2 עודכן, כלל 4 נוסף. פירוט ברשומת "2.10.2026 — סשן ד'" ב-`docs/SESSION_LOG.md`.
@@ -3900,6 +3902,11 @@ https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/runtime-corrected-response
 
 41. **שלושה פרומפטים במסד בלבד** — `risk_staged_severity`, `conversation_quality_judge`, `ab_summary`. לבדוק בקוד ובמסד אם הם פעילים, ולהחליט אם להכניס לגיליון. ראו 4.2.
 42. **עיכוב ההכרעה במסלול הקבלה.** המעבד `tools/intake_processor.py` מופעל מתזמון `GitHub`; ב-2.10.2026 עברו כמעט 16 שעות בין סגירת השיחה להכרעה. לבדוק את התזמון החי, ולשקול הפעלה מהמסד כמו בסעיף 24. **בוצע חלקית 3.10.2026:** הסיבה — המעבד כמעט לא רץ; נוספה משימה 47 ב-`pg_cron`, סעיף 24. נותר: אימות ההפעלות, קובץ הגירה, והסרת ה-`schedule` — משימה 33.
+43. **הסרת החיפוש לפי טלפון ממוסך** — מהכלי המקומי `patient_lookup`, ואחריו מחיקת `admin_patient_lookup_by_masked_phone_v2(text)`. החלטת בעל המערכת 3.10.2026.
+44. **שלב ג — הפסקת שמירת הטלפון הממוסך.** `upsert_users_information_v2_from_sheet` מפסיקה לכתוב; הסרת `NOT NULL` מ-`users_information_v2.phone`; ריקון ב-`users_information_v2`, `users_information_v2_daily_backup`, `patient_identity_map.phone`. תנאי: משימה 43.
+45. **`otp_send_log` — גיבוב במקום טלפון מלא.** שער האימות בודק את המרווח לפי הטלפון; השינוי דורש עדכון `meitar-otp-gate`.
+46. **שלב ד — כיווץ טלפונים מלאים בטבלאות הישנות ובשורות הישנות של `corrector_test_log`, ומחיקת 37 הקבצים בדלי `corrector-test-log`.** לבצע אחרון. לבדוק קודם את הטריגר `normalize_phone_digits` ב-`app_guidance`, שעלול להסיר כוכביות.
+47. **`get_last_users_thread_v2` — הרשאת `authenticated`.** כל משתמש מחובר יכול לשלוח טלפון ולקבל שם מפוענח. לשקול הסרה.
 
 ## 17. כללי עבודה
 
@@ -5255,3 +5262,21 @@ https://qcwimczsiuxkarwfiyai.supabase.co/functions/v1/runtime-corrected-response
 **נוסף 27.9.2026 — `dispatch-workflow` גרסה 2, קומיט `5325bcd`:** `force_recompute` בערכים `0` ו-`1` נוסף לשדות המותרים של `admin-daily-report.yml`. הגרסה הפרוסה 1 אומתה זהה בית אחר בית למאגר לפני העריכה.
 
 **כלל — אומת בכשל 27.9.2026:** שדה חדש בתהליך שמופעל מהמסד מחייב הוספה לרשימה `ALLOWED` בפונקציה ופריסה. בלי זה ההפעלה נדחית ב-`input_not_allowed:<שדה>` ואינה מגיעה ל-`GitHub` — `workflow_dispatch_log.id = 61`. בדיקת `public.dispatch_workflow` לבדה אינה מספיקה: היא מעבירה כל שדה, והסינון בפונקציית הקצה.
+
+## 25. הטלפון הממוסך — נגזר בקריאה, לא נקרא מהטבלאות — נוסף 3.10.2026
+
+**`patient_masked_phone_v2(uuid)`** — מפענחת את `patient_identity_map.phone_enc`, ממירה ב-`phone_canon_v2`; אם התוצאה 0 ועוד 8 או 9 ספרות — היא המקור, אחרת הספרות כפי שנשמרו. מחזירה שלוש ספרות, `***`, שלוש ספרות. `service_role` בלבד.
+
+**`patient_masked_phones_v2()`** — לכל מטופל: `patient_code`, `phone_masked`, `is_sim` (`patient_origin = 'SIM'`). `service_role` בלבד. קורא: `tools/psychologist_notify.py`.
+
+**צרכנים שעברו:** `admin_patient_lookup_v2`, `get_last_users_thread_v2`, `quality_conversations_for_day_v2`, `auth_code_notify_claim`, `conversation_events_v2_view`, `admin_daily_report_v2`, `admin_report_open_risks_v2`, `psychologist_notify.py`, `runtime-corrected-response`.
+
+**עדיין ממסכות טלפון מלא שמור:** בדוח היומי — `test_or_sim_items` (`corrector_test_log.phone`) ו-`otp_items` (`otp_send_log.phone`), דרך `admin_report_mask_phone`, שמחזירה ערך שכבר יש בו כוכביות כמו שהוא.
+
+**סימולציה** — בכל הדוחות ובמייל לפסיכולוגים לפי `users_information_v2.patient_origin = 'SIM'`. **מבוטל:** הזיהוי לפי קידומת 888/999.
+
+**חיפוש מנהל לפי טלפון מלא** — `admin_patient_lookup_by_phone_v2(text)`: בדיקת מנהל, קלט קנוני של 9 או 10 ספרות, תקרת שעה, `patient_code_by_phone_v2`, ואז `admin_patient_lookup_v2`. ביומן נרשמת הצורה הממוסכת בלבד.
+
+**`runtime-corrected-response` מקומיט `a1f4000`:** אין מסלול גיבוי לפי טלפון ממוסך — אם `get_last_users_thread_v2` אינה מחזירה שורה, מסלול ברירת המחדל. `appendTestLog` ממסכת את הטלפון ב-`maskPhoneForLog` (אותו כלל) וכותבת לטבלה בלבד — **אין עוד כתיבה לדלי `corrector-test-log`**. ברשומות `candidate_request_debug` והאבחון — אורכים, `session_id` וקוד ממוסך בלבד. במטא-דאטה ל-`OpenAI` — קוד ממוסך.
+
+**העמודות `users_information_v2.phone`, `users_information_v2_daily_backup.phone`, `patient_identity_map.phone` עדיין מלאות** ונכתבות בסנכרון מהגיליון. ראו משימות 43–46.
