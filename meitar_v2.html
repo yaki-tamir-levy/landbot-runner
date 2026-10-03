@@ -296,7 +296,12 @@
   <section id="view-otp" class="view">
     <div class="field-wrap">
       <h1>קוד אימות</h1>
-      <p style="font-size:14.5px; color:var(--ink-soft); margin-bottom:18px;">שלחנו קוד בן שש ספרות. הזן/י אותו כדי להמשיך.</p>
+      <!-- 3.10.2026: text from app_texts_v2.otp_sent (applyTexts); this is the fallback. -->
+      <p id="otp-intro" style="font-size:14.5px; color:var(--ink-soft); margin-bottom:18px; white-space:pre-line;">שלחנו קוד בן שש ספרות למייל שלך. הזן/י אותו כדי להמשיך.
+
+לא מוצא/ת את המייל? כדאי לבדוק בתיקיית הספאם או בקידומי מכירות. לפעמים המייל מגיע באיחור של כמה דקות, ולעיתים שרתי דואר חוסמים אותו.
+
+אם הקוד לא הגיע — אפשר לבקש קוד חדש בעוד שעה, או לפנות למטפל/ת שלך.</p>
       <input type="tel" id="otp-input" placeholder="קוד בן 6 ספרות" inputmode="numeric" maxlength="6" autocomplete="one-time-code" enterkeyhint="go">
       <button class="submit-btn" id="otp-submit">אימות</button>
       <div class="status-msg" id="otp-status"></div>
@@ -486,6 +491,7 @@
     setText('explain-body', 'about_system');
     setText('phone-intro', 'greeting_treatment');
     setText('disclaimer-body', 'disclaimer');
+    setText('otp-intro', 'otp_sent');
   }
 
   async function loadTexts() {
