@@ -39,7 +39,7 @@ import smtplib
 import sys
 from datetime import datetime, timezone
 from email.message import EmailMessage
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 
 import requests
@@ -164,14 +164,22 @@ def _mask_line(masked_phone: str) -> str:
 
 # 2.10.2026: simulation patients stay in every mail, labelled next to the
 # phone; every count is shown without them, with their count beside it.
-# Same rule as the database report functions: masked phone, digits only,
-# starting with 888 or 999.
+# 3.10.2026: same rule as the database report functions -
+# users_information_v2.patient_origin = 'SIM', delivered by
+# public.patient_masked_phones_v2() as is_sim (no longer the 888/999 prefix).
 SIM_LABEL = "מטופל סימולציה"
 
 
+class MaskedPhones(dict):
+    """patient_code -> masked phone, plus the set of simulation patient codes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sim: Set[str] = set()
+
+
 def _is_sim(pc: str, masked: Dict[str, str]) -> bool:
-    digits = "".join(ch for ch in (masked.get(pc) or "") if ch.isdigit())
-    return digits.startswith(("888", "999"))
+    return pc in getattr(masked, "sim", set())
 
 
 def _phone_line(pc: str, masked: Dict[str, str]) -> str:
@@ -250,6 +258,13 @@ class Rest:
                 return out
             offset += PAGE_SIZE
 
+    def rpc(self, fn: str, args: Optional[Dict[str, Any]] = None) -> Any:
+        url = f"{self.base}/rest/v1/rpc/{fn}"
+        r = requests.post(url, headers=self._headers(), json=args or {}, timeout=HTTP_TIMEOUT)
+        if r.status_code >= 400:
+            raise RuntimeError(f"RPC {fn} failed {r.status_code}: {r.text[:400]}")
+        return r.json()
+
     def upsert(self, table: str, rows: List[Dict[str, Any]], on_conflict: str) -> None:
         if not rows:
             return
@@ -311,32 +326,26 @@ def load_patient_scope(rest: Rest, by_phone: Dict[str, Dict[str, str]]) -> Dict[
 
 
 def load_masked_phones(rest: Rest) -> Dict[str, str]:
-    """patient_code -> masked phone.
+    """patient_code -> masked phone, with the simulation codes in .sim.
 
-    Source is users_information_v2.phone, NOT patient_identity_map.phone.
-    The identity table's phone column is empty in 28 of its 34 rows - verified
-    against the database on 18.9.2026 - so reading it there left most
-    recipients with three identical "missing number" lines and no way to tell
-    their patients apart. users_information_v2.phone is populated in all 29
-    rows and is the same source the admin lookup uses.
-
-    The identity table is still read as a fallback, so a patient that exists
-    there but not in users_information_v2 is not lost.
+    3.10.2026: the masked phone is no longer stored in any table. It is derived
+    in the database from the encrypted phone by public.patient_masked_phones_v2(),
+    which also returns the simulation flag (patient_origin = 'SIM'). This
+    replaces reading users_information_v2.phone and patient_identity_map.phone.
     """
-    out: Dict[str, str] = {}
-
-    for r in rest.select("patient_identity_map", {"select": "patient_code,phone"}):
+    out = MaskedPhones()
+    rows = rest.rpc("patient_masked_phones_v2")
+    if not isinstance(rows, list):
+        raise RuntimeError(f"RPC patient_masked_phones_v2 returned non-list: {str(rows)[:200]}")
+    for r in rows:
         pc = (r.get("patient_code") or "").strip()
-        ph = (r.get("phone") or "").strip()
-        if pc and ph:
+        ph = (r.get("phone_masked") or "").strip()
+        if not pc:
+            continue
+        if ph:
             out[pc] = ph
-
-    for r in rest.select("users_information_v2", {"select": "patient_code,phone"}):
-        pc = (r.get("patient_code") or "").strip()
-        ph = (r.get("phone") or "").strip()
-        if pc and ph:
-            out[pc] = ph
-
+        if r.get("is_sim") is True:
+            out.sim.add(pc)
     return out
 
 
